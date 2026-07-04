@@ -55,13 +55,21 @@ Süreç: 3 bağımsız AI danışman (farklı model aileleri, aynı brief, birbi
 - Kişisel kullanım/dağıtımsız → ToS/etik risk düşük ama sıfır değil; no-credential, no-write, in-memory-first disiplini korunur. `chrome.storage.local` sadece ayarlar için, `.session` sadece küçük mod-log için — canlı mesaj buffer'ı bunların dışında, sadece bellekte.
 - **YAGNI (yapılmayacaklar):** tam virtualization/windowing, Web Worker ile JSON parsing, Redux/MobX/RxJS gibi state kütüphaneleri, disk persistence, video/HLS codec'ine müdahale, sunucu-taraflı moderasyon undo (unban vb. — credential gerektirir, hard kural ihlali).
 
-## Kodlamadan önce zorunlu empirik doğrulama adımları
-1. Pusher kanalının (`chatrooms.{id}.v2`) gerçekten public olduğunu DevTools → Network → WS ile doğrula.
-2. Mesaj-silme ve timeout event isimlerini canlı yakala (yalnızca `UserBannedEvent` şu an doğrulanmış durumda).
-3. Banlı kullanıcı mesajlarının gerçekten "kaybolduğunu" mu yoksa "soluklaştığını" mı DevTools'ta gözle doğrula.
-4. Gerçek mesaj-listesi container selector'ını bul (`.chat-rooms-list` değil).
-5. Kick'in banlı/silinen mesajı DOM'da nasıl işlediğini tespit et: node tamamen mi siliniyor (childList), yoksa class/style ile mi gizleniyor (attributes)? Bu, proaktif-işaretleme/fallback dengesinin doğru çalışıp çalışmadığını belirler.
-6. Kalite-seçici ve native rewind seek-bar'ının DOM yapısı/selector'ları.
+## Empirik doğrulama sonuçları (2026-07-04, Playwright ile canlı kanal `allissag` üzerinde yapıldı)
+
+**✅ DOĞRULANDI:**
+1. **Pusher kanalı gerçekten PUBLIC** — canlı yakalanan `pusher:subscribe` frame'lerinde `"auth":""` (boş) gönderiliyor, imza/credential yok. Round-1 critic'in MUST-FIX #3 endişesi ÇÖZÜLDÜ: ayrı, salt-okunur ikinci bağlantı güvenle açılabilir.
+2. **Pusher bağlantı detayları (canlı yakalandı):** `wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.5.0&flash=false`. Kanal adı formatı: `chatrooms.{chatroom_id}.v2` (örnek canlı: `chatrooms.19769178.v2`). Not: sayfa aynı chatroom için birden fazla varyant kanala da subscribe oluyor (`chatroom_{id}`, `chatrooms.{id}` — v2'siz) — hepsi public, ama sadece `.v2` kanalı gerçek mesaj event'lerini taşıyor.
+3. **Mesaj event ismi kesinleşti: `App\Events\ChatMessageEvent`** (2 farklı isim adayından biri doğru çıktı — `ChatMessageSentEvent` YANLIŞ, kullanılmayacak).
+4. **Mesaj payload şekli (canlı, tam alan listesi):** `{id, chatroom_id, content, type:"message", created_at, sender:{id, username, slug, identity:{color, badges:[], badges_v2:[]}}}`.
+5. **Gerçek chat container selector'ı bulundu:** `#chatroom-messages` (id, `.chat-rooms-list` TAMAMEN YANLIŞTI, critic'in şüphesi doğrulandı). Bu div'in TEK çocuğu asıl mesaj listesi (`no-scrollbar relative` class'lı, her mesaj bu listenin doğrudan çocuğu — `group relative px-2 lg:px-3` class'lı genel Tailwind div'i, kararlı bir class adı yok, yapısal konumla tanınmalı).
+6. **Video elementi selector'ı bulundu:** `#video-player` (stabil id). "LIVE" metinli bir buton var — canlıya dönüş/live-edge göstergesi, `live-catchup.ts` ve `rewind-hotkeys.ts` için referans noktası olabilir.
+
+**❌ HENÜZ DOĞRULANAMADI (implementasyon sırasında ilk adım olarak yapılmalı):**
+7. Mesaj-silme ve timeout event isimleri — kısa gözlem penceresinde doğal bir moderasyon eylemi gerçekleşmedi (moderatör yetkisi olmadan tetiklenemez). **İlk implementasyon adımı:** debug-log modu ile gerçek bir silme/ban/timeout olayı canlı yakalanana kadar dinlenmeli (kendi kanalında test etmek ya da bir moderatör arkadaştan yardım istemek en hızlı yol).
+8. Banlı kullanıcı mesajının DOM'da "tamamen kaybolma" mı "soluklaşma" mı olduğu — yine gerçek bir ban olayı gözlenmeden doğrulanamaz.
+9. Kalite-seçici butonunun selector'ı — ikon-only butonlar arasında net bir aria-label'la ayırt edilemedi (Kick'in kendi UI'sında bir erişilebilirlik eksikliği). İmplementasyon sırasında player'a hover/tıklayarak görsel olarak bulunmalı.
+10. Native rewind seek-bar'ının tam DOM yapısı.
 
 ## Modül dosya yapısı
 ```
