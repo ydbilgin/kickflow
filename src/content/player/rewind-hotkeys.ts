@@ -1,5 +1,6 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
+import { clampSeekTarget } from './rewind-controls';
 import type { Lifecycle } from '../shared/lifecycle';
 
 const SEEK_STEP_SECONDS = 5;
@@ -12,7 +13,10 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 /** Kick has no native arrow-key seek. Best-effort against #video-player's own
  * currentTime — the one confirmed-stable selector — rather than Kick's (unconfirmed)
- * native rewind seek-bar DOM. Fails gracefully if the video element is gone. */
+ * native rewind seek-bar DOM. Clamped to the same seekable (DVR) range as
+ * rewind-controls.ts's inline buttons (shared clampSeekTarget) — a live DVR window can
+ * have `seekable.start(0) > 0`, so clamping only at 0 could seek before the DVR start or
+ * past the live edge. Fails gracefully if the video element is gone. */
 export function initRewindHotkeys(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
@@ -27,8 +31,9 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
 
     const direction = keyboardEvent.key === 'ArrowLeft' ? -1 : 1;
     try {
-      video.currentTime = Math.max(0, video.currentTime + direction * SEEK_STEP_SECONDS);
-      logger.debug('rewind-hotkeys: seeked', direction * SEEK_STEP_SECONDS, 's');
+      const target = clampSeekTarget(video, direction * SEEK_STEP_SECONDS);
+      video.currentTime = target;
+      logger.debug('rewind-hotkeys: seeked to', target);
     } catch (error) {
       logger.warn('rewind-hotkeys: seek failed', error);
     }

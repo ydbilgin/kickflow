@@ -149,7 +149,11 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     toggleEl = toggle;
     updateToggleVisual();
 
-    lifecycle.addEventListener(toggle, 'click', () => {
+    // Attached directly to the button (not routed through Lifecycle) — see
+    // rewind-controls.ts for why: native-bar.ts's ensure() rebuilds this button whenever
+    // Kick's control bar re-renders and drops it, and a Lifecycle-routed listener would
+    // keep the OLD button + closure alive until the whole session tears down.
+    toggle.addEventListener('click', () => {
       enabled = !enabled;
       updateToggleVisual();
       saveToggleState(enabled);

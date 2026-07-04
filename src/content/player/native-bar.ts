@@ -1,5 +1,5 @@
 import { logger } from '../shared/logger';
-import { findControlBar, findLiveButton } from '../shared/selectors';
+import { findLiveButton, findPlayerWrapper } from '../shared/selectors';
 import type { Lifecycle } from '../shared/lifecycle';
 
 const OBSERVER_DEBOUNCE_MS = 150;
@@ -35,14 +35,25 @@ function findInsertionAnchor(): HTMLElement | null {
  * Never mounts a second copy — `document.getElementById(id)` is checked before every
  * (re-)mount, which is the exact guard MoKick's shipped "two buttons appear" bug lacked.
  *
- * Kick re-renders `.z-controls` on navigation/fullscreen toggle, which can silently drop
- * anything injected into it. A narrow, debounced MutationObserver scoped to the control
- * bar itself (NOT document.body) re-runs the idempotent ensure() so injected controls
- * survive those re-renders, without the cost/risk of a page-wide observer.
+ * The persistence observer is scoped to the VIDEO'S PARENT WRAPPER (findPlayerWrapper),
+ * not the control bar node itself — deliberately:
+ *  - The wrapper exists as soon as `#video-player` does, so if the bar hasn't rendered
+ *    yet on the first `ensure()` attempt, the observer is already watching and will pick
+ *    up the bar's later insertion (no permanent give-up on first miss).
+ *  - The wrapper also survives the bar being fully REPLACED (fullscreen toggle / Kick
+ *    SPA re-render can swap out the whole `.z-controls` node, not just its children) —
+ *    an observer attached to the bar itself would be left watching a detached node and
+ *    never fire again. Observing one level up, with `subtree: true`, catches both "bar
+ *    gained/lost children" and "bar node itself replaced" the same way.
  *
- * Returns the mounted element, or null if the control bar/LIVE button couldn't be found
- * (no-op + warn — there is deliberately no floating-overlay fallback here; that approach
- * was tried and rejected).
+ * Debounced (~150ms) so a burst of unrelated bar mutations only triggers one re-check.
+ * Only gives up via Lifecycle teardown (channel change) — never permanently on a single
+ * missed attempt.
+ *
+ * Returns the element mounted on the FIRST attempt, or null if it wasn't mountable yet
+ * (the observer keeps retrying in the background) or if there's no video element parent
+ * to observe at all (no-op + warn — there is deliberately no floating-overlay fallback
+ * here; that approach was tried and rejected).
  */
 export function mountIntoControlBar(lifecycle: Lifecycle, id: string, build: () => HTMLElement): HTMLElement | null {
   const ensure = (): HTMLElement | null => {
@@ -58,30 +69,31 @@ export function mountIntoControlBar(lifecycle: Lifecycle, id: string, build: () 
     return element;
   };
 
-  const initial = ensure();
-  if (!initial) {
-    logger.warn('native-bar: control bar / LIVE button not found, skipping mount for', id);
+  const wrapper = findPlayerWrapper();
+  if (!wrapper) {
+    logger.warn('native-bar: #video-player has no parent to observe, cannot mount', id);
     return null;
   }
 
-  const bar = findControlBar();
-  if (bar) {
-    let debounceTimer: number | null = null;
-    const observer = new MutationObserver(() => {
-      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => {
-        debounceTimer = null;
-        ensure();
-      }, OBSERVER_DEBOUNCE_MS);
-    });
-    observer.observe(bar, { childList: true, subtree: true });
-    lifecycle.add(() => {
-      observer.disconnect();
-      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
-    });
-  }
+  let debounceTimer: number | null = null;
+  const observer = new MutationObserver(() => {
+    if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(() => {
+      debounceTimer = null;
+      ensure();
+    }, OBSERVER_DEBOUNCE_MS);
+  });
+  observer.observe(wrapper, { childList: true, subtree: true });
+  lifecycle.add(() => {
+    observer.disconnect();
+    if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+  });
 
   lifecycle.add(() => document.getElementById(id)?.remove());
 
+  const initial = ensure();
+  if (!initial) {
+    logger.debug('native-bar: control bar/LIVE button not present yet for', id, '- will mount once it appears');
+  }
   return initial;
 }

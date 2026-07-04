@@ -6,21 +6,28 @@ import type { Lifecycle } from '../shared/lifecycle';
 const CONTROLS_ID = 'kickflow-rewind-controls';
 const STEP_SECONDS = 10;
 
-function seekableEnd(video: HTMLVideoElement): number | null {
+export function seekableEnd(video: HTMLVideoElement): number | null {
   if (video.seekable.length === 0) return null;
   return video.seekable.end(video.seekable.length - 1);
 }
 
-function seekableStart(video: HTMLVideoElement): number {
+export function seekableStart(video: HTMLVideoElement): number {
   if (video.seekable.length === 0) return 0;
   return video.seekable.start(0);
 }
 
+/** Shared by this file's inline buttons and rewind-hotkeys.ts's arrow keys so both clamp
+ * to the same seekable (DVR) range — a live DVR window can have `seekable.start(0) > 0`,
+ * so clamping only at 0 could seek before the DVR start or past the live edge. */
+export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
+  const end = seekableEnd(video);
+  const max = end ?? (Number.isFinite(video.duration) ? video.duration : video.currentTime + delta);
+  return Math.min(Math.max(video.currentTime + delta, seekableStart(video)), max);
+}
+
 function seekBy(video: HTMLVideoElement, delta: number): void {
   try {
-    const end = seekableEnd(video);
-    const max = end ?? (Number.isFinite(video.duration) ? video.duration : video.currentTime + delta);
-    const target = Math.min(Math.max(video.currentTime + delta, seekableStart(video)), max);
+    const target = clampSeekTarget(video, delta);
     video.currentTime = target;
     logger.debug('rewind-controls: seek', delta, '-> currentTime', target);
   } catch (error) {
@@ -101,9 +108,15 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     forward.title = `${STEP_SECONDS} sn ileri`;
     styleButton(forward);
 
-    lifecycle.addEventListener(rewind, 'click', () => seekBy(video, -STEP_SECONDS));
-    lifecycle.addEventListener(forward, 'click', () => seekBy(video, STEP_SECONDS));
-    lifecycle.addEventListener(live, 'click', () => goLive(video));
+    // Attached directly to the button (not routed through Lifecycle): these buttons get
+    // rebuilt by native-bar.ts's ensure() whenever Kick's control bar re-renders and drops
+    // them, and a Lifecycle-routed listener would keep the OLD button + closure alive
+    // (referenced by a disposer) until the whole session tears down, accumulating across
+    // repeated re-renders. A plain listener is GC'd along with the button node itself the
+    // moment it's removed (by Kick or by us on remount/teardown) — nothing accumulates.
+    rewind.addEventListener('click', () => seekBy(video, -STEP_SECONDS));
+    forward.addEventListener('click', () => seekBy(video, STEP_SECONDS));
+    live.addEventListener('click', () => goLive(video));
 
     group.append(rewind, live, forward);
     return group;

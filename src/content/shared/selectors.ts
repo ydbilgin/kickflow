@@ -23,13 +23,26 @@ export function findControlBar(): HTMLElement | null {
   return document.querySelector<HTMLElement>(SELECTORS.controlBar);
 }
 
+/** The direct DOM parent of #video-player — Kick's `position:relative` wrapper that the
+ * (`absolute`-positioned) control bar is anchored within. Exists as soon as the video
+ * element does, before the control bar has necessarily rendered, and — unlike the bar
+ * itself — is never replaced by a bar re-render/fullscreen toggle. Used by
+ * player/native-bar.ts as a STABLE MutationObserver root so mounting can retry until the
+ * bar appears, and survives the bar being fully replaced later in the session. */
+export function findPlayerWrapper(): HTMLElement | null {
+  return getVideoElement()?.parentElement ?? null;
+}
+
 /** Best-effort text-content lookup rather than a guessed class name (confirmed live: the
- * jump-to-live control has no testable attributes, just visible "LIVE" text). Scoped to
- * the control bar first (its confirmed location) with a document-wide fallback. Relied on
- * by player/native-bar.ts as the anchor to inject KickFlow's own controls after. */
+ * jump-to-live control has no testable attributes, just visible "LIVE" text). Strictly
+ * scoped to WITHIN the control bar — no document-wide fallback — so this can never match
+ * an unrelated button elsewhere on the page that happens to say "LIVE" (e.g. a stream
+ * status badge). Relied on by player/native-bar.ts as the anchor to inject KickFlow's own
+ * controls after. */
 export function findLiveButton(): HTMLElement | null {
-  const scope = findControlBar() ?? document;
-  const candidates = scope.querySelectorAll<HTMLElement>('button');
+  const bar = findControlBar();
+  if (!bar) return null;
+  const candidates = bar.querySelectorAll<HTMLElement>('button');
   for (const el of candidates) {
     if (el.textContent?.trim().toUpperCase() === 'LIVE') return el;
   }
@@ -37,8 +50,8 @@ export function findLiveButton(): HTMLElement | null {
 }
 
 // UNCONFIRMED: the settings/quality button is icon-only with no aria-label anywhere in
-// the control bar (checked live) — there is no reliable selector for it. quality-lock.ts's
-// UI fallback instead guesses a position (second-to-last button in the bar's right-hand
-// cluster) and backs out gracefully if it doesn't open a quality menu. Its primary
-// mechanism (writing Kick's own `stream_quality` sessionStorage key) does not depend on
-// this at all.
+// the control bar (checked live) — there is no reliable selector for it, and a positional
+// guess was tried and removed from quality-lock.ts (risked toggling the wrong control,
+// e.g. fullscreen/captions, with no safe undo). quality-lock.ts relies solely on writing
+// Kick's own `stream_quality` sessionStorage key instead; a real UI selector is future
+// work, once one is actually confirmed.
