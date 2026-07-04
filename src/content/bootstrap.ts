@@ -259,9 +259,11 @@ async function initPlayerQolSession(lifecycle: Lifecycle): Promise<void> {
   }
 
   initQualityLock(lifecycle);
-  initLiveCatchup(lifecycle);
   initRewindHotkeys(lifecycle);
+  // Mount order determines native-bar left-to-right order (see native-bar.ts): rewind
+  // controls right after LIVE, then the catch-up indicator/toggle after that.
   initRewindControls(lifecycle);
+  initLiveCatchup(lifecycle);
 }
 
 let currentLifecycle: Lifecycle | null = null;

@@ -4,16 +4,10 @@
 export const SELECTORS = {
   chatMessagesContainer: '#chatroom-messages',
   videoPlayer: '#video-player',
-} as const;
-
-// UNCONFIRMED at time of writing: Kick's quality-selector and native rewind seek-bar are
-// icon-only with no aria-labels, so no stable selector was found during live inspection.
-// These are placeholders — quality-lock.ts and rewind-hotkeys.ts must fail gracefully
-// (log + no-op) if they don't resolve to a real element. Update once confirmed by
-// inspecting the live player.
-export const UNCONFIRMED_SELECTORS = {
-  qualityButton: '[data-testid="player-settings-button"], [aria-label="Settings" i], [aria-label="Quality" i]',
-  seekBar: '[data-testid="seek-bar"], input[type="range"][aria-label*="seek" i]',
+  // Native control bar root — confirmed live 2026-07-04 (full-width flex row,
+  // justify-between, contains the left play/volume/time/LIVE cluster and a right-hand
+  // settings/fullscreen cluster).
+  controlBar: 'div.z-controls',
 } as const;
 
 export function getChatMessagesContainer(): HTMLElement | null {
@@ -25,21 +19,26 @@ export function getVideoElement(): HTMLVideoElement | null {
   return el instanceof HTMLVideoElement ? el : null;
 }
 
-export function findQualityButton(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(UNCONFIRMED_SELECTORS.qualityButton);
+export function findControlBar(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(SELECTORS.controlBar);
 }
 
-export function findSeekBar(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(UNCONFIRMED_SELECTORS.seekBar);
-}
-
-/** Best-effort text-content lookup rather than a guessed class name (no testable
- * attributes were found on the live "LIVE"/jump-to-live control). Not currently relied on
- * by live-catchup.ts, which drives off `video.seekable` instead — kept for future use. */
+/** Best-effort text-content lookup rather than a guessed class name (confirmed live: the
+ * jump-to-live control has no testable attributes, just visible "LIVE" text). Scoped to
+ * the control bar first (its confirmed location) with a document-wide fallback. Relied on
+ * by player/native-bar.ts as the anchor to inject KickFlow's own controls after. */
 export function findLiveButton(): HTMLElement | null {
-  const candidates = document.querySelectorAll<HTMLElement>('button');
+  const scope = findControlBar() ?? document;
+  const candidates = scope.querySelectorAll<HTMLElement>('button');
   for (const el of candidates) {
     if (el.textContent?.trim().toUpperCase() === 'LIVE') return el;
   }
   return null;
 }
+
+// UNCONFIRMED: the settings/quality button is icon-only with no aria-label anywhere in
+// the control bar (checked live) — there is no reliable selector for it. quality-lock.ts's
+// UI fallback instead guesses a position (second-to-last button in the bar's right-hand
+// cluster) and backs out gracefully if it doesn't open a quality menu. Its primary
+// mechanism (writing Kick's own `stream_quality` sessionStorage key) does not depend on
+// this at all.

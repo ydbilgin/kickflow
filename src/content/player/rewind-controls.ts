@@ -1,8 +1,9 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
+import { mountIntoControlBar } from './native-bar';
 import type { Lifecycle } from '../shared/lifecycle';
 
-const OVERLAY_ID = 'kickflow-rewind-controls';
+const CONTROLS_ID = 'kickflow-rewind-controls';
 const STEP_SECONDS = 10;
 
 function seekableEnd(video: HTMLVideoElement): number | null {
@@ -43,24 +44,34 @@ function styleButton(button: HTMLButtonElement): void {
     'display:inline-flex',
     'align-items:center',
     'justify-content:center',
-    'gap:2px',
     'height:30px',
     'min-width:34px',
     'padding:0 8px',
+    'margin:0 2px',
     'border:none',
-    'border-radius:6px',
-    'background:rgba(20,20,20,0.72)',
-    'color:#fff',
-    'font:600 12px/1 system-ui,sans-serif',
+    'background:transparent',
+    'color:inherit',
+    'font:inherit',
+    'font-weight:600',
+    'font-size:12px',
+    'line-height:1',
     'cursor:pointer',
-    'backdrop-filter:blur(2px)',
+    'border-radius:4px',
   ].join(';');
 }
 
-/** MoKick-style on-screen rewind/forward + jump-to-live buttons, overlaid on the player.
- * Seeks via #video-player's own currentTime within its seekable (DVR) range — the one
- * confirmed-stable handle. Fails gracefully if seeking isn't permitted on the live stream.
- * Arrow-key seeking (rewind-hotkeys.ts) stays as a keyboard complement. */
+/** Injected inline into Kick's native control bar, right after the LIVE button
+ * (MoKick-style) — deliberately NOT a floating overlay. A floating overlay was tried
+ * first and rejected: it sits outside the bar Kick itself re-renders and manages (e.g.
+ * on fullscreen toggle), so it either gets left behind/misplaced or has to duplicate
+ * Kick's own re-render handling anyway — inline injection into the real bar (via
+ * native-bar.ts) sidesteps that entirely and gets Kick's own hover/fullscreen behavior
+ * "for free" since the buttons are genuine bar children.
+ *
+ * Seeks via #video-player's own currentTime within its seekable (DVR) range — confirmed
+ * live to work on Kick (seeking -30s kept the stream playing, seekable reports an
+ * effectively unbounded DVR window). No need to touch Kick's own (unconfirmed) native
+ * seek-bar DOM at all. */
 export function initRewindControls(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
@@ -68,59 +79,33 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     return;
   }
 
-  const anchor = video.parentElement;
-  if (!anchor) {
-    logger.warn('rewind-controls: video has no parent to anchor overlay, skipping');
-    return;
-  }
+  mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
+    const group = document.createElement('span');
+    group.style.cssText = 'display:inline-flex;align-items:center;';
 
-  if (document.getElementById(OVERLAY_ID)) return;
+    const rewind = document.createElement('button');
+    rewind.type = 'button';
+    rewind.textContent = `⏪ ${STEP_SECONDS}`;
+    rewind.title = `${STEP_SECONDS} sn geri`;
+    styleButton(rewind);
 
-  // The player's parent is position:relative (Kick's `relative aspect-video` wrapper), so
-  // an absolutely-positioned overlay pins to the video area without reflowing the layout.
-  if (getComputedStyle(anchor).position === 'static') {
-    anchor.style.position = 'relative';
-  }
+    const live = document.createElement('button');
+    live.type = 'button';
+    live.textContent = 'CANLI';
+    live.title = 'Canlı yayına dön';
+    styleButton(live);
 
-  const overlay = document.createElement('div');
-  overlay.id = OVERLAY_ID;
-  overlay.style.cssText = [
-    'position:absolute',
-    'left:12px',
-    'bottom:64px',
-    'z-index:60',
-    'display:flex',
-    'gap:6px',
-    'opacity:0.85',
-    'pointer-events:auto',
-  ].join(';');
+    const forward = document.createElement('button');
+    forward.type = 'button';
+    forward.textContent = `${STEP_SECONDS} ⏩`;
+    forward.title = `${STEP_SECONDS} sn ileri`;
+    styleButton(forward);
 
-  const rewind = document.createElement('button');
-  rewind.type = 'button';
-  rewind.textContent = `⏪ ${STEP_SECONDS}`;
-  rewind.title = `${STEP_SECONDS} sn geri`;
-  styleButton(rewind);
+    lifecycle.addEventListener(rewind, 'click', () => seekBy(video, -STEP_SECONDS));
+    lifecycle.addEventListener(forward, 'click', () => seekBy(video, STEP_SECONDS));
+    lifecycle.addEventListener(live, 'click', () => goLive(video));
 
-  const live = document.createElement('button');
-  live.type = 'button';
-  live.textContent = 'CANLI';
-  live.title = "Canlı yayına dön";
-  styleButton(live);
-  live.style.background = 'rgba(233,17,60,0.85)';
-
-  const forward = document.createElement('button');
-  forward.type = 'button';
-  forward.textContent = `${STEP_SECONDS} ⏩`;
-  forward.title = `${STEP_SECONDS} sn ileri`;
-  styleButton(forward);
-
-  lifecycle.addEventListener(rewind, 'click', () => seekBy(video, -STEP_SECONDS));
-  lifecycle.addEventListener(forward, 'click', () => seekBy(video, STEP_SECONDS));
-  lifecycle.addEventListener(live, 'click', () => goLive(video));
-
-  overlay.append(rewind, live, forward);
-  anchor.appendChild(overlay);
-  lifecycle.add(() => overlay.remove());
-
-  logger.debug('rewind-controls: overlay attached');
+    group.append(rewind, live, forward);
+    return group;
+  });
 }
