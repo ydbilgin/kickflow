@@ -34,27 +34,6 @@ function getLiveEdgeSeconds(video: HTMLVideoElement): number | null {
   return buffered.end(buffered.length - 1);
 }
 
-function styleToggleButton(button: HTMLButtonElement): void {
-  button.style.cssText = [
-    'display:inline-flex',
-    'align-items:center',
-    'justify-content:center',
-    'height:30px',
-    'padding:0 8px',
-    'margin:0 2px',
-    'border:none',
-    'background:transparent',
-    'color:inherit',
-    'font:inherit',
-    'font-weight:600',
-    'font-size:11px',
-    'line-height:1',
-    'cursor:pointer',
-    'border-radius:4px',
-    'white-space:nowrap',
-  ].join(';');
-}
-
 async function loadToggleState(): Promise<boolean> {
   try {
     const stored = await chrome.storage.local.get(TOGGLE_STORAGE_KEY);
@@ -104,9 +83,12 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
 
   const updateToggleVisual = (): void => {
     if (!toggleEl) return;
-    toggleEl.textContent = enabled ? 'OTO' : 'OTO KAPALI';
-    toggleEl.style.opacity = enabled ? '1' : '0.5';
-    toggleEl.title = enabled ? 'Canlıya otomatik yetişmeyi kapat' : 'Canlıya otomatik yetişmeyi aç';
+    // Text stays "OTO"; state is shown by the --on modifier (green when active, dim when off).
+    toggleEl.classList.toggle('kickflow-player-toggle--on', enabled);
+    toggleEl.setAttribute('aria-pressed', String(enabled));
+    toggleEl.title = enabled
+      ? 'Canlıya otomatik yetişme: AÇIK — kapatmak için tıkla'
+      : 'Canlıya otomatik yetişme: KAPALI — açmak için tıkla';
   };
 
   const onTimeUpdate = (): void => {
@@ -166,13 +148,14 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     group.style.cssText = 'display:inline-flex;align-items:center;';
 
     const indicator = document.createElement('span');
-    indicator.style.cssText =
-      'display:none;font-size:11px;font-weight:600;color:#e9113c;margin:0 4px;white-space:nowrap;';
+    indicator.className = 'kickflow-catchup-indicator';
+    indicator.style.display = 'none';
     indicatorEl = indicator;
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    styleToggleButton(toggle);
+    toggle.className = 'kickflow-player-toggle';
+    toggle.textContent = 'OTO';
     toggleEl = toggle;
     updateToggleVisual();
 

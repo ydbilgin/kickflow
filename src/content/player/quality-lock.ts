@@ -1,32 +1,139 @@
 import { logger } from '../shared/logger';
-import { getVideoElement } from '../shared/selectors';
+import { getVideoElement, findControlBar, findPlayerWrapper } from '../shared/selectors';
 import type { Lifecycle } from '../shared/lifecycle';
 
-// Kick stores the active stream quality in sessionStorage and resets it to "Auto" every
-// session (confirmed prior art: github.com/firatmelih/kick-anti-auto-quality). This is
-// the ONLY mechanism here. A positional UI fallback (clicking an unverified button in the
-// control bar's right-hand cluster, hoping it was the settings/quality control) was tried
-// and removed: it clicked before proving the target was correct, and Escape does not
-// reliably undo a real side effect on the wrong control (captions/PiP/theater/fullscreen)
-// — an unacceptable risk on the user's live player. A real UI quality selector is future
-// work, only once Kick's settings control has an actually-verified selector, not a
-// positional guess.
-const SESSION_STORAGE_KEY = 'stream_quality';
-const HIGHEST_QUALITY_GUESS = '1080p60';
+// Kick migrated its player to Amazon IVS (confirmed live 2026-07-04: localStorage carries
+// `amazon_ivs_device_config*`, `kick:player_device_id`). The old approach — writing
+// `sessionStorage.stream_quality` (prior art: kick-anti-auto-quality) — is DEAD on IVS: the
+// value is ignored and the stream stays at Auto. The IVS player's setQuality() API lives in
+// the page's MAIN world and isn't reachable from an isolated content script. So the only
+// content-script-viable path is what a user does by hand: open the native quality menu and
+// click the highest available option. That is exactly what this module automates.
 
 const PREFERENCE_STORAGE_KEY = 'kickflow.qualityPreference';
+const APPLY_DELAY_MS = 1800;   // let the player + control bar settle after a source load
+const MENU_RENDER_MS = 260;    // wait for the Radix quality menu to render after opening
+const RETRY_DELAY_MS = 1300;
+const MAX_ATTEMPTS = 5;
 
-function applySessionStorageQuality(): void {
-  try {
-    sessionStorage.setItem(SESSION_STORAGE_KEY, HIGHEST_QUALITY_GUESS);
-    logger.debug('quality-lock: wrote sessionStorage', SESSION_STORAGE_KEY, '=', HIGHEST_QUALITY_GUESS);
-  } catch (error) {
-    logger.warn('quality-lock: sessionStorage write failed', error);
+// A quality row's label like "1080p60" / "720p60" / "480p". EXACT match deliberately excludes
+// "Auto" AND login-gated rows, whose textContent has a trailing badge (e.g. the observed
+// "1080p60Giriş gerekli" when logged out) — so "highest" means highest ACTUALLY selectable.
+const PURE_RESOLUTION = /^(\d{3,4})p(60)?$/i;
+
+// The settings/quality gear is icon-only (no aria-label). Identify it ONLY by its cog SVG
+// path — never a positional/last-button fallback: pressing the wrong control (fullscreen/
+// PiP/theater) is a visible side effect that Escape can't cleanly undo. If the icon ever
+// changes, this silently no-ops (safe) rather than clicking blindly.
+const GEAR_PATH_PREFIX = 'M25.7';
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+function fire(el: Element, type: string, Ctor: typeof PointerEvent | typeof MouseEvent): void {
+  el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', pointerId: 1, button: 0 } as PointerEventInit));
+}
+/** Radix menu triggers/items react to pointerdown/up (not a bare synthetic click), so a full
+ * pointer+mouse+click sequence is dispatched. */
+function press(el: Element): void {
+  fire(el, 'pointerdown', PointerEvent);
+  fire(el, 'mousedown', MouseEvent);
+  fire(el, 'pointerup', PointerEvent);
+  fire(el, 'mouseup', MouseEvent);
+  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
+}
+
+/** Kick mounts the control bar on pointer movement over the player; simulate that so the gear
+ * exists before we look for it. No-op if there's no player wrapper. */
+function revealControlBar(): void {
+  const wrapper = findPlayerWrapper();
+  if (!wrapper) return;
+  for (const type of ['pointermove', 'mousemove', 'mouseover']) {
+    wrapper.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 8, clientY: 8 }));
   }
 }
 
-/** Preference is currently always "highest" — persisted for forward-compatibility with a
- * future settings UI, not read back to change behavior yet. */
+function findQualityGear(): HTMLButtonElement | null {
+  const bar = findControlBar();
+  if (!bar) return null;
+  for (const b of bar.querySelectorAll('button')) {
+    if ((b.querySelector('svg path')?.getAttribute('d') || '').startsWith(GEAR_PATH_PREFIX)) return b;
+  }
+  return null;
+}
+
+function resolutionScore(text: string): number {
+  const m = text.match(PURE_RESOLUTION);
+  return m ? parseInt(m[1], 10) * 10 + (m[2] ? 1 : 0) : -1;
+}
+
+function closeMenu(): void {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+}
+
+type ApplyResult = 'set' | 'already' | 'skip';
+
+/** One attempt: reveal bar → open the gear menu → if (and only if) real quality radios
+ * appeared, click the highest pure-resolution option, else abort with no side effect. */
+async function applyHighestQualityOnce(): Promise<ApplyResult> {
+  revealControlBar();
+  await sleep(60);
+  const gear = findQualityGear();
+  if (!gear) return 'skip';
+
+  press(gear);
+  await sleep(MENU_RENDER_MS);
+
+  const radios = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
+  if (radios.length === 0) {
+    // Menu didn't open (or this wasn't the quality gear) — never click on further; just close.
+    closeMenu();
+    return 'skip';
+  }
+
+  let best: HTMLElement | null = null;
+  let bestScore = -1;
+  let bestChecked = false;
+  for (const radio of radios) {
+    const s = resolutionScore((radio.textContent || '').trim());
+    if (s <= bestScore) continue;
+    bestScore = s;
+    best = radio;
+    bestChecked = radio.getAttribute('aria-checked') === 'true';
+  }
+
+  if (!best) {
+    closeMenu();
+    return 'skip';
+  }
+  if (bestChecked) {
+    closeMenu();
+    return 'already';
+  }
+  press(best);
+  await sleep(60);
+  closeMenu();
+  return 'set';
+}
+
+async function applyWithRetries(isDisposed: () => boolean): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Bail if the session was torn down mid-loop (SPA channel switch): otherwise a stale
+    // run would keep revealing/clicking the NEW channel's player menu — racing the fresh
+    // session's own quality-lock and causing spurious menu flashes.
+    if (isDisposed()) return;
+    const result = await applyHighestQualityOnce().catch(() => 'skip' as ApplyResult);
+    if (isDisposed()) return;
+    if (result === 'set' || result === 'already') {
+      logger.debug('quality-lock:', result, `(attempt ${attempt})`);
+      return;
+    }
+    await sleep(RETRY_DELAY_MS);
+  }
+  logger.debug('quality-lock: highest quality could not be applied (gear/menu unavailable)');
+}
+
+/** Preference is currently always "highest" — persisted for forward-compat with a future
+ * settings UI, not read back to change behavior yet. */
 async function ensurePreferenceStored(): Promise<void> {
   try {
     const stored = await chrome.storage.local.get(PREFERENCE_STORAGE_KEY);
@@ -38,13 +145,10 @@ async function ensurePreferenceStored(): Promise<void> {
   }
 }
 
-/** Event-driven only, no polling loops: applies once on mount and again on every
- * `loadstart` (Kick resets stream_quality to Auto on every new source load). The write is
- * silent/cheap so it's safe to repeat.
- *
- * Does NOT attempt the HLS `currentLevel` API — that needs the page's own hls.js
- * instance, which an isolated-world content script cannot reach without a MAIN-world
- * bridge. Possible phase-2 improvement if that instance is ever confirmed reachable. */
+/** Selects the channel's highest actually-available quality (excluding Auto and login-gated
+ * options) by driving Kick's own quality menu — applied once the player settles, and again on
+ * every `loadstart` (channel switch / Kick resetting to Auto). Guarded so overlapping triggers
+ * never run concurrently. */
 export function initQualityLock(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
@@ -54,6 +158,16 @@ export function initQualityLock(lifecycle: Lifecycle): void {
 
   void ensurePreferenceStored();
 
-  applySessionStorageQuality();
-  lifecycle.addEventListener(video, 'loadstart', applySessionStorageQuality);
+  let running = false;
+  const trigger = (): void => {
+    if (running) return;
+    running = true;
+    void applyWithRetries(() => lifecycle.isDisposed).finally(() => {
+      running = false;
+    });
+  };
+
+  const initialTimer = window.setTimeout(trigger, APPLY_DELAY_MS);
+  lifecycle.add(() => window.clearTimeout(initialTimer));
+  lifecycle.addEventListener(video, 'loadstart', trigger);
 }

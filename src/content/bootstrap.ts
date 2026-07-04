@@ -140,6 +140,54 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-status-label--deleted { background: #6d6d6d; color: #fff; }
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
+
+    /* --- Player controls, injected inline into Kick's native control bar. Global classes
+       (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
+       flush with the native buttons — subtle hover/active feedback, a divider from the native
+       cluster, and a live-accent "CANLI" pill. --- */
+    .kickflow-player-group {
+      display: inline-flex; align-items: center; gap: 1px;
+      margin-left: 6px; padding-left: 8px;
+      border-left: 1px solid rgba(255,255,255,0.18);
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-player-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+      height: 32px; padding: 0 9px; margin: 0; border: 0; border-radius: 6px;
+      background: transparent; color: #fff; opacity: 0.82;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.02em; line-height: 1;
+      white-space: nowrap; cursor: pointer;
+      transition: background .14s ease, opacity .14s ease, transform .09s ease;
+    }
+    .kickflow-player-btn:hover { background: rgba(255,255,255,0.16); opacity: 1; }
+    .kickflow-player-btn:active { background: rgba(255,255,255,0.24); transform: scale(0.93); }
+    .kickflow-player-btn:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
+    .kickflow-player-btn svg {
+      width: 15px; height: 15px; display: block;
+      fill: none; stroke: currentColor; stroke-width: 2.3;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+    .kickflow-player-btn--live { font-weight: 700; letter-spacing: 0.05em; padding: 0 10px; }
+    .kickflow-player-btn--live::before {
+      content: ''; width: 7px; height: 7px; margin-right: 1px; border-radius: 50%;
+      background: #e9113c; box-shadow: 0 0 5px rgba(233,17,60,0.7);
+    }
+    .kickflow-catchup-indicator {
+      display: inline-flex; align-items: center; gap: 3px; padding: 0 4px 0 8px;
+      color: #ffb020; font-size: 11px; font-weight: 700; letter-spacing: 0.01em;
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .kickflow-player-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 26px; padding: 0 8px; margin: 0 2px; border: 0; border-radius: 5px;
+      background: transparent; color: #fff; opacity: 0.55;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.05em; line-height: 1;
+      white-space: nowrap; cursor: pointer; text-transform: uppercase;
+      transition: background .14s ease, opacity .14s ease, color .14s ease;
+    }
+    .kickflow-player-toggle:hover { background: rgba(255,255,255,0.14); opacity: 0.95; }
+    .kickflow-player-toggle:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
+    .kickflow-player-toggle--on { color: #53fc18; opacity: 0.95; }
   `;
   document.head.appendChild(style);
 }

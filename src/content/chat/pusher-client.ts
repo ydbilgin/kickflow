@@ -9,10 +9,12 @@ const PUSHER_URL = 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&
 
 const CHAT_MESSAGE_EVENT = 'App\\Events\\ChatMessageEvent';
 const USER_BANNED_EVENT = 'App\\Events\\UserBannedEvent';
-// UNCONFIRMED: no delete/timeout event was observed live during the verification
-// session (requires real moderator action to trigger). Best-effort guess, gated behind
-// featureFlags.showDeletedMessages so it stays inert until confirmed in real use.
-const MESSAGE_DELETED_EVENT_GUESS = 'App\\Events\\ChatMessageDeletedEvent';
+// Event NAME confirmed from Mo'Kick's shipping source (chatroomCore binds
+// `MessageDeletedEvent`) — the earlier `ChatMessageDeletedEvent` guess was wrong, which is
+// why deleted-message preservation never fired. Kick nests the deleted message's id under
+// `message.id`; the top-level `id` is the deletion event's OWN id, so message.id is read
+// first (falling back to id for resilience).
+const MESSAGE_DELETED_EVENT = 'App\\Events\\MessageDeletedEvent';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
@@ -211,10 +213,11 @@ export class PusherClient {
         }
         return;
       }
-      case MESSAGE_DELETED_EVENT_GUESS: {
+      case MESSAGE_DELETED_EVENT: {
         if (!featureFlags.showDeletedMessages) return;
-        const data = payload as Record<string, unknown> | null;
-        const messageId = data && typeof data.id === 'string' ? data.id : undefined;
+        const data = payload as { id?: unknown; message?: { id?: unknown } } | null;
+        const rawId = data?.message?.id ?? data?.id;
+        const messageId = typeof rawId === 'string' ? rawId : undefined;
         if (messageId) this.callbacks.onMessageDeleted?.(messageId);
         return;
       }

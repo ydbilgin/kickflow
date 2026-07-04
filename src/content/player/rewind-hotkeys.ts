@@ -3,7 +3,9 @@ import { getVideoElement } from '../shared/selectors';
 import { clampSeekTarget } from './rewind-controls';
 import type { Lifecycle } from '../shared/lifecycle';
 
-const SEEK_STEP_SECONDS = 5;
+// 10s to match the inline ⏪/⏩ buttons (rewind-controls.ts STEP_SECONDS) so keyboard and
+// click seek the same amount.
+const SEEK_STEP_SECONDS = 10;
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

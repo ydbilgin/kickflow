@@ -78,26 +78,12 @@ function goLive(video: HTMLVideoElement): void {
   }
 }
 
-function styleButton(button: HTMLButtonElement): void {
-  button.style.cssText = [
-    'display:inline-flex',
-    'align-items:center',
-    'justify-content:center',
-    'height:30px',
-    'min-width:34px',
-    'padding:0 8px',
-    'margin:0 2px',
-    'border:none',
-    'background:transparent',
-    'color:inherit',
-    'font:inherit',
-    'font-weight:600',
-    'font-size:12px',
-    'line-height:1',
-    'cursor:pointer',
-    'border-radius:4px',
-  ].join(';');
-}
+// Stroke-based double-chevron « / » glyphs (styled via CSS: fill:none; stroke:currentColor) —
+// a clean "<<" / ">>" look, a native-looking alternative to the multicolor ⏪/⏩ emoji which
+// render inconsistently across platforms. Static, trusted markup (no interpolation) → innerHTML
+// is safe here.
+const ICON_REWIND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6l-6 6 6 6"/><path d="M19 6l-6 6 6 6"/></svg>';
+const ICON_FORWARD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6l6 6-6 6"/><path d="M5 6l6 6-6 6"/></svg>';
 
 /** Injected inline into Kick's native control bar, right after the LIVE button
  * (MoKick-style) — deliberately NOT a floating overlay. A floating overlay was tried
@@ -121,25 +107,28 @@ export function initRewindControls(lifecycle: Lifecycle): void {
 
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
-    group.style.cssText = 'display:inline-flex;align-items:center;';
+    group.className = 'kickflow-player-group';
 
     const rewind = document.createElement('button');
     rewind.type = 'button';
-    rewind.textContent = `⏪ ${STEP_SECONDS}`;
-    rewind.title = `${STEP_SECONDS} sn geri`;
-    styleButton(rewind);
+    rewind.className = 'kickflow-player-btn';
+    rewind.innerHTML = `${ICON_REWIND}<span>${STEP_SECONDS}</span>`;
+    rewind.title = `${STEP_SECONDS} sn geri (←)`;
+    rewind.setAttribute('aria-label', `${STEP_SECONDS} saniye geri sar`);
 
     const live = document.createElement('button');
     live.type = 'button';
+    live.className = 'kickflow-player-btn kickflow-player-btn--live';
     live.textContent = 'CANLI';
     live.title = 'Canlı yayına dön';
-    styleButton(live);
+    live.setAttribute('aria-label', 'Canlı yayına dön');
 
     const forward = document.createElement('button');
     forward.type = 'button';
-    forward.textContent = `${STEP_SECONDS} ⏩`;
-    forward.title = `${STEP_SECONDS} sn ileri`;
-    styleButton(forward);
+    forward.className = 'kickflow-player-btn';
+    forward.innerHTML = `<span>${STEP_SECONDS}</span>${ICON_FORWARD}`;
+    forward.title = `${STEP_SECONDS} sn ileri (→)`;
+    forward.setAttribute('aria-label', `${STEP_SECONDS} saniye ileri sar`);
 
     // Attached directly to the button (not routed through Lifecycle): these buttons get
     // rebuilt by native-bar.ts's ensure() whenever Kick's control bar re-renders and drops
