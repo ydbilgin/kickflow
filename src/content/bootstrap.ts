@@ -10,6 +10,7 @@ import { PusherClient } from './chat/pusher-client';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
+import { initRewindControls } from './player/rewind-controls';
 
 const OWN_LIST_ID = 'kickflow-message-list';
 const STYLE_ID = 'kickflow-styles';
@@ -97,23 +98,48 @@ function ensureStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = STYLE_ID;
+  // All selectors are scoped under #kickflow-message-list for specificity, and images use
+  // `display: inline-block !important` + an explicit px height. Kick's page is built with
+  // Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally
+  // — without overriding display, every emote/badge <img> becomes a block and drops onto
+  // its own line at natural (huge) size, which is exactly the broken stacked layout we saw.
   style.textContent = `
-    #${OWN_LIST_ID} { padding: 4px 8px; overflow-y: auto; height: 100%; box-sizing: border-box; }
-    .kickflow-message { padding: 2px 0; font-size: 13px; line-height: 1.5; word-break: break-word; }
-    .kickflow-message__time { color: #6d6d6d; margin-right: 6px; font-size: 11px; }
-    .kickflow-message__badges:empty { display: none; }
-    .kickflow-message__badges { margin-right: 4px; }
-    .kickflow-badge-icon { height: 1.1em; width: auto; vertical-align: middle; margin-right: 2px; }
-    .kickflow-badge-text { font-size: 10px; font-weight: 700; margin-right: 4px; opacity: 0.8; }
-    .kickflow-message__username { font-weight: 600; }
-    .kickflow-emote { height: 1.6em; width: auto; vertical-align: middle; margin: 0 1px; }
-    .kickflow-mention { background: rgba(83, 252, 24, 0.15); border-radius: 3px; padding: 0 2px; }
-    .kickflow-link { color: #66bfff; text-decoration: underline; }
-    .kickflow-status-label { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle; text-decoration: none; text-transform: uppercase; }
-    .kickflow-status-label--banned { background: #e9113c; color: #fff; }
-    .kickflow-status-label--deleted { background: #6d6d6d; color: #fff; }
-    .kickflow-preserved { opacity: 0.65; }
-    .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
+    #${OWN_LIST_ID} {
+      padding: 6px 10px; overflow-y: auto; height: 100%; box-sizing: border-box;
+      font-size: 13px; line-height: 1.45; color: #efeff1;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    }
+    #${OWN_LIST_ID} .kickflow-message {
+      display: block; padding: 3px 5px; border-radius: 4px;
+      word-break: break-word; overflow-wrap: anywhere;
+    }
+    #${OWN_LIST_ID} .kickflow-message:hover { background: rgba(255,255,255,0.06); }
+    #${OWN_LIST_ID} .kickflow-message__time { color: #adadb8; font-size: 11px; margin-right: 5px; }
+    #${OWN_LIST_ID} .kickflow-message__badges:empty { display: none; }
+    #${OWN_LIST_ID} .kickflow-message__badges { margin-right: 3px; }
+    #${OWN_LIST_ID} .kickflow-badge-icon {
+      display: inline-block !important; height: 15px !important; width: auto !important;
+      vertical-align: -3px; margin-right: 3px;
+    }
+    #${OWN_LIST_ID} .kickflow-badge-text { font-size: 10px; font-weight: 700; margin-right: 4px; opacity: 0.75; }
+    #${OWN_LIST_ID} .kickflow-message__username { font-weight: 700; }
+    #${OWN_LIST_ID} .kickflow-message__separator { color: #adadb8; }
+    #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; }
+    #${OWN_LIST_ID} .kickflow-emote {
+      display: inline-block !important; height: 24px !important; width: auto !important;
+      vertical-align: middle; margin: 0 2px;
+    }
+    #${OWN_LIST_ID} .kickflow-mention { color: #53fc18; font-weight: 600; }
+    #${OWN_LIST_ID} .kickflow-link { color: #66bfff; text-decoration: underline; }
+    #${OWN_LIST_ID} .kickflow-status-label {
+      display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle;
+      text-decoration: none; text-transform: uppercase;
+    }
+    #${OWN_LIST_ID} .kickflow-status-label--banned { background: #e9113c; color: #fff; }
+    #${OWN_LIST_ID} .kickflow-status-label--deleted { background: #6d6d6d; color: #fff; }
+    #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
+    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
   `;
   document.head.appendChild(style);
 }
@@ -235,6 +261,7 @@ async function initPlayerQolSession(lifecycle: Lifecycle): Promise<void> {
   initQualityLock(lifecycle);
   initLiveCatchup(lifecycle);
   initRewindHotkeys(lifecycle);
+  initRewindControls(lifecycle);
 }
 
 let currentLifecycle: Lifecycle | null = null;
