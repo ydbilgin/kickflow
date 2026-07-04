@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "KickFlow",
+  "version": "0.1.0",
+  "description": "Personal-use Kick.com companion: preserves banned/deleted chat messages and adds player quality-of-life (fixed highest quality, live catch-up, arrow-key seek).",
+  "content_scripts": [
+    {
+      "matches": ["https://kick.com/*"],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
