@@ -4,13 +4,14 @@ import { SELECTORS } from './shared/selectors';
 import { featureFlags } from './chat/feature-flags';
 import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from './chat/message-store';
 import { RenderQueue } from './chat/render-queue';
-import { trimMessageWindow } from './chat/dom-window';
+import { trimMessageWindow, isNearBottom } from './chat/dom-window';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
 import { initRewindControls } from './player/rewind-controls';
+import { initScreenshot } from './player/screenshot';
 
 const OWN_LIST_ID = 'kickflow-message-list';
 const STYLE_ID = 'kickflow-styles';
@@ -188,6 +189,21 @@ function ensureStyles(): void {
     .kickflow-player-toggle:hover { background: rgba(255,255,255,0.14); opacity: 0.95; }
     .kickflow-player-toggle:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
     .kickflow-player-toggle--on { color: #53fc18; opacity: 0.95; }
+
+    /* Chat "jump to newest" pill — shown when scrolled up and new messages arrive. Anchored
+       to #chatroom-messages (which already carries Tailwind's relative position), centered
+       above the input. */
+    .kickflow-scroll-pill {
+      position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 14px; border: 0; border-radius: 999px;
+      background: #53fc18; color: #0b0e0f; cursor: pointer;
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px; font-weight: 700;
+      line-height: 1; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+      transition: background .14s ease, transform .1s ease;
+    }
+    .kickflow-scroll-pill:hover { background: #45e00f; }
+    .kickflow-scroll-pill:active { transform: translateX(-50%) scale(0.95); }
   `;
   document.head.appendChild(style);
 }
@@ -248,6 +264,38 @@ function initChatIntegrity(container: HTMLElement, slug: string, lifecycle: Life
   const ownList = ensureOwnMessageList(container);
   lifecycle.add(() => restoreNativeMessageList(container));
 
+  // "Jump to newest" pill: appears when the user has scrolled up and new messages arrive, so
+  // live bottom-follow is never forced on someone reading history. Anchored to `container`
+  // (#chatroom-messages carries Tailwind's `relative`), removed on teardown.
+  const scrollPill = document.createElement('button');
+  scrollPill.type = 'button';
+  scrollPill.className = 'kickflow-scroll-pill';
+  scrollPill.textContent = '↓ Yeni mesajlar';
+  scrollPill.style.display = 'none';
+  scrollPill.addEventListener('click', () => {
+    const list = document.getElementById(OWN_LIST_ID);
+    if (list) list.scrollTop = list.scrollHeight;
+    scrollPill.style.display = 'none';
+  });
+  // The pill is position:absolute — it must anchor to the chat viewport. #chatroom-messages
+  // carries Tailwind `relative` today, but guard defensively: if it's ever `static`, the pill
+  // would anchor to some outer positioned ancestor and land in the wrong place / get clipped.
+  const previousInlinePosition = container.style.position;
+  if (getComputedStyle(container).position === 'static') {
+    container.style.position = 'relative';
+  }
+  container.appendChild(scrollPill);
+  lifecycle.add(() => {
+    scrollPill.remove();
+    if (previousInlinePosition) container.style.position = previousInlinePosition;
+    else container.style.removeProperty('position');
+  });
+
+  // Hide the pill the moment the user scrolls back to the bottom themselves.
+  lifecycle.addEventListener(ownList, 'scroll', () => {
+    if (isNearBottom(ownList)) scrollPill.style.display = 'none';
+  });
+
   let activated = false;
 
   const renderQueue = new RenderQueue({
@@ -265,6 +313,10 @@ function initChatIntegrity(container: HTMLElement, slug: string, lifecycle: Life
       trimMessageWindow(list, registry);
       if (wasAtBottom) {
         list.scrollTop = list.scrollHeight;
+        scrollPill.style.display = 'none';
+      } else if (appended.length > 0) {
+        // New messages arrived while the user is reading history — surface the pill.
+        scrollPill.style.display = '';
       }
     },
   });
@@ -312,6 +364,7 @@ async function initPlayerQolSession(lifecycle: Lifecycle): Promise<void> {
   // controls right after LIVE, then the catch-up indicator/toggle after that.
   initRewindControls(lifecycle);
   initLiveCatchup(lifecycle);
+  initScreenshot(lifecycle);
 }
 
 let currentLifecycle: Lifecycle | null = null;
