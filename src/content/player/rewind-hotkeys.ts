@@ -13,10 +13,11 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 /** Kick has no native arrow-key seek. Best-effort against #video-player's own
  * currentTime — the one confirmed-stable selector — rather than Kick's (unconfirmed)
- * native rewind seek-bar DOM. Clamped to the same seekable (DVR) range as
- * rewind-controls.ts's inline buttons (shared clampSeekTarget) — a live DVR window can
- * have `seekable.start(0) > 0`, so clamping only at 0 could seek before the DVR start or
- * past the live edge. Fails gracefully if the video element is gone. */
+ * native rewind seek-bar DOM. Clamped to the same [seekFloor, liveEdge] range as
+ * rewind-controls.ts's inline buttons (shared clampSeekTarget) — the floor preserves DVR
+ * rewind (`seekable.start(0)` can be > 0) while the ceiling is the buffered live edge, so a
+ * seek can neither run before the DVR start nor catapult past what is actually playable.
+ * Fails gracefully if the video element is gone. */
 export function initRewindHotkeys(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {

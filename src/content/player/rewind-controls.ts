@@ -6,23 +6,55 @@ import type { Lifecycle } from '../shared/lifecycle';
 const CONTROLS_ID = 'kickflow-rewind-controls';
 const STEP_SECONDS = 10;
 
-export function seekableEnd(video: HTMLVideoElement): number | null {
-  if (video.seekable.length === 0) return null;
-  return video.seekable.end(video.seekable.length - 1);
+// A media-time boundary (from `seekable`/`buffered`) is only trustworthy if finite and within
+// a sane range. Kick's HLS `seekable.end` can report a sentinel (~2^30 ≈ 34 years) or Infinity
+// during rebuffering (same root cause as live-catchup.ts's "-1073741819sn" bug). Feeding that
+// into a seek target would catapult currentTime to garbage and break playback — the "CANLI"
+// (go-live) button was exposed to exactly this. 24h exceeds any real Kick stream / DVR window.
+const MAX_REASONABLE_MEDIA_SECONDS = 24 * 60 * 60;
+
+function saneBoundary(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 && value <= MAX_REASONABLE_MEDIA_SECONDS ? value : null;
 }
 
-export function seekableStart(video: HTMLVideoElement): number {
-  if (video.seekable.length === 0) return 0;
-  return video.seekable.start(0);
+/** Live edge = the furthest BUFFERED (actually playable) position — mirrors Mo'Kick's player,
+ * which clamps forward/"go live" to `buffered.end`, never `seekable.end`. Always a sane finite
+ * value near currentTime, so it is immune to the bogus `seekable.end` sentinel. */
+export function liveEdge(video: HTMLVideoElement): number | null {
+  const buffered = video.buffered;
+  if (buffered.length === 0) return null;
+  return saneBoundary(buffered.end(buffered.length - 1));
 }
 
-/** Shared by this file's inline buttons and rewind-hotkeys.ts's arrow keys so both clamp
- * to the same seekable (DVR) range — a live DVR window can have `seekable.start(0) > 0`,
- * so clamping only at 0 could seek before the DVR start or past the live edge. */
+/** How far BACK a seek may go. Uses the DVR start (`seekable.start(0)` can be > 0) ONLY when
+ * the whole seekable range is trustworthy — a bogus `seekable.end` means the range is
+ * unreliable, so it falls back to the buffered start (Mo'Kick-style) rather than letting a
+ * seek rewind into a range that cannot actually play. Else 0. */
+export function seekFloor(video: HTMLVideoElement): number {
+  const seekable = video.seekable;
+  if (seekable.length > 0) {
+    const start = saneBoundary(seekable.start(0));
+    const end = saneBoundary(seekable.end(seekable.length - 1));
+    if (start !== null && end !== null) return start;
+  }
+  const buffered = video.buffered;
+  if (buffered.length > 0) {
+    const start = saneBoundary(buffered.start(0));
+    if (start !== null) return start;
+  }
+  return 0;
+}
+
+/** Shared by this file's inline buttons and rewind-hotkeys.ts's arrow keys. Clamps to
+ * [seekFloor, liveEdge]: the floor preserves DVR rewind when seekable is trustworthy, while
+ * the ceiling is the real playable live edge (`buffered.end`) — never Kick's bogus
+ * `seekable.end` — so a forward seek can't catapult past what is actually playable. */
 export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
-  const end = seekableEnd(video);
-  const max = end ?? (Number.isFinite(video.duration) ? video.duration : video.currentTime + delta);
-  return Math.min(Math.max(video.currentTime + delta, seekableStart(video)), max);
+  const target = video.currentTime + delta;
+  const floor = seekFloor(video);
+  const edge = liveEdge(video) ?? (Number.isFinite(video.duration) ? video.duration : target);
+  const ceil = Math.max(floor, edge); // guard against inversion if edge somehow < floor
+  return Math.min(Math.max(target, floor), ceil);
 }
 
 function seekBy(video: HTMLVideoElement, delta: number): void {
@@ -36,10 +68,10 @@ function seekBy(video: HTMLVideoElement, delta: number): void {
 }
 
 function goLive(video: HTMLVideoElement): void {
-  const end = seekableEnd(video);
-  if (end === null) return;
+  const edge = liveEdge(video);
+  if (edge === null) return;
   try {
-    video.currentTime = end;
+    video.currentTime = edge;
     if (video.paused) void video.play().catch(() => undefined);
   } catch (error) {
     logger.warn('rewind-controls: go-live failed', error);
@@ -75,10 +107,11 @@ function styleButton(button: HTMLButtonElement): void {
  * native-bar.ts) sidesteps that entirely and gets Kick's own hover/fullscreen behavior
  * "for free" since the buttons are genuine bar children.
  *
- * Seeks via #video-player's own currentTime within its seekable (DVR) range — confirmed
- * live to work on Kick (seeking -30s kept the stream playing, seekable reports an
- * effectively unbounded DVR window). No need to touch Kick's own (unconfirmed) native
- * seek-bar DOM at all. */
+ * Seeks via #video-player's own currentTime, clamped to [seekFloor, liveEdge] — confirmed
+ * live to work on Kick (seeking -30s kept the stream playing). The live-edge / go-live target
+ * comes from buffered.end, NOT seekable.end: Kick's seekable.end can report a bogus sentinel
+ * (~2^30) that would otherwise catapult the seek. No need to touch Kick's own (unconfirmed)
+ * native seek-bar DOM at all. */
 export function initRewindControls(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
