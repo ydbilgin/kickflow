@@ -8,6 +8,7 @@ import { RenderQueue } from './chat/render-queue';
 import { trimMessageWindow, isNearBottom } from './chat/dom-window';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
+import { fetchChatHistory } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
@@ -51,7 +52,14 @@ function getChannelSlugFromLocation(): string | null {
 const CHATROOM_ID_MAX_ATTEMPTS = 3;
 const CHATROOM_ID_RETRY_BASE_MS = 800;
 
-async function resolveChatroomId(slug: string): Promise<number | null> {
+interface ResolvedChannel {
+  /** Pusher chatroom id — used for the live `chatrooms.{id}.v2` subscription. */
+  chatroomId: number;
+  /** Channel id — used for the web.kick.com history backfill (differs from chatroomId). */
+  channelId: number;
+}
+
+async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
   // Same-origin credentials (the fetch default — no explicit `credentials: 'omit'`): the content
   // script runs ON https://kick.com/*, so this is the user's OWN browser calling the site it's
   // already logged into, exactly like the page's own API calls. Cloudflare 429s/challenges
@@ -65,9 +73,16 @@ async function resolveChatroomId(slug: string): Promise<number | null> {
     try {
       const response = await fetch(url, { headers: { accept: 'application/json' } });
       if (response.ok) {
-        const json = (await response.json()) as { chatroom?: { id?: number } };
-        const id = json.chatroom?.id;
-        return typeof id === 'number' ? id : null;
+        const json = (await response.json()) as { id?: number; chatroom?: { id?: number; channel_id?: number } };
+        const chatroomId = json.chatroom?.id;
+        if (typeof chatroomId !== 'number') return null;
+        // History uses the CHANNEL id (top-level `id` === chatroom.channel_id), NOT the chatroom
+        // id (which returns an empty history). Fall back to chatroomId if neither is present.
+        const channelId =
+          typeof json.id === 'number' ? json.id
+          : typeof json.chatroom?.channel_id === 'number' ? json.chatroom.channel_id
+          : chatroomId;
+        return { chatroomId, channelId };
       }
       const transient = response.status === 429 || response.status >= 500;
       logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status, transient ? '(retrying)' : '(terminal)');
@@ -302,15 +317,28 @@ function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
 
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
 
-  resolveChatroomId(slug).then((chatroomId) => {
+  resolveChannel(slug).then(async (resolved) => {
     if (lifecycle.isDisposed) return;
-    if (chatroomId === null) {
-      logger.warn('bootstrap: could not resolve chatroom id for', slug, '- chat integrity inactive, native chat stays visible');
+    if (!resolved) {
+      logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
       setStatus({ reason: 'chatroom-id çözülemedi — native chat' });
       return;
     }
-    setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
+    const { chatroomId, channelId } = resolved;
+    setStatus({ chatroomId, reason: 'geçmiş yükleniyor…' });
 
+    // Backfill recent history BEFORE going live so the overlay opens with the existing backlog
+    // instead of empty (hiding native would otherwise wipe what the user was already reading).
+    // Enqueued first → renders above live messages (the render queue preserves enqueue order);
+    // dedup-by-id in the store handles any overlap with the first live Pusher messages.
+    const history = await fetchChatHistory(channelId);
+    if (lifecycle.isDisposed) return;
+    for (const message of history) {
+      store.addMessage(message);
+      renderQueue.enqueue(message);
+    }
+
+    setStatus({ reason: 'Pusher bağlanıyor…' });
     const client = new PusherClient(chatroomId, {
       onConnected: () => {
         setStatus({ pusherConnected: true });

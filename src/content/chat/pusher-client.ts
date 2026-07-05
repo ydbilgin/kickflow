@@ -60,7 +60,7 @@ function normalizeBadges(raw: unknown): ChatBadge[] {
 // sender: null, or a reshaped field). Since native chat is already hidden by the time
 // these arrive, a throw here would silently freeze the own renderer — so validate the
 // required fields and drop (return null) anything malformed instead of trusting the cast.
-function normalizeMessage(raw: unknown): ChatMessage | null {
+export function normalizeMessage(raw: unknown): ChatMessage | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const sender = r.sender;
