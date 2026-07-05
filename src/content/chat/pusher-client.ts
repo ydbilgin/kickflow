@@ -29,6 +29,11 @@ export interface PusherClientCallbacks {
   onUserBanned: (payload: BanEventPayload) => void;
   onMessageDeleted?: (messageId: string) => void;
   onUnknownEvent?: (eventName: string, rawData: unknown) => void;
+  /** Fired on pusher:connection_established (before subscribe completes) — used only for
+   * status reporting; the socket may still fail to subscribe to a private/invalid channel. */
+  onConnected?: () => void;
+  /** Fired on socket close (before reconnect is scheduled) — status reporting only. */
+  onDisconnected?: () => void;
 }
 
 /** Badge shape on the message payload wasn't pinned down to a strict schema in the
@@ -136,6 +141,7 @@ export class PusherClient {
 
     socket.addEventListener('close', () => {
       if (this.disposed) return;
+      this.callbacks.onDisconnected?.();
       this.scheduleReconnect();
     });
 
@@ -172,6 +178,7 @@ export class PusherClient {
     if (eventName === 'pusher:connection_established') {
       this.reconnectAttempt = 0;
       this.subscribe();
+      this.callbacks.onConnected?.();
       return;
     }
     if (eventName === 'pusher:ping') {
@@ -214,7 +221,9 @@ export class PusherClient {
         return;
       }
       case MESSAGE_DELETED_EVENT: {
-        if (!featureFlags.showDeletedMessages) return;
+        // Always forward — the showDeletedMessages decision (preserve vs remove the row) is made
+        // downstream in ban-guard. Gating here left the message visible as a normal row when the
+        // flag was off, since KickFlow renders its own list and native never sees it (cx review 2).
         const data = payload as { id?: unknown; message?: { id?: unknown } } | null;
         const rawId = data?.message?.id ?? data?.id;
         const messageId = typeof rawId === 'string' ? rawId : undefined;

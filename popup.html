@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KickFlow</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      width: 280px; margin: 0; padding: 12px 14px;
+      background: #0e0e10; color: #efeff1;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; font-size: 13px; line-height: 1.4;
+    }
+    .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .brand { font-weight: 800; letter-spacing: 0.02em; }
+    .brand .kf { color: #53fc18; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #6d6d6d; margin-left: auto; box-shadow: 0 0 6px rgba(0,0,0,0.5); }
+    .dot--active { background: #53fc18; box-shadow: 0 0 7px rgba(83,252,24,0.7); }
+    .dot--native { background: #ffb020; box-shadow: 0 0 7px rgba(255,176,32,0.7); }
+    .dot--off { background: #6d6d6d; }
+    #reason { font-size: 12px; color: #cfcfd4; margin-bottom: 10px; min-height: 16px; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 10px; }
+    .stat { display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding: 2px 0; }
+    .stat .k { color: #adadb8; }
+    .stat .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat .v.ember { color: #e9113c; }
+    .stat .v.ochre { color: #c98a2b; }
+    .stat .v.green { color: #53fc18; }
+    .toggles { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; }
+    .row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+    .row label { color: #dcdce1; }
+    .hint { color: #7a7a85; font-size: 10.5px; margin-top: 8px; }
+    input[type=checkbox] { width: 16px; height: 16px; accent-color: #53fc18; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <span class="brand"><span class="kf">Kick</span>Flow</span>
+    <span id="dot" class="dot dot--off"></span>
+  </div>
+  <div id="reason">durum okunuyor…</div>
+
+  <div id="stats" class="stats">
+    <div class="stat"><span class="k">kanal</span><span class="v" id="slug">—</span></div>
+    <div class="stat"><span class="k">chatroom id</span><span class="v" id="chatroomId">—</span></div>
+    <div class="stat"><span class="k">Pusher</span><span class="v" id="pusher">—</span></div>
+    <div class="stat"><span class="k">mesaj</span><span class="v" id="messages">0</span></div>
+    <div class="stat"><span class="k">korunmuş</span><span class="v green" id="preserved">0</span></div>
+    <div class="stat"><span class="k">ban</span><span class="v ember" id="banned">0</span></div>
+    <div class="stat"><span class="k">silme</span><span class="v ochre" id="deleted">0</span></div>
+    <div class="stat"><span class="k">son ban</span><span class="v" id="lastBan">—</span></div>
+  </div>
+
+  <div id="toggles" class="toggles">
+    <div class="row"><label for="t-deleted">Silinen mesajları göster</label><input type="checkbox" id="t-deleted" /></div>
+    <div class="row"><label for="t-debug">Debug log (F12)</label><input type="checkbox" id="t-debug" /></div>
+    <div class="hint">Değişiklik anında uygulanır; kanal yeniden yüklenince de korunur.</div>
+  </div>
+
+  <script src="dist/popup.js"></script>
+</body>
+</html>

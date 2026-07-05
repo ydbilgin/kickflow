@@ -1,5 +1,6 @@
 import type { ChatBadge, ChatMessage } from './message-store';
 
+export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
 export const BANNED_CLASS = 'kickflow-banned';
 export const DELETED_CLASS = 'kickflow-deleted';
@@ -156,7 +157,7 @@ export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): v
 
 export function buildMessageElement(message: ChatMessage): HTMLElement {
   const row = document.createElement('div');
-  row.className = 'kickflow-message';
+  row.className = MESSAGE_CLASS;
   row.dataset.messageId = message.id;
 
   const time = document.createElement('span');

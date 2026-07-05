@@ -1,5 +1,5 @@
 import { logger } from '../shared/logger';
-import { PRESERVED_CLASS } from './message-view';
+import { MESSAGE_CLASS, PRESERVED_CLASS } from './message-view';
 import type { ChatDomRegistry } from './message-store';
 
 const MAX_NON_PRESERVED_NODES = 200;
@@ -22,8 +22,12 @@ export function isNearBottom(container: HTMLElement): boolean {
  * scrollTop is adjusted by that amount so a user reading scrollback doesn't see the list
  * jump under them. */
 export function trimMessageWindow(container: HTMLElement, registry: ChatDomRegistry): void {
-  const children = Array.from(container.children) as HTMLElement[];
-  const nonPreserved = children.filter((child) => !child.classList.contains(PRESERVED_CLASS));
+  // Only message rows are trim candidates — the overlay list also holds the scroll pill (and
+  // could hold other non-message UI), which must never be trimmed.
+  const messages = (Array.from(container.children) as HTMLElement[]).filter((child) =>
+    child.classList.contains(MESSAGE_CLASS)
+  );
+  const nonPreserved = messages.filter((child) => !child.classList.contains(PRESERVED_CLASS));
   const overflow = nonPreserved.length - MAX_NON_PRESERVED_NODES;
   if (overflow <= 0) return;
 

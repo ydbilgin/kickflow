@@ -2,4 +2,15 @@ node_modules/
 dist/
 *.log
 .cx_dispatch/
+.ax_dispatch/
+.claude/_dispatch/
 council_mokick-lite/
+
+# 7/24 monitor server — never commit data or secrets
+server/node_modules/
+server/data/
+server/.env
+*.jsonl
+*.sqlite
+*.sqlite3
+*.db

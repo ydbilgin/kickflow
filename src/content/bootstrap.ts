@@ -1,12 +1,14 @@
 import { logger, setDebugLogging } from './shared/logger';
 import { Lifecycle } from './shared/lifecycle';
 import { SELECTORS } from './shared/selectors';
-import { featureFlags } from './chat/feature-flags';
+import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
+import { getStatus, setStatus, resetStatus } from './status';
 import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from './chat/message-store';
 import { RenderQueue } from './chat/render-queue';
 import { trimMessageWindow, isNearBottom } from './chat/dom-window';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
+import { ChatOverlayMount } from './chat/overlay-mount';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -46,27 +48,39 @@ function getChannelSlugFromLocation(): string | null {
   return first;
 }
 
+const CHATROOM_ID_MAX_ATTEMPTS = 3;
+const CHATROOM_ID_RETRY_BASE_MS = 800;
+
 async function resolveChatroomId(slug: string): Promise<number | null> {
-  try {
-    // credentials: 'omit' — enforce the no-credential hard rule. The content script runs
-    // on https://kick.com/*, so a same-site fetch would otherwise attach the user's Kick
-    // session cookies; this endpoint is public and must be called unauthenticated. If the
-    // unauthenticated call ever fails, the fail-safe below keeps native chat visible.
-    const response = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`, {
-      headers: { accept: 'application/json' },
-      credentials: 'omit',
-    });
-    if (!response.ok) {
-      logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status);
-      return null;
+  // Same-origin credentials (the fetch default — no explicit `credentials: 'omit'`): the content
+  // script runs ON https://kick.com/*, so this is the user's OWN browser calling the site it's
+  // already logged into, exactly like the page's own API calls. Cloudflare 429s/challenges
+  // anonymous (credentials-stripped) requests far more readily — that was silently dropping chat
+  // integrity into native fallback (Mo'Kick fetches this same endpoint with credentials too).
+  // NOT a secret leak: no token crosses to a third party; the global no-secret-in-git rule is
+  // about committing credentials, which is unrelated. 429/5xx are transient → back off + retry;
+  // any other non-OK status is terminal. On total failure the fail-safe keeps native chat.
+  const url = `https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`;
+  for (let attempt = 0; attempt < CHATROOM_ID_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, { headers: { accept: 'application/json' } });
+      if (response.ok) {
+        const json = (await response.json()) as { chatroom?: { id?: number } };
+        const id = json.chatroom?.id;
+        return typeof id === 'number' ? id : null;
+      }
+      const transient = response.status === 429 || response.status >= 500;
+      logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status, transient ? '(retrying)' : '(terminal)');
+      if (!transient) return null;
+    } catch (error) {
+      logger.warn('bootstrap: channel lookup threw', error, '(retrying)');
     }
-    const json = (await response.json()) as { chatroom?: { id?: number } };
-    const id = json.chatroom?.id;
-    return typeof id === 'number' ? id : null;
-  } catch (error) {
-    logger.warn('bootstrap: channel lookup threw', error);
-    return null;
+    if (attempt < CHATROOM_ID_MAX_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, CHATROOM_ID_RETRY_BASE_MS * 2 ** attempt));
+    }
   }
+  logger.warn('bootstrap: channel lookup exhausted retries for', slug, '- native chat stays visible');
+  return null;
 }
 
 function waitForElement(selector: string, timeoutMs: number): Promise<HTMLElement | null> {
@@ -142,6 +156,12 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
 
+    /* The own list is a body-level position:fixed overlay (see overlay-mount.ts — the Kick
+       chat panel is entirely React-owned, so an in-panel node gets reconciled away). When the
+       overlay is active, hide the native list. The class is on <html>, NOT on #chatroom-messages,
+       because React re-renders that node and would strip a class added to it. */
+    html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
+
     /* --- Player controls, injected inline into Kick's native control bar. Global classes
        (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
        flush with the native buttons — subtle hover/active feedback, a divider from the native
@@ -208,49 +228,20 @@ function ensureStyles(): void {
   document.head.appendChild(style);
 }
 
-// Kick's native message list is virtualized/row-recycled (confirmed live 2026-07-04:
-// rows carry `data-index` + a `translateY` transform and get reused across scroll
-// positions), so tagging its DOM nodes directly would be unreliable — a recycled node
-// can silently end up representing a different message a moment later. KickFlow renders
-// its own independent list instead, fed entirely by its own Pusher connection.
+// Kick's native message list is virtualized/row-recycled AND the entire chat panel is
+// React-owned (confirmed live 2026-07-05: #chatroom-messages and every ancestor carry
+// `__reactFiber$`), so KickFlow can neither tag native rows reliably NOR inject its own list
+// inside the panel — React reconciles a foreign in-panel node away on its next re-render.
+// Instead it renders its own independent list as a document.body-level overlay aligned to the
+// chat area (see ChatOverlayMount), fed entirely by its own Pusher connection.
 //
-// The own list starts hidden and native stays visible/untouched until the first
-// message actually renders (see activateOwnMessageList) — chatroom-id resolution and
-// the Pusher connection are both async and can fail (null id, private channel, no
-// message ever arrives), and hiding native up front would leave the user with an empty
-// list AND no native chat on any of those failure paths, which is worse than doing
-// nothing. This is also the auto-fallback: if KickFlow's renderer never manages to run,
-// the user silently keeps Kick's native chat instead of losing it.
-function ensureOwnMessageList(container: HTMLElement): HTMLElement {
-  const existing = document.getElementById(OWN_LIST_ID);
-  if (existing instanceof HTMLElement && container.contains(existing)) {
-    return existing;
-  }
-
-  const ownList = document.createElement('div');
-  ownList.id = OWN_LIST_ID;
-  ownList.style.display = 'none';
-  container.appendChild(ownList);
-  return ownList;
-}
-
-function activateOwnMessageList(container: HTMLElement, ownList: HTMLElement): void {
-  const nativeList = container.firstElementChild;
-  if (nativeList instanceof HTMLElement && nativeList !== ownList) {
-    nativeList.style.display = 'none';
-  }
-  ownList.style.display = '';
-}
-
-function restoreNativeMessageList(container: HTMLElement | null): void {
-  document.getElementById(OWN_LIST_ID)?.remove();
-  const nativeList = container?.firstElementChild;
-  if (nativeList instanceof HTMLElement && nativeList.style.display === 'none') {
-    nativeList.style.display = '';
-  }
-}
-
-function initChatIntegrity(container: HTMLElement, slug: string, lifecycle: Lifecycle): void {
+// The overlay starts hidden and native stays visible/untouched until the first message
+// actually renders (mount.activate()) — chatroom-id resolution and the Pusher connection are
+// both async and can fail (null id, private channel, no message ever arrives), and hiding
+// native up front would leave the user with an empty list AND no native chat on any of those
+// failure paths. This is also the auto-fallback: if KickFlow's renderer never runs, the user
+// silently keeps Kick's native chat instead of losing it.
+function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   const registry = new ChatDomRegistry();
   const store = new ChatIntegrityStore({
     onPreservedEvicted: (message: ChatMessage) => {
@@ -261,35 +252,24 @@ function initChatIntegrity(container: HTMLElement, slug: string, lifecycle: Life
     },
   });
 
-  const ownList = ensureOwnMessageList(container);
-  lifecycle.add(() => restoreNativeMessageList(container));
+  const mount = new ChatOverlayMount(lifecycle);
+  const ownList = mount.ownList;
 
   // "Jump to newest" pill: appears when the user has scrolled up and new messages arrive, so
-  // live bottom-follow is never forced on someone reading history. Anchored to `container`
-  // (#chatroom-messages carries Tailwind's `relative`), removed on teardown.
+  // live bottom-follow is never forced on someone reading history. It lives in the overlay's
+  // fixed `root` wrapper — NOT inside `ownList` (the scroll container) — so it stays pinned to
+  // the bottom of the viewport instead of scrolling away with history (cx review 2026-07-05).
   const scrollPill = document.createElement('button');
   scrollPill.type = 'button';
   scrollPill.className = 'kickflow-scroll-pill';
   scrollPill.textContent = '↓ Yeni mesajlar';
   scrollPill.style.display = 'none';
   scrollPill.addEventListener('click', () => {
-    const list = document.getElementById(OWN_LIST_ID);
-    if (list) list.scrollTop = list.scrollHeight;
+    ownList.scrollTop = ownList.scrollHeight;
     scrollPill.style.display = 'none';
   });
-  // The pill is position:absolute — it must anchor to the chat viewport. #chatroom-messages
-  // carries Tailwind `relative` today, but guard defensively: if it's ever `static`, the pill
-  // would anchor to some outer positioned ancestor and land in the wrong place / get clipped.
-  const previousInlinePosition = container.style.position;
-  if (getComputedStyle(container).position === 'static') {
-    container.style.position = 'relative';
-  }
-  container.appendChild(scrollPill);
-  lifecycle.add(() => {
-    scrollPill.remove();
-    if (previousInlinePosition) container.style.position = previousInlinePosition;
-    else container.style.removeProperty('position');
-  });
+  mount.root.appendChild(scrollPill);
+  lifecycle.add(() => scrollPill.remove());
 
   // Hide the pill the moment the user scrolls back to the bottom themselves.
   lifecycle.addEventListener(ownList, 'scroll', () => {
@@ -299,20 +279,18 @@ function initChatIntegrity(container: HTMLElement, slug: string, lifecycle: Life
   let activated = false;
 
   const renderQueue = new RenderQueue({
-    getContainer: () => document.getElementById(OWN_LIST_ID),
+    getContainer: () => ownList,
     registry,
     onFlush: (appended, wasAtBottom) => {
-      const list = document.getElementById(OWN_LIST_ID);
-      if (!list) return;
-
       if (!activated && appended.length > 0) {
         activated = true;
-        activateOwnMessageList(container, ownList);
+        mount.activate();
+        setStatus({ active: true, reason: 'aktif — kendi liste render ediliyor' });
       }
 
-      trimMessageWindow(list, registry);
+      trimMessageWindow(ownList, registry);
       if (wasAtBottom) {
-        list.scrollTop = list.scrollHeight;
+        ownList.scrollTop = ownList.scrollHeight;
         scrollPill.style.display = 'none';
       } else if (appended.length > 0) {
         // New messages arrived while the user is reading history — surface the pill.
@@ -328,22 +306,36 @@ function initChatIntegrity(container: HTMLElement, slug: string, lifecycle: Life
     if (lifecycle.isDisposed) return;
     if (chatroomId === null) {
       logger.warn('bootstrap: could not resolve chatroom id for', slug, '- chat integrity inactive, native chat stays visible');
+      setStatus({ reason: 'chatroom-id çözülemedi — native chat' });
       return;
     }
+    setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
 
     const client = new PusherClient(chatroomId, {
+      onConnected: () => {
+        setStatus({ pusherConnected: true });
+        // Don't clobber the "aktif" reason if the list is already rendering (reconnect case).
+        if (!getStatus().active) setStatus({ reason: 'Pusher bağlı — ilk mesaj bekleniyor' });
+      },
+      onDisconnected: () => {
+        setStatus({ pusherConnected: false });
+      },
       onMessage: (message) => {
         store.addMessage(message);
         renderQueue.enqueue(message);
       },
       onUserBanned: (payload) => {
+        setStatus({ lastBanAt: Date.now() });
         handleUserBanned(payload.userId, { store, registry });
       },
       onMessageDeleted: (messageId) => {
         handleMessageDeleted(messageId, { store, registry });
       },
     });
-    lifecycle.add(() => client.dispose());
+    lifecycle.add(() => {
+      client.dispose();
+      setStatus({ pusherConnected: false });
+    });
     client.connect();
   });
 }
@@ -386,9 +378,12 @@ async function startSession(slug: string): Promise<void> {
 
   if (!chatContainer) {
     logger.warn('bootstrap:', SELECTORS.chatMessagesContainer, 'not found for', slug, '- chat integrity module skipped');
+    setStatus({ reason: 'chat paneli bulunamadı — native chat' });
     return;
   }
-  initChatIntegrity(chatContainer, slug, lifecycle);
+  // chatContainer (checked above) is the gate that the chat panel exists; the overlay mount
+  // then tracks #chatroom-messages by selector itself (it must survive Kick replacing it).
+  initChatIntegrity(slug, lifecycle);
 }
 
 function stopSession(): void {
@@ -403,8 +398,53 @@ function handlePotentialNavigation(): void {
   logger.debug('bootstrap: channel changed', currentSlug, '->', slug);
   stopSession();
   currentSlug = slug;
+  resetStatus(slug);
   if (slug) {
     void startSession(slug);
+  }
+}
+
+/** Popup ↔ content-script bridge: report status + apply flag toggles. activeTab grants the
+ * popup access on open. Flags persist to chrome.storage.local so a toggle survives a reload. */
+function installStatusBridge(): void {
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'kickflow:getStatus') {
+      const ownList = document.getElementById('kickflow-message-list');
+      sendResponse({
+        ...getStatus(),
+        messageCount: ownList ? ownList.querySelectorAll('.kickflow-message').length : 0,
+        preservedCount: document.querySelectorAll('.kickflow-preserved').length,
+        bannedCount: document.querySelectorAll('.kickflow-banned').length,
+        deletedCount: document.querySelectorAll('.kickflow-deleted').length,
+        flags: { showDeletedMessages: featureFlags.showDeletedMessages, debugLogging: featureFlags.debugLogging },
+      });
+      return;
+    }
+    if (
+      msg.type === 'kickflow:setFlag' &&
+      (msg.key === 'showDeletedMessages' || msg.key === 'debugLogging') &&
+      typeof msg.value === 'boolean'
+    ) {
+      const key = msg.key as keyof FeatureFlags;
+      setFeatureFlag(key, msg.value);
+      if (key === 'debugLogging') setDebugLogging(msg.value);
+      void chrome.storage.local.set({ ['kf_flag_' + key]: msg.value });
+      sendResponse({ ok: true });
+      return;
+    }
+  });
+}
+
+/** Load flag overrides the user set via the popup, applied before the first session starts so
+ * they take effect immediately (not just after the next toggle). */
+async function applySavedFlags(): Promise<void> {
+  try {
+    const saved = await chrome.storage.local.get(['kf_flag_showDeletedMessages', 'kf_flag_debugLogging']);
+    if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
+    if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);
+  } catch {
+    // storage unavailable — fall back to the compiled-in defaults
   }
 }
 
@@ -426,10 +466,12 @@ function installNavigationHooks(): void {
   window.addEventListener('kickflow:locationchange', handlePotentialNavigation);
 }
 
-function main(): void {
+async function main(): Promise<void> {
+  await applySavedFlags();
   setDebugLogging(featureFlags.debugLogging);
+  installStatusBridge();
   installNavigationHooks();
   handlePotentialNavigation();
 }
 
-main();
+void main();

@@ -197,6 +197,21 @@ export class ChatIntegrityStore {
     return this.messageById.get(messageId);
   }
 
+  /** Fully drop a message from the index (used when showDeletedMessages is off — mimic native
+   * deletion). No-op if it's currently preserved (a ban strike-through must win). The message may
+   * still sit in the global/per-user ring buffers; that's harmless — a later eviction's forget()
+   * for an already-removed id is a no-op. */
+  removeMessage(messageId: string): void {
+    const message = this.messageById.get(messageId);
+    if (!message || message.preserved) return;
+    this.messageById.delete(messageId);
+    const ids = this.messagesByUserId.get(message.sender.id);
+    if (ids) {
+      ids.delete(messageId);
+      if (ids.size === 0) this.messagesByUserId.delete(message.sender.id);
+    }
+  }
+
   markUserBanned(userId: number): ChatMessage[] {
     const messages = this.getMessagesByUserId(userId);
     for (const message of messages) {
