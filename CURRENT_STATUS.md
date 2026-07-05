@@ -1,12 +1,28 @@
 # KickFlow — CURRENT STATUS
 
 > Bu dosya = projenin anlık durumu. Owner "status oku" derse BU dosya okunur.
-> Son güncelleme: 2026-07-04
+> Son güncelleme: 2026-07-05
 
 ## Proje
-- **KickFlow** = Yasin'in kişisel Chrome MV3 eklentisi, Kick.com için. Repo: `F:\GitHub\kickflow` (lokal git, remote YOK, commit sadece Yasin Derya Bilgin).
-- **Amaç:** (1) banlanan/silinen chat mesajlarını YERİNDE üstü-çizili koru (BTTV-tarzı — MoKick'te kayboluyor), (2) player QoL (rewind/adaptif/kalite).
+- **KickFlow** = Yasin'in kişisel Chrome MV3 eklentisi (Kick.com) + **7/24 sunucu monitörü**. Repo: `F:\GitHub\kickflow` (lokal git, remote YOK, commit sadece Yasin Derya Bilgin).
+- **Amaç:** (1) banlanan/silinen chat mesajlarını YERİNDE üstü-çizili koru, (2) player QoL (rewind/adaptif/kalite/screenshot/pill), (3) **7/24 ban/silme takibi** (Oracle sunucu → banlist.laureth.xyz).
+
+## 🟢 7/24 MONITOR SERVER + banlist.laureth.xyz (2026-07-05, CANLI)
+- **Ne:** Kick public Pusher chat'ten 7/24 silinen+banlanan mesaj toplayıcı (orijinal metin + kim banladı + süre). Kaynak artık **AYRI REPO: `F:\GitHub\banlist-monitor`** (lokal git, initial commit `115c556`, kickflow'dan çıkarıldı 2026-07-05 — istenirse yayınlanabilir; deploy source buradan). Node/ws/SQLite/fastify. Deploy: Oracle `/opt/kickflow/server`, systemd `kickflow-monitor` (active+enabled). (Not: eski `kickflow/server/src` kalıntısı bir sistem-process kilidi yüzünden silinemedi → reboot sonrası elle sil.) İzlenen: levo `24906135`, hype `24495088`. Şu an ~5 ban + 26 silme yakalandı (mod'lar: Chhatto, SelamBenDi görünüyor; banned_by+süre çalışıyor).
+- **Viewer:** `https://banlist.laureth.xyz` — sayfa-içi şifre **`kick`** (Cloudflare Access DIŞI → sadece bu şifre). Tunnel route + DNS **CF API'den** eklendi (`/opt/laureth/secrets/cf_api_token`).
+- **Tasarım v2 (2026-07-05, design-council + builder-opus + cx review):** "Forensic Ledger" — tri-face tipografi (serif tarih / mono omurga / sans sohbet), zaman-oluğu, tarihlere göre sticky bölümler, ban=ember/delete=ochre, green karantinada, **reply context** (↳ replying to @X — defensive, gerçek reply gelince kesinleşir), **kullanıcı→sağ kayan yan panel** (o kişinin o kanaldaki kayıtları). SQLite `reply_to_*` kolonları eklendi.
+- **Pipeline:** Opus SPEC → builder-opus → cx cross-family review → deploy (her aşama). Detay: memory `kickflow-monitor-server.md`. Mimari: tek multiplexed socket, per-channel demux, ephemeral buffer, Pusher-only (Kick API'ye dokunmaz — slug→id tarayıcıda).
+- **YAPILDI (2026-07-05):** viewer-v2 + admin paneli (kanal hot-ekleme, ADMIN_TOKEN) + cookie-auth ✅ canlı; laureth.xyz içeriği artık Caddy basic_auth (user `laureth`) — email-OTP kaldırıldı ✅. **AÇIK:** reply-shape canlı doğrulaması; Discord alert = owner talebiyle ÇIKARILDI. **Yasal:** başkalarının silinen mesajı = KVKK gri-alan → ÖZEL tutuldu (public teşhir YAPILMADI, bilinçli).
 - **Mimari:** A1 = Kick native chat'ini gizle, kendi salt-okunur Pusher bağlantımızdan (`chatrooms.{id}.v2`, public) beslenen kendi listemizi çiz. 3 council turu + 3 Opus critic + canlı DOM doğrulamasıyla seçildi. Kararlar: `docs/superpowers/specs/2026-07-04-*.md`.
+
+## 🟢 2026-07-05 — CHAT OVERLAY FIX (kök sebep bulundu, CANLI KANITLI) + popup + Mode-A
+- **Kök sebep (canlı doğrulandı, levo):** "Banlanan mesaj kayboluyor / kendi liste hiç açılmıyor / native'e düşüyor" = Kick chat paneli TAMAMEN React kontrolünde (`#chatroom-messages` + tüm atalar `__reactFiber$`). Listemizi panele enjekte edince React söküyordu (React error #418 + sonsuz "render-queue: container not found, dropping" → hiç aktifleşmiyor → native chat → ban'da mesaj siliniyor). İlk 429/id-fetch teorisi CANLI testte çürüdü (fetch 200'dü). Detay: memory `kickflow-chat-react-overlay-mount`.
+- **Fix:** kendi liste artık `document.body` seviyesinde `position:fixed` **overlay** (React dışı) — outer fixed wrapper (pill'i tutar) + inner scroll list; `#chatroom-messages`'a hizalı (ResizeObserver + resize/scroll + 500ms). Native `<html>.kickflow-chat-active` class'ıyla gizli (React silemez). Yeni: `src/content/chat/overlay-mount.ts`.
+- **CANLI KANIT (izole muted Chromium, levo):** overlay aktif, native gizli, **GERÇEK banlar korundu** — `ban-guard: updated 1/1/2`, SNAP `banned:4`, "banlandı" yerinde üstü-çizili. Görsel: chat düzgün (badge/emote/renk). → DOĞRULANMADI #2 ARTIK ÇÖZÜLDÜ.
+- **Mode-A hardening:** `resolveChatroomId` artık same-origin credentials (Mo'Kick gibi) + 429/5xx backoff-retry (ayrı latent native-fallback riskini kapatır).
+- **Popup yönetim/durum UI (YENİ):** ikon→panel; aktif/native + SEBEP, chatroom id, Pusher, mesaj/korunmuş/ban/silme sayaçları, son ban; toggle: silinen-göster + debug-log (chrome.storage'a persist). `src/popup/`, `status.ts`, `manifest action`+`activeTab`. Build'e 2. entry (`dist/popup.js`).
+- **Review:** overlay fix cx cross-family review'landı (pill bug bulundu+düzeltildi+doğrulandı). Mode-A+popup için cx review #2 (devam ediyor). Build (tsc+esbuild) temiz.
+- **Sıradaki özellikler (ax_pro envanteri):** `docs/mokick-feature-gap-plan.md` — Top 5: @mention+ses, ok-tuşu ses+oto-theatre, kanal gizleme, chat Ctrl+tık, öncelikli-kullanıcı+mod-log.
 
 ## Ne YAPILDI (kod yazıldı + review'landı + build temiz)
 - **Chat modülü:** kendi liste render'ı (emote `files.kick.com/emotes/{id}/fullsize` + badge + mention + link), banlı/silinen mesaj yerinde `.kickflow-preserved` üstü-çizili + "banlandı/silindi" etiketi, preserved mesajlar eviction'dan muaf (cap 50 + TTL). CSS düzeltildi (Tailwind `img{display:block}` reset'i badge/emote'ları bozuyordu → `inline-block !important`). Kullanıcı ekran görüntüsünde chat'in geldiği DOĞRULANDI.
@@ -24,7 +40,7 @@
 
 ## DOĞRULANMADI (owner canlı test etmeli — SIRADAKİ İŞ)
 1. **Player kontrolleri:** ✅ ARTIK DOĞRULANDI — Playwright izole Chromium'da gerçek canlı yayında rewind (⏪10/CANLI/10⏩) + adaptif mount ve fonksiyon doğrulandı. Owner yine de kendi Chrome'unda `reload → F5` ile teyit etsin (aynı kod). Kalite kilidi hâlâ canlı gözlenmedi (sessionStorage tabanlı).
-2. **Gerçek ban/silme yerinde üstü-çiziliyor mu:** canlı bir moderasyon eylemi hiç gözlenmedi. Mekanizma doğru yazıldı ama gerçek ban ile test edilmedi.
+2. **Gerçek ban/silme yerinde üstü-çiziliyor mu:** ✅ ÇÖZÜLDÜ (2026-07-05). levo'da GERÇEK banlarla canlı doğrulandı — `ban-guard: updated 1/1/2`, "banlandı" yerinde üstü-çizili. (Kök sebep overlay-mount'tu; yukarıdaki 2026-07-05 bölümüne bak.) Not: gerçek `MessageDeletedEvent` (silme) hâlâ canlı gözlenmedi — event adı doğru, ban ile aynı yoldan geçiyor.
 3. **Silme event'i:** ✅ ad artık biliniyor (`App\Events\MessageDeletedEvent`, MoKick kaynağından) ve flag AÇIK — AMA canlı bir gerçek silme henüz gözlenmedi. Owner login'li makinede ilk silmede orijinal-metin-üstü-çizili çalışıyor mu doğrulayacak.
 4. **Kalite:** ✅ ÇÖZÜLDÜ (IVS menü tıklama) — logged-out izole Chromium'da 720p60 seçimi doğrulandı. Owner login'li makinede 1080p60'a kilitleniyor mu + menü flash'ı rahatsız edici mi teyit edecek.
 5. **Stutter MPO fix ile geçti mi:** `OverlayTestMode=5` zaten yazılı AMA reboot bekliyor (memory `multimonitor-mpo-stutter`). Reboot sonrası test.
