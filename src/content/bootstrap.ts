@@ -428,8 +428,8 @@ function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
         setStatus({ lastBanAt: Date.now() });
         handleUserBanned(payload, { store, registry });
       },
-      onMessageDeleted: (messageId) => {
-        handleMessageDeleted(messageId, { store, registry });
+      onMessageDeleted: (payload) => {
+        handleMessageDeleted(payload, { store, registry });
       },
     });
     lifecycle.add(() => {

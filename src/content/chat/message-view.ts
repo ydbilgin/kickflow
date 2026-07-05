@@ -1,4 +1,4 @@
-import type { ChatBadge, ChatMessage } from './message-store';
+import type { ChatBadge, ChatMessage, PreservedMeta } from './message-store';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -157,6 +157,18 @@ function appendModLabel(row: HTMLElement, mod: string | null | undefined): void 
   row.appendChild(span);
 }
 
+/** Who/what removed a deleted message. MessageDeletedEvent carries aiModerated + the flagged
+ * rules but NO human-mod username (only bans carry banned_by) → "AI mod (hate)" or "mod";
+ * null when the payload didn't say. */
+function deleteAttribution(meta: PreservedMeta): string | null {
+  if (meta.aiModerated === true) {
+    const rules = (meta.violatedRules ?? []).filter(Boolean);
+    return rules.length ? `AI mod (${rules.join(', ')})` : 'AI mod';
+  }
+  if (meta.aiModerated === false) return 'mod';
+  return null;
+}
+
 /** Applies preserved/banned/deleted visual status to an already-built row. Idempotent,
  * and deliberately called from two places:
  *  - buildMessageElement, at render time (covers a UserBannedEvent arriving while the
@@ -186,6 +198,7 @@ export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): v
   } else if (message.preservedReason === 'deleted') {
     row.classList.add(DELETED_CLASS);
     appendStatusLabel(row, 'silindi', 'deleted');
+    appendModLabel(row, deleteAttribution(meta));
   }
 }
 

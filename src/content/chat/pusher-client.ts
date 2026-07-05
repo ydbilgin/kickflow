@@ -32,10 +32,19 @@ export interface BanEventPayload {
   expiresAt: string | null;
 }
 
+export interface DeleteEventPayload {
+  messageId: string;
+  /** true = removed by Kick's AI moderation, false = by a human mod, null = payload didn't say.
+   * (MessageDeletedEvent carries no human-mod username — only bans carry banned_by.) */
+  aiModerated: boolean | null;
+  /** Rules the AI flagged (e.g. ["hate"]); empty for human-mod deletes. */
+  violatedRules: string[];
+}
+
 export interface PusherClientCallbacks {
   onMessage: (message: ChatMessage) => void;
   onUserBanned: (payload: BanEventPayload) => void;
-  onMessageDeleted?: (messageId: string) => void;
+  onMessageDeleted?: (payload: DeleteEventPayload) => void;
   onUnknownEvent?: (eventName: string, rawData: unknown) => void;
   /** Fired on pusher:connection_established (before subscribe completes) — used only for
    * status reporting; the socket may still fail to subscribe to a private/invalid channel. */
@@ -263,10 +272,19 @@ export class PusherClient {
         // Always forward — the showDeletedMessages decision (preserve vs remove the row) is made
         // downstream in ban-guard. Gating here left the message visible as a normal row when the
         // flag was off, since KickFlow renders its own list and native never sees it (cx review 2).
-        const data = payload as { id?: unknown; message?: { id?: unknown } } | null;
+        // Live-captured shape: {id, message:{id}, aiModerated, violatedRules:[...]}. aiModerated
+        // distinguishes an AI-moderation delete (with the flagged rule) from a human-mod delete.
+        const data = payload as
+          | { id?: unknown; message?: { id?: unknown }; aiModerated?: unknown; violatedRules?: unknown }
+          | null;
         const rawId = data?.message?.id ?? data?.id;
         const messageId = typeof rawId === 'string' ? rawId : undefined;
-        if (messageId) this.callbacks.onMessageDeleted?.(messageId);
+        if (!messageId) return;
+        const aiModerated = typeof data?.aiModerated === 'boolean' ? data.aiModerated : null;
+        const violatedRules = Array.isArray(data?.violatedRules)
+          ? data.violatedRules.filter((rule): rule is string => typeof rule === 'string')
+          : [];
+        this.callbacks.onMessageDeleted?.({ messageId, aiModerated, violatedRules });
         return;
       }
       default: {

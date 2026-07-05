@@ -1,7 +1,7 @@
 import { logger } from '../shared/logger';
 import { featureFlags } from './feature-flags';
 import { applyPreservedMarking } from './message-view';
-import type { BanEventPayload } from './pusher-client';
+import type { BanEventPayload, DeleteEventPayload } from './pusher-client';
 import type { ChatDomRegistry, ChatIntegrityStore } from './message-store';
 
 export interface BanGuardDeps {
@@ -41,14 +41,18 @@ export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): 
  *          its OWN list (native never sees the delete), doing nothing would leave the deleted
  *          text visible as a normal row (cx review 2). A message already preserved for another
  *          reason (a ban strike-through) is left untouched — a ban must not be silently removed. */
-export function handleMessageDeleted(messageId: string, deps: BanGuardDeps): void {
+export function handleMessageDeleted(payload: DeleteEventPayload, deps: BanGuardDeps): void {
+  const { messageId } = payload;
   if (featureFlags.showDeletedMessages) {
-    const message = deps.store.markMessageDeleted(messageId);
+    const message = deps.store.markMessageDeleted(messageId, {
+      aiModerated: payload.aiModerated,
+      violatedRules: payload.violatedRules,
+    });
     if (!message) return;
     const element = deps.registry.getElementForMessageId(messageId);
     if (!element) return; // not rendered yet — buildMessageElement will mark it
     applyPreservedMarking(element, message);
-    logger.debug('ban-guard: struck-through deleted message', messageId);
+    logger.debug('ban-guard: struck-through deleted message', messageId, payload.aiModerated ? '(AI)' : '(mod)');
     return;
   }
 

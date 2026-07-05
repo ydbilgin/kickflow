@@ -27,6 +27,10 @@ export interface PreservedMeta {
   durationMin?: number | null;
   /** Moderator who issued the ban/timeout, if known. */
   bannedBy?: string | null;
+  /** Deletes: true = AI moderation, false = human mod, null/undefined = unknown. */
+  aiModerated?: boolean | null;
+  /** Deletes: AI-flagged rules (e.g. ["hate"]). */
+  violatedRules?: string[];
 }
 
 export interface ChatMessage {
@@ -232,10 +236,10 @@ export class ChatIntegrityStore {
     return messages;
   }
 
-  markMessageDeleted(messageId: string): ChatMessage | undefined {
+  markMessageDeleted(messageId: string, meta: PreservedMeta = {}): ChatMessage | undefined {
     const message = this.messageById.get(messageId);
     if (!message) return undefined;
-    this.preserveMessage(message, 'deleted');
+    this.preserveMessage(message, 'deleted', meta);
     return message;
   }
 
