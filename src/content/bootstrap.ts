@@ -14,6 +14,7 @@ import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
 import { initRewindControls } from './player/rewind-controls';
+import { initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
 
 const OWN_LIST_ID = 'kickflow-message-list';
@@ -181,51 +182,120 @@ function ensureStyles(): void {
 
     /* --- Player controls, injected inline into Kick's native control bar. Global classes
        (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
-       flush with the native buttons — subtle hover/active feedback, a divider from the native
-       cluster, and a live-accent "CANLI" pill. --- */
+       flush with the native buttons while keeping fixed dimensions across re-renders. --- */
     .kickflow-player-group {
-      display: inline-flex; align-items: center; gap: 1px;
-      margin-left: 6px; padding-left: 8px;
+      display: inline-flex; align-items: center; gap: 5px;
+      height: 32px; margin-left: 6px; padding-left: 8px;
       border-left: 1px solid rgba(255,255,255,0.18);
       font-family: 'Inter','Segoe UI',system-ui,sans-serif;
     }
-    .kickflow-player-btn {
-      display: inline-flex; align-items: center; justify-content: center; gap: 3px;
-      height: 32px; padding: 0 9px; margin: 0; border: 0; border-radius: 6px;
-      background: transparent; color: #fff; opacity: 0.82;
-      font-size: 12px; font-weight: 600; letter-spacing: 0.02em; line-height: 1;
-      white-space: nowrap; cursor: pointer;
-      transition: background .14s ease, opacity .14s ease, transform .09s ease;
+    .kickflow-catchup-group,
+    .kickflow-speed-group {
+      margin-left: 4px; padding-left: 0; border-left: 0;
     }
-    .kickflow-player-btn:hover { background: rgba(255,255,255,0.16); opacity: 1; }
-    .kickflow-player-btn:active { background: rgba(255,255,255,0.24); transform: scale(0.93); }
-    .kickflow-player-btn:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
+    .kickflow-player-btn,
+    .kickflow-catchup-indicator,
+    .kickflow-player-toggle,
+    .kickflow-speed-btn {
+      appearance: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      margin: 0; border: 0; color: #fff; line-height: 1; white-space: nowrap; cursor: pointer;
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+      transition: background .14s ease, opacity .14s ease, transform .09s ease, color .14s ease;
+    }
+    .kickflow-player-btn {
+      gap: 3px; height: 32px; min-width: 32px; padding: 0 9px; border-radius: 6px;
+      background: transparent; opacity: 0.82; font-size: 12px; font-weight: 600;
+    }
+    .kickflow-player-btn:hover,
+    .kickflow-catchup-indicator:hover,
+    .kickflow-player-toggle:hover,
+    .kickflow-speed-btn:hover {
+      background: rgba(255,255,255,0.16); opacity: 1;
+    }
+    .kickflow-player-btn:active,
+    .kickflow-catchup-indicator:active,
+    .kickflow-player-toggle:active,
+    .kickflow-speed-btn:active {
+      background: rgba(255,255,255,0.24); transform: scale(0.94);
+    }
+    .kickflow-player-btn:focus-visible,
+    .kickflow-catchup-indicator:focus-visible,
+    .kickflow-player-toggle:focus-visible,
+    .kickflow-speed-btn:focus-visible {
+      outline: 2px solid #53fc18; outline-offset: 1px;
+    }
     .kickflow-player-btn svg {
       width: 15px; height: 15px; display: block;
       fill: none; stroke: currentColor; stroke-width: 2.3;
       stroke-linecap: round; stroke-linejoin: round;
     }
-    .kickflow-player-btn--live { font-weight: 700; letter-spacing: 0.05em; padding: 0 10px; }
+    .kickflow-seek-pill {
+      display: inline-flex; align-items: stretch; height: 32px; overflow: hidden;
+      border-radius: 999px; background: rgba(255,255,255,0.07);
+    }
+    .kickflow-seek-pill__btn {
+      height: 32px; min-width: 49px; border-radius: 0; padding: 0 8px;
+    }
+    .kickflow-seek-pill__btn + .kickflow-seek-pill__btn {
+      border-left: 1px solid rgba(255,255,255,0.18);
+    }
+    .kickflow-seek-pill__btn:active { transform: none; }
+    .kickflow-player-btn--live {
+      min-width: 68px; font-weight: 700; padding: 0 10px;
+    }
     .kickflow-player-btn--live::before {
       content: ''; width: 7px; height: 7px; margin-right: 1px; border-radius: 50%;
       background: #e9113c; box-shadow: 0 0 5px rgba(233,17,60,0.7);
     }
     .kickflow-catchup-indicator {
-      display: inline-flex; align-items: center; gap: 3px; padding: 0 4px 0 8px;
-      color: #ffb020; font-size: 11px; font-weight: 700; letter-spacing: 0.01em;
-      white-space: nowrap; font-variant-numeric: tabular-nums;
+      height: 26px; min-width: 102px; padding: 0 8px; border-radius: 5px;
+      background: rgba(255,176,32,0.14); color: #ffb020; opacity: 0.95;
+      font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
     }
     .kickflow-player-toggle {
-      display: inline-flex; align-items: center; justify-content: center;
-      height: 26px; padding: 0 8px; margin: 0 2px; border: 0; border-radius: 5px;
-      background: transparent; color: #fff; opacity: 0.55;
-      font-size: 10px; font-weight: 700; letter-spacing: 0.05em; line-height: 1;
-      white-space: nowrap; cursor: pointer; text-transform: uppercase;
-      transition: background .14s ease, opacity .14s ease, color .14s ease;
+      height: 26px; min-width: 42px; padding: 0 8px; border-radius: 5px;
+      background: transparent; opacity: 0.55;
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
     }
-    .kickflow-player-toggle:hover { background: rgba(255,255,255,0.14); opacity: 0.95; }
-    .kickflow-player-toggle:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
     .kickflow-player-toggle--on { color: #53fc18; opacity: 0.95; }
+    .kickflow-speed-btn {
+      height: 26px; min-width: 58px; padding: 0 8px; border-radius: 5px;
+      background: rgba(255,255,255,0.07); opacity: 0.9;
+      font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    .kickflow-speed-menu {
+      position: fixed; z-index: 2147483647; min-width: 128px; padding: 6px;
+      border: 1px solid rgba(255,255,255,0.16); border-radius: 8px;
+      background: rgba(18,20,24,0.97); color: #fff;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-speed-menu__item {
+      appearance: none; display: flex; align-items: center; gap: 7px;
+      width: 100%; height: 30px; padding: 0 10px; border: 0; border-radius: 5px;
+      background: transparent; color: #fff; cursor: pointer;
+      font-size: 12px; font-weight: 700; text-align: left; font-variant-numeric: tabular-nums;
+    }
+    .kickflow-speed-menu__item::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%; background: transparent;
+    }
+    .kickflow-speed-menu__item[aria-checked="true"]::before { background: #53fc18; }
+    .kickflow-speed-menu__item:hover,
+    .kickflow-speed-menu__item:focus-visible {
+      outline: none; background: rgba(255,255,255,0.13);
+    }
+    .kickflow-speed-menu__separator {
+      height: 1px; margin: 5px 4px; background: rgba(255,255,255,0.14);
+    }
+    .kickflow-speed-warning {
+      position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
+      z-index: 2147483647; padding: 7px 11px; border-radius: 6px;
+      background: rgba(18,20,24,0.96); color: #ffcf66;
+      border: 1px solid rgba(255,207,102,0.35); box-shadow: 0 8px 24px rgba(0,0,0,0.38);
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px; font-weight: 700;
+      line-height: 1; white-space: nowrap;
+    }
 
     /* Chat "jump to newest" pill — shown when scrolled up and new messages arrive. Anchored
        to #chatroom-messages (which already carries Tailwind's relative position), centered
@@ -386,6 +456,7 @@ async function initPlayerQolSession(lifecycle: Lifecycle): Promise<void> {
   // controls right after LIVE, then the catch-up indicator/toggle after that.
   initRewindControls(lifecycle);
   initLiveCatchup(lifecycle);
+  initSpeedControls(lifecycle);
   initScreenshot(lifecycle);
 }
 

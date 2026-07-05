@@ -1,5 +1,6 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
+import { dispatchManualSeek } from './player-state';
 import { clampSeekTarget } from './rewind-controls';
 import type { Lifecycle } from '../shared/lifecycle';
 
@@ -8,9 +9,30 @@ import type { Lifecycle } from '../shared/lifecycle';
 const SEEK_STEP_SECONDS = 10;
 
 function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName.toLowerCase();
-  return tag === 'input' || tag === 'textarea' || target.isContentEditable;
+  let element: HTMLElement | null =
+    target instanceof HTMLElement ? target
+    : target instanceof Node ? target.parentElement
+    : null;
+
+  while (element) {
+    const tag = element.tagName.toLowerCase();
+    const role = element.getAttribute('role')?.toLowerCase();
+    const testId = element.getAttribute('data-testid')?.toLowerCase() ?? '';
+    if (
+      tag === 'input' ||
+      tag === 'textarea' ||
+      tag === 'select' ||
+      role === 'textbox' ||
+      element.hasAttribute('data-lexical-editor') ||
+      testId.includes('chat') ||
+      element.isContentEditable
+    ) {
+      return true;
+    }
+    element = element.parentElement;
+  }
+
+  return false;
 }
 
 /** Kick has no native arrow-key seek. Best-effort against #video-player's own
@@ -36,6 +58,8 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
     try {
       const target = clampSeekTarget(video, direction * SEEK_STEP_SECONDS);
       video.currentTime = target;
+      dispatchManualSeek();
+      keyboardEvent.preventDefault();
       logger.debug('rewind-hotkeys: seeked to', target);
     } catch (error) {
       logger.warn('rewind-hotkeys: seek failed', error);

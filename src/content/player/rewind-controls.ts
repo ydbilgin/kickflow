@@ -1,6 +1,7 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
+import { dispatchManualSeek, setDvrSuspended } from './player-state';
 import type { Lifecycle } from '../shared/lifecycle';
 
 const CONTROLS_ID = 'kickflow-rewind-controls';
@@ -26,16 +27,14 @@ export function liveEdge(video: HTMLVideoElement): number | null {
   return saneBoundary(buffered.end(buffered.length - 1));
 }
 
-/** How far BACK a seek may go. Uses the DVR start (`seekable.start(0)` can be > 0) ONLY when
- * the whole seekable range is trustworthy — a bogus `seekable.end` means the range is
- * unreliable, so it falls back to the buffered start (Mo'Kick-style) rather than letting a
- * seek rewind into a range that cannot actually play. Else 0. */
+/** How far BACK a seek may go. `seekable.start(0)` can be > 0 for DVR windows, but
+ * seekable.end/video.duration are deliberately not used because Kick can expose sentinel
+ * values there. */
 export function seekFloor(video: HTMLVideoElement): number {
   const seekable = video.seekable;
   if (seekable.length > 0) {
     const start = saneBoundary(seekable.start(0));
-    const end = saneBoundary(seekable.end(seekable.length - 1));
-    if (start !== null && end !== null) return start;
+    if (start !== null) return start;
   }
   const buffered = video.buffered;
   if (buffered.length > 0) {
@@ -52,7 +51,7 @@ export function seekFloor(video: HTMLVideoElement): number {
 export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
   const target = video.currentTime + delta;
   const floor = seekFloor(video);
-  const edge = liveEdge(video) ?? (Number.isFinite(video.duration) ? video.duration : target);
+  const edge = liveEdge(video) ?? target;
   const ceil = Math.max(floor, edge); // guard against inversion if edge somehow < floor
   return Math.min(Math.max(target, floor), ceil);
 }
@@ -61,6 +60,7 @@ function seekBy(video: HTMLVideoElement, delta: number): void {
   try {
     const target = clampSeekTarget(video, delta);
     video.currentTime = target;
+    dispatchManualSeek();
     logger.debug('rewind-controls: seek', delta, '-> currentTime', target);
   } catch (error) {
     logger.warn('rewind-controls: seek failed', error);
@@ -72,6 +72,7 @@ function goLive(video: HTMLVideoElement): void {
   if (edge === null) return;
   try {
     video.currentTime = edge;
+    setDvrSuspended(false);
     if (video.paused) void video.play().catch(() => undefined);
   } catch (error) {
     logger.warn('rewind-controls: go-live failed', error);
@@ -109,9 +110,12 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     const group = document.createElement('span');
     group.className = 'kickflow-player-group';
 
+    const seekPill = document.createElement('span');
+    seekPill.className = 'kickflow-seek-pill';
+
     const rewind = document.createElement('button');
     rewind.type = 'button';
-    rewind.className = 'kickflow-player-btn';
+    rewind.className = 'kickflow-player-btn kickflow-seek-pill__btn';
     rewind.innerHTML = `${ICON_REWIND}<span>${STEP_SECONDS}</span>`;
     rewind.title = `${STEP_SECONDS} sn geri (←)`;
     rewind.setAttribute('aria-label', `${STEP_SECONDS} saniye geri sar`);
@@ -125,7 +129,7 @@ export function initRewindControls(lifecycle: Lifecycle): void {
 
     const forward = document.createElement('button');
     forward.type = 'button';
-    forward.className = 'kickflow-player-btn';
+    forward.className = 'kickflow-player-btn kickflow-seek-pill__btn';
     forward.innerHTML = `<span>${STEP_SECONDS}</span>${ICON_FORWARD}`;
     forward.title = `${STEP_SECONDS} sn ileri (→)`;
     forward.setAttribute('aria-label', `${STEP_SECONDS} saniye ileri sar`);
@@ -140,7 +144,8 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     forward.addEventListener('click', () => seekBy(video, STEP_SECONDS));
     live.addEventListener('click', () => goLive(video));
 
-    group.append(rewind, live, forward);
+    seekPill.append(rewind, forward);
+    group.append(seekPill, live);
     return group;
   });
 }
