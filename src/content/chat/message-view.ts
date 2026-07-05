@@ -3,6 +3,7 @@ import type { ChatBadge, ChatMessage } from './message-store';
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
 export const BANNED_CLASS = 'kickflow-banned';
+export const TIMEOUT_CLASS = 'kickflow-timeout';
 export const DELETED_CLASS = 'kickflow-deleted';
 
 // Kick official emotes only (confirmed scope — no 7TV/BTTV). Live-verified 2026-07-04:
@@ -135,6 +136,27 @@ function appendStatusLabel(row: HTMLElement, text: string, modifier: string): vo
   row.appendChild(label);
 }
 
+/** Compact Turkish duration from minutes: "5dk", "1sa 30dk", "2g". Empty when unknown. */
+function formatTimeoutDuration(min: number | null | undefined): string {
+  if (min == null || !Number.isFinite(min) || min <= 0) return '';
+  if (min < 60) return `${Math.round(min)}dk`;
+  if (min < 60 * 24) {
+    const h = Math.floor(min / 60);
+    const m = Math.round(min % 60);
+    return m ? `${h}sa ${m}dk` : `${h}sa`;
+  }
+  return `${Math.round(min / (60 * 24))}g`;
+}
+
+/** The moderator who issued the action, as a subtle non-uppercase suffix (e.g. "· Chhatto"). */
+function appendModLabel(row: HTMLElement, mod: string | null | undefined): void {
+  if (!mod) return;
+  const span = document.createElement('span');
+  span.className = 'kickflow-mod-label';
+  span.textContent = `· ${mod}`;
+  row.appendChild(span);
+}
+
 /** Applies preserved/banned/deleted visual status to an already-built row. Idempotent,
  * and deliberately called from two places:
  *  - buildMessageElement, at render time (covers a UserBannedEvent arriving while the
@@ -146,9 +168,21 @@ function appendStatusLabel(row: HTMLElement, text: string, modifier: string): vo
 export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): void {
   if (!message.preserved || row.classList.contains(PRESERVED_CLASS)) return;
   row.classList.add(PRESERVED_CLASS);
+  const meta = message.preservedMeta ?? {};
+
   if (message.preservedReason === 'banned') {
-    row.classList.add(BANNED_CLASS);
-    appendStatusLabel(row, 'banlandı', 'banned');
+    // Kick's ban events carry `permanent`: false = timeout (with a duration), true/absent = a
+    // permanent ban. "banlandı" is reserved for permanent bans; timeouts show their length.
+    if (meta.permanent === false) {
+      row.classList.add(TIMEOUT_CLASS);
+      const dur = formatTimeoutDuration(meta.durationMin);
+      appendStatusLabel(row, dur ? `timeout ${dur}` : 'timeout', 'timeout');
+      appendModLabel(row, meta.bannedBy);
+    } else {
+      row.classList.add(BANNED_CLASS);
+      appendStatusLabel(row, 'banlandı', 'banned');
+      appendModLabel(row, meta.bannedBy);
+    }
   } else if (message.preservedReason === 'deleted') {
     row.classList.add(DELETED_CLASS);
     appendStatusLabel(row, 'silindi', 'deleted');

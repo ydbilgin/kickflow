@@ -167,7 +167,9 @@ function ensureStyles(): void {
       text-decoration: none; text-transform: uppercase;
     }
     #${OWN_LIST_ID} .kickflow-status-label--banned { background: #e9113c; color: #fff; }
+    #${OWN_LIST_ID} .kickflow-status-label--timeout { background: #e6932b; color: #fff; }
     #${OWN_LIST_ID} .kickflow-status-label--deleted { background: #6d6d6d; color: #fff; }
+    #${OWN_LIST_ID} .kickflow-mod-label { margin-left: 5px; font-size: 10px; font-weight: 600; opacity: 0.7; }
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
 
@@ -354,7 +356,7 @@ function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       },
       onUserBanned: (payload) => {
         setStatus({ lastBanAt: Date.now() });
-        handleUserBanned(payload.userId, { store, registry });
+        handleUserBanned(payload, { store, registry });
       },
       onMessageDeleted: (messageId) => {
         handleMessageDeleted(messageId, { store, registry });

@@ -22,6 +22,14 @@ const RECONNECT_MAX_DELAY_MS = 15000;
 export interface BanEventPayload {
   userId: number;
   username?: string;
+  /** true = permanent ban, false = timeout. null when the payload didn't say. */
+  permanent: boolean | null;
+  /** Timeout length in minutes (only meaningful when permanent === false). */
+  durationMin: number | null;
+  /** Moderator who issued it, if the payload carried it. */
+  bannedBy: string | null;
+  /** ISO expiry (timeouts), if present. */
+  expiresAt: string | null;
 }
 
 export interface PusherClientCallbacks {
@@ -90,26 +98,57 @@ export function normalizeMessage(raw: unknown): ChatMessage | null {
   };
 }
 
-/** UserBannedEvent's exact payload shape was NOT empirically captured (event name only,
- * confirmed via an existing open-source script). Accept both a flat {user_id, username}
- * shape and a nested {user: {id, username}} shape by checking which fields exist. */
+function coerceNum(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) if (typeof value === 'string' && value) return value;
+  return null;
+}
+
+/** banned_by may be a bare username string or a {username} object. */
+function extractBannedBy(data: Record<string, unknown>): string | null {
+  const bb = data.banned_by ?? data.bannedBy ?? data.banned_by_user;
+  if (typeof bb === 'string') return bb;
+  if (bb && typeof bb === 'object' && typeof (bb as Record<string, unknown>).username === 'string') {
+    return (bb as Record<string, unknown>).username as string;
+  }
+  return null;
+}
+
+/** UserBannedEvent — live-captured shape: {id, user:{id,username}, banned_by:{username}, permanent,
+ * duration}. Only user identification is required; permanent / duration / banned_by / expires_at are
+ * extracted defensively (present on real bans, may be absent) so the row can show BANLANDI (perma)
+ * vs TIMEOUT <süre> + the moderator. Accepts both flat {user_id,username} and nested {user:{...}}. */
 function normalizeBanPayload(raw: unknown): BanEventPayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const data = raw as Record<string, unknown>;
 
+  let userId: number | undefined;
+  let username: string | undefined;
   if (typeof data.user_id === 'number') {
-    return { userId: data.user_id, username: typeof data.username === 'string' ? data.username : undefined };
-  }
-
-  const nestedUser = data.user;
-  if (nestedUser && typeof nestedUser === 'object') {
-    const user = nestedUser as Record<string, unknown>;
+    userId = data.user_id;
+    username = typeof data.username === 'string' ? data.username : undefined;
+  } else if (data.user && typeof data.user === 'object') {
+    const user = data.user as Record<string, unknown>;
     if (typeof user.id === 'number') {
-      return { userId: user.id, username: typeof user.username === 'string' ? user.username : undefined };
+      userId = user.id;
+      username = typeof user.username === 'string' ? user.username : undefined;
     }
   }
+  if (userId === undefined) return null;
 
-  return null;
+  return {
+    userId,
+    username,
+    permanent: typeof data.permanent === 'boolean' ? data.permanent : null,
+    durationMin: coerceNum(data.duration) ?? coerceNum(data.duration_min) ?? coerceNum(data.duration_in_minutes),
+    bannedBy: extractBannedBy(data),
+    expiresAt: firstString(data.expires_at, data.banned_until, data.expiresAt),
+  };
 }
 
 /** Opens KickFlow's own, independent, read-only Pusher connection — never the page's

@@ -1,6 +1,7 @@
 import { logger } from '../shared/logger';
 import { featureFlags } from './feature-flags';
 import { applyPreservedMarking } from './message-view';
+import type { BanEventPayload } from './pusher-client';
 import type { ChatDomRegistry, ChatIntegrityStore } from './message-store';
 
 export interface BanGuardDeps {
@@ -13,8 +14,12 @@ export interface BanGuardDeps {
  * moment a row is built (covers a ban/delete event arriving while the message is still
  * sitting in the render batch). This module's job is just to update rows that were
  * already rendered BEFORE the event arrived. */
-export function handleUserBanned(userId: number, deps: BanGuardDeps): void {
-  const messages = deps.store.markUserBanned(userId);
+export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): void {
+  const messages = deps.store.markUserBanned(payload.userId, {
+    permanent: payload.permanent,
+    durationMin: payload.durationMin,
+    bannedBy: payload.bannedBy,
+  });
   if (messages.length === 0) return;
 
   let updatedCount = 0;
@@ -24,7 +29,8 @@ export function handleUserBanned(userId: number, deps: BanGuardDeps): void {
     applyPreservedMarking(element, message);
     updatedCount++;
   }
-  logger.debug('ban-guard: updated', updatedCount, 'already-rendered message(s) for user', userId);
+  logger.debug('ban-guard: updated', updatedCount, 'message(s) for user', payload.userId,
+    payload.permanent === false ? `(timeout ${payload.durationMin ?? '?'}m by ${payload.bannedBy ?? '?'})` : '(ban)');
 }
 
 /** Delete events are always delivered here (the pusher-client gate was removed); this decides

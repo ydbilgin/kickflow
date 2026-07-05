@@ -18,6 +18,17 @@ export interface ChatMessageSender {
 
 export type PreservedReason = 'banned' | 'deleted';
 
+/** Moderation detail attached to a preserved message so the row can distinguish a permanent
+ * BANLANDI from a TIMEOUT (with its duration) and name the moderator. */
+export interface PreservedMeta {
+  /** true = permanent ban, false = timeout, null/undefined = unknown. */
+  permanent?: boolean | null;
+  /** Timeout length in minutes (timeouts only). */
+  durationMin?: number | null;
+  /** Moderator who issued the ban/timeout, if known. */
+  bannedBy?: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   chatroomId: number;
@@ -27,6 +38,7 @@ export interface ChatMessage {
   sender: ChatMessageSender;
   preserved: boolean;
   preservedReason?: PreservedReason;
+  preservedMeta?: PreservedMeta;
 }
 
 const GLOBAL_CAPACITY = 500;
@@ -212,10 +224,10 @@ export class ChatIntegrityStore {
     }
   }
 
-  markUserBanned(userId: number): ChatMessage[] {
+  markUserBanned(userId: number, meta: PreservedMeta = {}): ChatMessage[] {
     const messages = this.getMessagesByUserId(userId);
     for (const message of messages) {
-      this.preserveMessage(message, 'banned');
+      this.preserveMessage(message, 'banned', meta);
     }
     return messages;
   }
@@ -227,10 +239,11 @@ export class ChatIntegrityStore {
     return message;
   }
 
-  private preserveMessage(message: ChatMessage, reason: PreservedReason): void {
+  private preserveMessage(message: ChatMessage, reason: PreservedReason, meta: PreservedMeta = {}): void {
     if (message.preserved) return;
     message.preserved = true;
     message.preservedReason = reason;
+    message.preservedMeta = meta;
 
     const evicted = this.preserved.push(message);
     if (evicted) {
