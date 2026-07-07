@@ -217,7 +217,10 @@ function ensureStyles(): void {
       margin-left: 6px; color: #efeff1; opacity: 0.6; text-decoration: line-through;
       word-break: break-word; overflow-wrap: anywhere;
     }
-    .kickflow-native-content-dimmed { opacity: 0.35; }
+    /* Preserved (deleted/banned) rows: hide the native content entirely — Kick may leave the
+       original text OR swap in a "Deleted by a moderator" placeholder — and show our stored copy. */
+    .kickflow-native-content-dimmed { display: none !important; }
+    .kickflow-preserved-username { font-weight: 600; }
     .kickflow-ghost-block {
       display: block; margin: 3px 0 0 18px; padding-left: 8px;
       border-left: 2px solid rgba(233,17,60,0.55);

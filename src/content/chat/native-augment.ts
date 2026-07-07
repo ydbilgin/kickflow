@@ -249,13 +249,14 @@ export class NativeChatAugmenter {
     if (message?.preserved) {
       if (message.preservedReason !== 'deleted' || featureFlags.showDeletedMessages) {
         row.classList.add(AUGMENTED_CLASS);
-        this.dimNativeContent(row);
-
-        const original = document.createElement('span');
-        original.className = ORIGINAL_CONTENT_CLASS;
-        appendParsedContent(original, message.content);
-        row.appendChild(original);
-
+        // Always hide the native content and render our OWN stored copy. Kick sometimes leaves the
+        // original text in the row and sometimes swaps it to a "Deleted by a moderator" placeholder
+        // — and may swap AFTER we mark — so reading the native text races: it either duplicates the
+        // message (native original + our copy) or loses it (we struck a soon-to-be placeholder).
+        // Hiding native + rendering from our store is race-free: exactly one struck copy, always
+        // the real text, with the sender name.
+        this.hideNativeContent(row);
+        row.appendChild(this.buildPreservedInline(message));
         applyPreservedMarking(row, message);
       }
     }
@@ -271,20 +272,33 @@ export class NativeChatAugmenter {
       .forEach((node) => node.classList.remove(DIMMED_NATIVE_CONTENT_CLASS));
   }
 
-  private dimNativeContent(row: HTMLElement): void {
-    const candidates = [
-      '.break-words',
-      '[class*="break-words"]',
-      'span[class*="font-normal"]',
-      'span[class*="text"]',
-    ];
-    for (const selector of candidates) {
-      const element = row.querySelector<HTMLElement>(selector);
-      if (element && !element.classList.contains(ORIGINAL_CONTENT_CLASS)) {
-        element.classList.add(DIMMED_NATIVE_CONTENT_CLASS);
-        return;
-      }
+  /** Hides the native message content (whatever it currently is — the original text or a
+   * "Deleted by a moderator" placeholder) so our own stored copy is the only one shown. */
+  private hideNativeContent(row: HTMLElement): void {
+    const holder = row.querySelector<HTMLElement>('.break-words')
+      ?? row.querySelector<HTMLElement>('[class*="break-words"]');
+    if (holder && !holder.classList.contains(ORIGINAL_CONTENT_CLASS)) {
+      holder.classList.add(DIMMED_NATIVE_CONTENT_CLASS);
     }
+  }
+
+  /** Builds our struck-through copy of a preserved message (sender name + original text) from the
+   * store, so hiding the native row never loses who said what. */
+  private buildPreservedInline(
+    message: NonNullable<ReturnType<ChatIntegrityStore['getMessageById']>>,
+  ): HTMLElement {
+    const wrap = document.createElement('span');
+    wrap.className = ORIGINAL_CONTENT_CLASS;
+    const username = document.createElement('span');
+    username.className = 'kickflow-preserved-username';
+    username.textContent = message.sender.displayName || message.sender.username;
+    username.style.color = message.sender.identity.color || 'inherit';
+    const separator = document.createElement('span');
+    separator.textContent = ': ';
+    const content = document.createElement('span');
+    appendParsedContent(content, message.content);
+    wrap.append(username, separator, content);
+    return wrap;
   }
 
   private scheduleAnchorPass(): void {
@@ -301,6 +315,8 @@ export class NativeChatAugmenter {
       return;
     }
 
+    this.pruneStrayGhosts();
+
     const ids = new Set<string>(this.ghostsNeeded);
     for (const id of this.ghostAnchorById.keys()) ids.add(id);
     for (const message of this.store.getPreserved()) {
@@ -310,6 +326,37 @@ export class NativeChatAugmenter {
       .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0))
       .forEach((id) => this.reanchorGhost(id));
     this.renderFallbackStrip();
+  }
+
+  /** Removes ghost DOM that duplicates or strands — the main defense against the same banned
+   * message showing twice. react-virtuoso recycles row elements, so a ghost-block can be left
+   * attached to a DOM row Kick has since reassigned to another message; and a message Kick later
+   * re-renders natively should lose its ghost. Runs at the top of every anchor pass. */
+  private pruneStrayGhosts(): void {
+    // 1. Ghost-blocks stranded on recycled rows (host row's mid no longer matches the block anchor).
+    document.querySelectorAll<HTMLElement>(`.${GHOST_BLOCK_CLASS}`).forEach((block) => {
+      const anchorMid = block.dataset.kickflowGhostAnchor;
+      const row = block.closest<HTMLElement>(ROW_SELECTOR);
+      if (!anchorMid || !row || row.dataset.kickflowMid !== anchorMid) block.remove();
+    });
+    // 2. Dedupe ghost rows; drop any whose message is now mounted natively or no longer a banned-preserve.
+    const seen = new Set<string>();
+    document.querySelectorAll<HTMLElement>(`.${GHOST_ROW_CLASS}[data-kickflow-ghost-mid]`).forEach((el) => {
+      const mid = el.dataset.kickflowGhostMid ?? '';
+      const message = this.store.getMessageById(mid);
+      const valid = message?.preserved === true
+        && message.preservedReason === 'banned'
+        && !this.isMessageMounted(mid);
+      if (!valid || seen.has(mid)) {
+        el.remove();
+        return;
+      }
+      seen.add(mid);
+    });
+    // 3. Drop blocks emptied by the sweep.
+    document.querySelectorAll<HTMLElement>(`.${GHOST_BLOCK_CLASS}`).forEach((block) => {
+      if (!block.querySelector(`.${GHOST_ROW_CLASS}`)) block.remove();
+    });
   }
 
   private reanchorGhost(id: string): void {
@@ -492,7 +539,8 @@ export class NativeChatAugmenter {
       .filter((message): message is NonNullable<ReturnType<ChatIntegrityStore['getMessageById']>> => (
         message?.preserved === true &&
         message.preservedReason === 'banned' &&
-        !this.isMessageMounted(message.id)
+        !this.isMessageMounted(message.id) &&
+        !this.ghostAnchorById.has(message.id) // anchored inline already — never also in the strip
       ))
       .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0)) // newest first
       .slice(0, MAX_STRIP_GHOSTS) // bounded: only the most-recent N in the strip
