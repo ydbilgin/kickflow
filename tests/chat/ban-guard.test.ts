@@ -34,7 +34,7 @@ describe('ban-guard', () => {
     const store = {
       markUserBanned: vi.fn(() => messages),
     };
-    const augmenter = { markById: vi.fn() };
+    const augmenter = { markById: vi.fn(), seedBannedGhosts: vi.fn() };
     const payload: BanEventPayload = {
       userId: 3,
       permanent: false,
@@ -54,6 +54,7 @@ describe('ban-guard', () => {
     expect(augmenter.markById).toHaveBeenNthCalledWith(1, 'a');
     expect(augmenter.markById).toHaveBeenNthCalledWith(2, 'b');
     expect(augmenter.markById).toHaveBeenNthCalledWith(3, 'c');
+    expect(augmenter.seedBannedGhosts).toHaveBeenCalledWith(['a', 'b', 'c']);
   });
 
   it('preserves deleted messages only when showDeletedMessages is on', () => {
@@ -63,7 +64,7 @@ describe('ban-guard', () => {
       violatedRules: ['hate'],
     };
     const store = { markMessageDeleted: vi.fn(() => chatMessage('m1')) };
-    const augmenter = { markById: vi.fn() };
+    const augmenter = { markById: vi.fn(), seedBannedGhosts: vi.fn() };
 
     featureFlags.showDeletedMessages = true;
     handleMessageDeleted(payload, { store, augmenter } as never);

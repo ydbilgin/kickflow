@@ -35,6 +35,7 @@ export interface PreservedMeta {
 
 export interface ChatMessage {
   id: string;
+  seq?: number;
   chatroomId: number;
   content: string;
   type: string;
@@ -99,11 +100,13 @@ export class ChatIntegrityStore {
   // LimitedQueue) AND age (PRESERVED_TTL_MS, via sweepExpiredPreserved).
   private readonly preserved = new LimitedQueue<ChatMessage>(PRESERVED_CAPACITY);
   private readonly perUserQueues = new Map<number, LimitedQueue<ChatMessage>>();
+  private nextSeq = 1;
 
   constructor(private readonly options: ChatIntegrityStoreOptions = {}) {}
 
   addMessage(message: ChatMessage): void {
     if (this.messageById.has(message.id)) return;
+    message.seq ??= this.nextSeq++;
     this.messageById.set(message.id, message);
     this.indexByUser(message);
 
@@ -157,6 +160,19 @@ export class ChatIntegrityStore {
 
   getMessageById(messageId: string): ChatMessage | undefined {
     return this.messageById.get(messageId);
+  }
+
+  getMessageSeq(messageId: string): number | undefined {
+    return this.messageById.get(messageId)?.seq;
+  }
+
+  isPreservedBanned(messageId: string): boolean {
+    const message = this.messageById.get(messageId);
+    return message?.preserved === true && message.preservedReason === 'banned';
+  }
+
+  getMessagesInArrivalOrder(): ChatMessage[] {
+    return Array.from(this.messageById.values()).sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
   }
 
   markUserBanned(userId: number, meta: PreservedMeta = {}): ChatMessage[] {
@@ -229,5 +245,6 @@ export class ChatIntegrityStore {
     this.perUserQueues.clear();
     this.global.clear();
     this.preserved.clear();
+    this.nextSeq = 1;
   }
 }

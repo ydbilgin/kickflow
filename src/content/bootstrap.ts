@@ -6,7 +6,7 @@ import { getStatus, setStatus, resetStatus } from './status';
 import { ChatIntegrityStore } from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
-import { NativeChatAugmenter, reconcileActiveNativeChat } from './chat/native-augment';
+import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -147,6 +147,34 @@ function ensureStyles(): void {
       word-break: break-word; overflow-wrap: anywhere;
     }
     .kickflow-native-content-dimmed { opacity: 0.35; }
+    .kickflow-ghost-block {
+      display: block; margin: 3px 0 0 18px; padding-left: 8px;
+      border-left: 2px solid rgba(233,17,60,0.55);
+    }
+    .kickflow-ghost-row {
+      display: block; padding: 2px 0; color: #efeff1; opacity: 0.78;
+      font-size: 13px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere;
+    }
+    .kickflow-ghost-row__time { margin-right: 4px; color: #adadb8; font-size: 11px; }
+    .kickflow-ghost-row__badges { margin-right: 3px; }
+    .kickflow-ghost-row__username { font-weight: 700; }
+    .kickflow-ghost-row__separator { font-weight: 700; }
+    .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.75; }
+    .kickflow-ghost-strip {
+      position: fixed; right: 14px; bottom: 74px; z-index: 2147483647;
+      width: min(340px, calc(100vw - 28px)); max-height: 34vh; overflow: hidden;
+      border: 1px solid rgba(233,17,60,0.36); border-radius: 8px;
+      background: rgba(14,14,16,0.96); color: #efeff1;
+      box-shadow: 0 12px 34px rgba(0,0,0,0.44);
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-ghost-strip__toggle {
+      appearance: none; width: 100%; height: 30px; border: 0; margin: 0; padding: 0 10px;
+      background: rgba(233,17,60,0.18); color: #fff; cursor: pointer;
+      font-size: 11px; font-weight: 800; text-align: left; text-transform: uppercase;
+    }
+    .kickflow-ghost-strip__body { max-height: calc(34vh - 30px); overflow: auto; padding: 6px 10px 8px; }
+    .kickflow-ghost-strip--collapsed .kickflow-ghost-strip__body { display: none; }
 
     /* --- Player controls, injected inline into Kick's native control bar. Global classes
        (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
@@ -270,8 +298,11 @@ function ensureStyles(): void {
 }
 
 function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
-  const store = new ChatIntegrityStore();
-  const augmenter = new NativeChatAugmenter(lifecycle, store);
+  let augmenter: NativeChatAugmenter | null = null;
+  const store = new ChatIntegrityStore({
+    onPreservedEvicted: (message) => augmenter?.forgetGhost(message.id),
+  });
+  augmenter = new NativeChatAugmenter(lifecycle, store);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
 
   resolveChannel(slug).then((resolved) => {
@@ -387,18 +418,23 @@ function installStatusBridge(): void {
         preservedCount: document.querySelectorAll('.kickflow-preserved').length,
         bannedCount: document.querySelectorAll('.kickflow-banned').length,
         deletedCount: document.querySelectorAll('.kickflow-deleted').length,
-        flags: { showDeletedMessages: featureFlags.showDeletedMessages, debugLogging: featureFlags.debugLogging },
+        ...getActiveNativeChatGhostStats(),
+        flags: {
+          showDeletedMessages: featureFlags.showDeletedMessages,
+          preserveBansInline: featureFlags.preserveBansInline,
+          debugLogging: featureFlags.debugLogging,
+        },
       });
       return;
     }
     if (
       msg.type === 'kickflow:setFlag' &&
-      (msg.key === 'showDeletedMessages' || msg.key === 'debugLogging') &&
+      (msg.key === 'showDeletedMessages' || msg.key === 'preserveBansInline' || msg.key === 'debugLogging') &&
       typeof msg.value === 'boolean'
     ) {
       const key = msg.key as keyof FeatureFlags;
       setFeatureFlag(key, msg.value);
-      if (key === 'showDeletedMessages') reconcileActiveNativeChat();
+      if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
       if (key === 'debugLogging') setDebugLogging(msg.value);
       void chrome.storage.local.set({ ['kf_flag_' + key]: msg.value });
       sendResponse({ ok: true });
@@ -411,8 +447,13 @@ function installStatusBridge(): void {
  * they take effect immediately (not just after the next toggle). */
 async function applySavedFlags(): Promise<void> {
   try {
-    const saved = await chrome.storage.local.get(['kf_flag_showDeletedMessages', 'kf_flag_debugLogging']);
+    const saved = await chrome.storage.local.get([
+      'kf_flag_showDeletedMessages',
+      'kf_flag_preserveBansInline',
+      'kf_flag_debugLogging',
+    ]);
     if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
+    if (typeof saved.kf_flag_preserveBansInline === 'boolean') setFeatureFlag('preserveBansInline', saved.kf_flag_preserveBansInline);
     if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);
   } catch {
     // storage unavailable — fall back to the compiled-in defaults

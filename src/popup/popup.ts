@@ -13,7 +13,11 @@ interface StatusResponse {
   preservedCount: number;
   bannedCount: number;
   deletedCount: number;
-  flags: { showDeletedMessages: boolean; debugLogging: boolean };
+  ghostAnchored: number;
+  ghostPendingNoAnchor: number;
+  ghostStrip: number;
+  ghostEvicted: number;
+  flags: { showDeletedMessages: boolean; preserveBansInline: boolean; debugLogging: boolean };
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
@@ -56,9 +60,14 @@ function render(res: StatusResponse | null, error?: string): void {
   $('preserved').textContent = String(res.preservedCount);
   $('banned').textContent = String(res.bannedCount);
   $('deleted').textContent = String(res.deletedCount);
+  $('ghostAnchored').textContent = String(res.ghostAnchored);
+  $('ghostPending').textContent = String(res.ghostPendingNoAnchor);
+  $('ghostStrip').textContent = String(res.ghostStrip);
+  $('ghostEvicted').textContent = String(res.ghostEvicted);
   $('lastBan').textContent = fmtAgo(res.lastBanAt);
 
   (($('t-deleted') as HTMLInputElement)).checked = res.flags.showDeletedMessages;
+  (($('t-bans-inline') as HTMLInputElement)).checked = res.flags.preserveBansInline;
   (($('t-debug') as HTMLInputElement)).checked = res.flags.debugLogging;
 }
 
@@ -74,7 +83,7 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function setFlag(key: 'showDeletedMessages' | 'debugLogging', value: boolean): Promise<void> {
+async function setFlag(key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging', value: boolean): Promise<void> {
   const id = await activeTabId();
   if (id === undefined) return;
   try {
@@ -86,6 +95,7 @@ async function setFlag(key: 'showDeletedMessages' | 'debugLogging', value: boole
 }
 
 $('t-deleted').addEventListener('change', (e) => setFlag('showDeletedMessages', (e.target as HTMLInputElement).checked));
+$('t-bans-inline').addEventListener('change', (e) => setFlag('preserveBansInline', (e.target as HTMLInputElement).checked));
 $('t-debug').addEventListener('change', (e) => setFlag('debugLogging', (e.target as HTMLInputElement).checked));
 
 void refresh();

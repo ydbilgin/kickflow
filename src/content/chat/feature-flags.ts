@@ -6,6 +6,9 @@ export interface FeatureFlags {
    * "Deleted by a moderator" placeholder. On now that the delete event name is confirmed
    * (`App\Events\MessageDeletedEvent`, from Mo'Kick's shipping source) in pusher-client.ts. */
   showDeletedMessages: boolean;
+  /** Ban preservation: when Kick removes banned users' native rows, render them inside a
+   * surviving virtualized row wrapper or a small fallback strip. */
+  preserveBansInline: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
 }
@@ -13,6 +16,7 @@ export interface FeatureFlags {
 export const featureFlags: FeatureFlags = {
   debugLogging: false,
   showDeletedMessages: true,
+  preserveBansInline: true,
   modLogPanel: false,
 };
 

@@ -24,6 +24,7 @@ export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): 
     deps.augmenter.markById(message.id);
     updatedCount++;
   }
+  deps.augmenter.seedBannedGhosts(messages.map((message) => message.id));
   logger.debug('ban-guard: updated', updatedCount, 'message(s) for user', payload.userId,
     payload.permanent === false ? `(timeout ${payload.durationMin ?? '?'}m by ${payload.bannedBy ?? '?'})` : '(ban)');
 }
