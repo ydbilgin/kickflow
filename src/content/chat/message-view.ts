@@ -82,7 +82,7 @@ function appendMention(parent: HTMLElement, rawMention: string): void {
 
 /** Safe-render only: message text is fully attacker-controlled. Every branch below
  * builds nodes via createElement/textContent — never innerHTML or string concatenation. */
-function appendParsedContent(parent: HTMLElement, content: string): void {
+export function appendParsedContent(parent: HTMLElement, content: string): void {
   let lastIndex = 0;
   for (const match of content.matchAll(CONTENT_TOKEN_RE)) {
     const index = match.index ?? 0;
@@ -104,7 +104,7 @@ function appendParsedContent(parent: HTMLElement, content: string): void {
   }
 }
 
-function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
+export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
   for (const badge of badges) {
     if (badge.imageUrl) {
       const url = isTrustedBadgeImageUrl(badge.imageUrl);
@@ -129,7 +129,7 @@ function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
   }
 }
 
-function appendStatusLabel(row: HTMLElement, text: string, modifier: string): void {
+export function appendStatusLabel(row: HTMLElement, text: string, modifier: string): void {
   const label = document.createElement('span');
   label.className = `kickflow-status-label kickflow-status-label--${modifier}`;
   label.textContent = text;
@@ -137,7 +137,7 @@ function appendStatusLabel(row: HTMLElement, text: string, modifier: string): vo
 }
 
 /** Compact Turkish duration from minutes: "5dk", "1sa 30dk", "2g". Empty when unknown. */
-function formatTimeoutDuration(min: number | null | undefined): string {
+export function formatTimeoutDuration(min: number | null | undefined): string {
   if (min == null || !Number.isFinite(min) || min <= 0) return '';
   if (min < 60) return `${Math.round(min)}dk`;
   if (min < 60 * 24) {
@@ -149,7 +149,7 @@ function formatTimeoutDuration(min: number | null | undefined): string {
 }
 
 /** The moderator who issued the action, as a subtle non-uppercase suffix (e.g. "· Chhatto"). */
-function appendModLabel(row: HTMLElement, mod: string | null | undefined): void {
+export function appendModLabel(row: HTMLElement, mod: string | null | undefined): void {
   if (!mod) return;
   const span = document.createElement('span');
   span.className = 'kickflow-mod-label';
@@ -160,7 +160,7 @@ function appendModLabel(row: HTMLElement, mod: string | null | undefined): void 
 /** Who/what removed a deleted message. MessageDeletedEvent carries aiModerated + the flagged
  * rules but NO human-mod username (only bans carry banned_by) → "AI mod (hate)" or "mod";
  * null when the payload didn't say. */
-function deleteAttribution(meta: PreservedMeta): string | null {
+export function deleteAttribution(meta: PreservedMeta): string | null {
   if (meta.aiModerated === true) {
     const rules = (meta.violatedRules ?? []).filter(Boolean);
     return rules.length ? `AI mod (${rules.join(', ')})` : 'AI mod';

@@ -82,63 +82,9 @@ export class LimitedQueue<T> {
   }
 }
 
-/** DOM node <-> message association, populated by render-queue.ts at element-creation
- * time. WeakMap for the element->message direction so a detached node can still be GC'd;
- * the userId->elements index is a plain Map that callers MUST clean up via forget() when
- * a node is removed (dom-window.ts on trim, bootstrap.ts on preserved-eviction), or it
- * would leak. */
-export class ChatDomRegistry {
-  private readonly messageByElement = new WeakMap<HTMLElement, ChatMessage>();
-  private readonly elementByMessageId = new Map<string, HTMLElement>();
-  private readonly elementsByUserId = new Map<number, Set<HTMLElement>>();
-
-  register(element: HTMLElement, message: ChatMessage): void {
-    this.messageByElement.set(element, message);
-    this.elementByMessageId.set(message.id, element);
-    let set = this.elementsByUserId.get(message.sender.id);
-    if (!set) {
-      set = new Set();
-      this.elementsByUserId.set(message.sender.id, set);
-    }
-    set.add(element);
-  }
-
-  getMessage(element: HTMLElement): ChatMessage | undefined {
-    return this.messageByElement.get(element);
-  }
-
-  getElementForMessageId(messageId: string): HTMLElement | undefined {
-    return this.elementByMessageId.get(messageId);
-  }
-
-  getElementsForUser(userId: number): HTMLElement[] {
-    const set = this.elementsByUserId.get(userId);
-    return set ? Array.from(set) : [];
-  }
-
-  forget(element: HTMLElement): void {
-    const message = this.messageByElement.get(element);
-    if (!message) return;
-    this.elementByMessageId.delete(message.id);
-    const set = this.elementsByUserId.get(message.sender.id);
-    if (set) {
-      set.delete(element);
-      if (set.size === 0) {
-        this.elementsByUserId.delete(message.sender.id);
-      }
-    }
-  }
-
-  clear(): void {
-    this.elementByMessageId.clear();
-    this.elementsByUserId.clear();
-  }
-}
-
 export interface ChatIntegrityStoreOptions {
   /** Called whenever a preserved (banned/deleted) message stops being preserved — either
-   * evicted by the 50-entry preserved cap or expired by the TTL sweep. The store has no
-   * DOM access, so callers (bootstrap.ts) use this to remove the now-unpinned row. */
+   * evicted by the 50-entry preserved cap or expired by the TTL sweep. */
   onPreservedEvicted?: (message: ChatMessage) => void;
 }
 
@@ -211,21 +157,6 @@ export class ChatIntegrityStore {
 
   getMessageById(messageId: string): ChatMessage | undefined {
     return this.messageById.get(messageId);
-  }
-
-  /** Fully drop a message from the index (used when showDeletedMessages is off — mimic native
-   * deletion). No-op if it's currently preserved (a ban strike-through must win). The message may
-   * still sit in the global/per-user ring buffers; that's harmless — a later eviction's forget()
-   * for an already-removed id is a no-op. */
-  removeMessage(messageId: string): void {
-    const message = this.messageById.get(messageId);
-    if (!message || message.preserved) return;
-    this.messageById.delete(messageId);
-    const ids = this.messagesByUserId.get(message.sender.id);
-    if (ids) {
-      ids.delete(messageId);
-      if (ids.size === 0) this.messagesByUserId.delete(message.sender.id);
-    }
   }
 
   markUserBanned(userId: number, meta: PreservedMeta = {}): ChatMessage[] {

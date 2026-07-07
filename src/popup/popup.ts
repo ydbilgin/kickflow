@@ -47,7 +47,7 @@ function render(res: StatusResponse | null, error?: string): void {
   $('stats').style.display = '';
   $('toggles').style.display = '';
   setDot(res.active ? 'active' : (res.slug ? 'native' : 'off'));
-  $('reason').textContent = res.active ? '✅ KickFlow aktif — kendi liste' : ('○ ' + res.reason);
+  $('reason').textContent = res.active ? '✅ KickFlow aktif — native chat' : ('○ ' + res.reason);
 
   $('slug').textContent = res.slug || '—';
   $('chatroomId').textContent = res.chatroomId != null ? String(res.chatroomId) : '—';

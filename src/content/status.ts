@@ -5,7 +5,7 @@
 export interface KickFlowStatus {
   slug: string | null;
   chatroomId: number | null;
-  /** True once the overlay has activated (own list rendering, native hidden). */
+  /** True once the live Pusher capture is connected and native chat augmentation is active. */
   active: boolean;
   /** Human-readable current state — the key value the popup surfaces (esp. WHY it fell to native). */
   reason: string;

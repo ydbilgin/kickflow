@@ -3,13 +3,10 @@ import { Lifecycle } from './shared/lifecycle';
 import { SELECTORS } from './shared/selectors';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
-import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from './chat/message-store';
-import { RenderQueue } from './chat/render-queue';
-import { trimMessageWindow, isNearBottom } from './chat/dom-window';
+import { ChatIntegrityStore } from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
-import { fetchChatHistory } from './chat/history';
-import { ChatOverlayMount } from './chat/overlay-mount';
+import { NativeChatAugmenter } from './chat/native-augment';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -17,7 +14,6 @@ import { initRewindControls } from './player/rewind-controls';
 import { initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
 
-const OWN_LIST_ID = 'kickflow-message-list';
 const STYLE_ID = 'kickflow-styles';
 const CHAT_CONTAINER_WAIT_MS = 15000;
 const VIDEO_ELEMENT_WAIT_MS = 15000;
@@ -57,8 +53,6 @@ const CHATROOM_ID_RETRY_BASE_MS = 800;
 interface ResolvedChannel {
   /** Pusher chatroom id — used for the live `chatrooms.{id}.v2` subscription. */
   chatroomId: number;
-  /** Channel id — used for the web.kick.com history backfill (differs from chatroomId). */
-  channelId: number;
 }
 
 async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
@@ -75,16 +69,10 @@ async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
     try {
       const response = await fetch(url, { headers: { accept: 'application/json' } });
       if (response.ok) {
-        const json = (await response.json()) as { id?: number; chatroom?: { id?: number; channel_id?: number } };
+        const json = (await response.json()) as { chatroom?: { id?: number } };
         const chatroomId = json.chatroom?.id;
         if (typeof chatroomId !== 'number') return null;
-        // History uses the CHANNEL id (top-level `id` === chatroom.channel_id), NOT the chatroom
-        // id (which returns an empty history). Fall back to chatroomId if neither is present.
-        const channelId =
-          typeof json.id === 'number' ? json.id
-          : typeof json.chatroom?.channel_id === 'number' ? json.chatroom.channel_id
-          : chatroomId;
-        return { chatroomId, channelId };
+        return { chatroomId };
       }
       const transient = response.status === 429 || response.status >= 500;
       logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status, transient ? '(retrying)' : '(terminal)');
@@ -130,56 +118,35 @@ function ensureStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = STYLE_ID;
-  // All selectors are scoped under #kickflow-message-list for specificity, and images use
-  // `display: inline-block !important` + an explicit px height. Kick's page is built with
-  // Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally
-  // — without overriding display, every emote/badge <img> becomes a block and drops onto
-  // its own line at natural (huge) size, which is exactly the broken stacked layout we saw.
+  // Images use `display: inline-block !important` + an explicit px height. Kick's page is built
+  // with Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally.
   style.textContent = `
-    #${OWN_LIST_ID} {
-      padding: 6px 10px; overflow-y: auto; height: 100%; box-sizing: border-box;
-      font-size: 13px; line-height: 1.45; color: #efeff1;
-      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-    }
-    #${OWN_LIST_ID} .kickflow-message {
-      display: block; padding: 3px 5px; border-radius: 4px;
-      word-break: break-word; overflow-wrap: anywhere;
-    }
-    #${OWN_LIST_ID} .kickflow-message:hover { background: rgba(255,255,255,0.06); }
-    #${OWN_LIST_ID} .kickflow-message__time { color: #adadb8; font-size: 11px; margin-right: 5px; }
-    #${OWN_LIST_ID} .kickflow-message__badges:empty { display: none; }
-    #${OWN_LIST_ID} .kickflow-message__badges { margin-right: 3px; }
-    #${OWN_LIST_ID} .kickflow-badge-icon {
+    .kickflow-badge-icon {
       display: inline-block !important; height: 15px !important; width: auto !important;
       vertical-align: -3px; margin-right: 3px;
     }
-    #${OWN_LIST_ID} .kickflow-badge-text { font-size: 10px; font-weight: 700; margin-right: 4px; opacity: 0.75; }
-    #${OWN_LIST_ID} .kickflow-message__username { font-weight: 700; }
-    #${OWN_LIST_ID} .kickflow-message__separator { color: #adadb8; }
-    #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; }
-    #${OWN_LIST_ID} .kickflow-emote {
+    .kickflow-badge-text { font-size: 10px; font-weight: 700; margin-right: 4px; opacity: 0.75; }
+    .kickflow-emote {
       display: inline-block !important; height: 24px !important; width: auto !important;
       vertical-align: middle; margin: 0 2px;
     }
-    #${OWN_LIST_ID} .kickflow-mention { color: #53fc18; font-weight: 600; }
-    #${OWN_LIST_ID} .kickflow-link { color: #66bfff; text-decoration: underline; }
-    #${OWN_LIST_ID} .kickflow-status-label {
+    .kickflow-mention { color: #53fc18; font-weight: 600; }
+    .kickflow-link { color: #66bfff; text-decoration: underline; }
+    .kickflow-status-label {
       display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px;
       font-size: 10px; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle;
       text-decoration: none; text-transform: uppercase;
     }
-    #${OWN_LIST_ID} .kickflow-status-label--banned { background: #e9113c; color: #fff; }
-    #${OWN_LIST_ID} .kickflow-status-label--timeout { background: #e6932b; color: #fff; }
-    #${OWN_LIST_ID} .kickflow-status-label--deleted { background: #6d6d6d; color: #fff; }
-    #${OWN_LIST_ID} .kickflow-mod-label { margin-left: 5px; font-size: 10px; font-weight: 600; opacity: 0.7; }
-    #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
-    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
-
-    /* The own list is a body-level position:fixed overlay (see overlay-mount.ts — the Kick
-       chat panel is entirely React-owned, so an in-panel node gets reconciled away). When the
-       overlay is active, hide the native list. The class is on <html>, NOT on #chatroom-messages,
-       because React re-renders that node and would strip a class added to it. */
-    html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
+    .kickflow-status-label--banned { background: #e9113c; color: #fff; }
+    .kickflow-status-label--timeout { background: #e6932b; color: #fff; }
+    .kickflow-status-label--deleted { background: #6d6d6d; color: #fff; }
+    .kickflow-mod-label { margin-left: 5px; font-size: 10px; font-weight: 600; opacity: 0.7; }
+    .kickflow-preserved { position: relative; }
+    .kickflow-original-content {
+      margin-left: 6px; color: #efeff1; opacity: 0.6; text-decoration: line-through;
+      word-break: break-word; overflow-wrap: anywhere;
+    }
+    .kickflow-native-content-dimmed { opacity: 0.35; }
 
     /* --- Player controls, injected inline into Kick's native control bar. Global classes
        (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
@@ -298,139 +265,40 @@ function ensureStyles(): void {
       line-height: 1; white-space: nowrap;
     }
 
-    /* Chat "jump to newest" pill — shown when scrolled up and new messages arrive. Anchored
-       to #chatroom-messages (which already carries Tailwind's relative position), centered
-       above the input. */
-    .kickflow-scroll-pill {
-      position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 5px 14px; border: 0; border-radius: 999px;
-      background: #53fc18; color: #0b0e0f; cursor: pointer;
-      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px; font-weight: 700;
-      line-height: 1; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.45);
-      transition: background .14s ease, transform .1s ease;
-    }
-    .kickflow-scroll-pill:hover { background: #45e00f; }
-    .kickflow-scroll-pill:active { transform: translateX(-50%) scale(0.95); }
   `;
   document.head.appendChild(style);
 }
 
-// Kick's native message list is virtualized/row-recycled AND the entire chat panel is
-// React-owned (confirmed live 2026-07-05: #chatroom-messages and every ancestor carry
-// `__reactFiber$`), so KickFlow can neither tag native rows reliably NOR inject its own list
-// inside the panel — React reconciles a foreign in-panel node away on its next re-render.
-// Instead it renders its own independent list as a document.body-level overlay aligned to the
-// chat area (see ChatOverlayMount), fed entirely by its own Pusher connection.
-//
-// The overlay starts hidden and native stays visible/untouched until the first message
-// actually renders (mount.activate()) — chatroom-id resolution and the Pusher connection are
-// both async and can fail (null id, private channel, no message ever arrives), and hiding
-// native up front would leave the user with an empty list AND no native chat on any of those
-// failure paths. This is also the auto-fallback: if KickFlow's renderer never runs, the user
-// silently keeps Kick's native chat instead of losing it.
 function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
-  const registry = new ChatDomRegistry();
-  const store = new ChatIntegrityStore({
-    onPreservedEvicted: (message: ChatMessage) => {
-      const element = registry.getElementForMessageId(message.id);
-      if (!element) return;
-      registry.forget(element);
-      element.remove();
-    },
-  });
-
-  const mount = new ChatOverlayMount(lifecycle);
-  const ownList = mount.ownList;
-
-  // "Jump to newest" pill: appears when the user has scrolled up and new messages arrive, so
-  // live bottom-follow is never forced on someone reading history. It lives in the overlay's
-  // fixed `root` wrapper — NOT inside `ownList` (the scroll container) — so it stays pinned to
-  // the bottom of the viewport instead of scrolling away with history (cx review 2026-07-05).
-  const scrollPill = document.createElement('button');
-  scrollPill.type = 'button';
-  scrollPill.className = 'kickflow-scroll-pill';
-  scrollPill.textContent = '↓ Yeni mesajlar';
-  scrollPill.style.display = 'none';
-  scrollPill.addEventListener('click', () => {
-    ownList.scrollTop = ownList.scrollHeight;
-    scrollPill.style.display = 'none';
-  });
-  mount.root.appendChild(scrollPill);
-  lifecycle.add(() => scrollPill.remove());
-
-  // Hide the pill the moment the user scrolls back to the bottom themselves.
-  lifecycle.addEventListener(ownList, 'scroll', () => {
-    if (isNearBottom(ownList)) scrollPill.style.display = 'none';
-  });
-
-  let activated = false;
-
-  const renderQueue = new RenderQueue({
-    getContainer: () => ownList,
-    registry,
-    onFlush: (appended, wasAtBottom) => {
-      if (!activated && appended.length > 0) {
-        activated = true;
-        mount.activate();
-        setStatus({ active: true, reason: 'aktif — kendi liste render ediliyor' });
-      }
-
-      trimMessageWindow(ownList, registry);
-      if (wasAtBottom) {
-        ownList.scrollTop = ownList.scrollHeight;
-        scrollPill.style.display = 'none';
-      } else if (appended.length > 0) {
-        // New messages arrived while the user is reading history — surface the pill.
-        scrollPill.style.display = '';
-      }
-    },
-  });
-  lifecycle.add(() => renderQueue.dispose());
-
+  const store = new ChatIntegrityStore();
+  const augmenter = new NativeChatAugmenter(lifecycle, store);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
 
-  resolveChannel(slug).then(async (resolved) => {
+  resolveChannel(slug).then((resolved) => {
     if (lifecycle.isDisposed) return;
     if (!resolved) {
       logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
-      setStatus({ reason: 'chatroom-id çözülemedi — native chat' });
+      setStatus({ reason: 'chatroom-id çözülemedi' });
       return;
     }
-    const { chatroomId, channelId } = resolved;
-    setStatus({ chatroomId, reason: 'geçmiş yükleniyor…' });
-
-    // Backfill recent history BEFORE going live so the overlay opens with the existing backlog
-    // instead of empty (hiding native would otherwise wipe what the user was already reading).
-    // Enqueued first → renders above live messages (the render queue preserves enqueue order);
-    // dedup-by-id in the store handles any overlap with the first live Pusher messages.
-    const history = await fetchChatHistory(channelId);
-    if (lifecycle.isDisposed) return;
-    for (const message of history) {
-      store.addMessage(message);
-      renderQueue.enqueue(message);
-    }
-
-    setStatus({ reason: 'Pusher bağlanıyor…' });
+    const { chatroomId } = resolved;
+    setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
     const client = new PusherClient(chatroomId, {
       onConnected: () => {
-        setStatus({ pusherConnected: true });
-        // Don't clobber the "aktif" reason if the list is already rendering (reconnect case).
-        if (!getStatus().active) setStatus({ reason: 'Pusher bağlı — ilk mesaj bekleniyor' });
+        setStatus({ pusherConnected: true, active: true, reason: 'aktif — native chat işaretleniyor' });
       },
       onDisconnected: () => {
         setStatus({ pusherConnected: false });
       },
       onMessage: (message) => {
         store.addMessage(message);
-        renderQueue.enqueue(message);
       },
       onUserBanned: (payload) => {
         setStatus({ lastBanAt: Date.now() });
-        handleUserBanned(payload, { store, registry });
+        handleUserBanned(payload, { store, augmenter });
       },
       onMessageDeleted: (payload) => {
-        handleMessageDeleted(payload, { store, registry });
+        handleMessageDeleted(payload, { store, augmenter });
       },
     });
     lifecycle.add(() => {
@@ -467,8 +335,6 @@ let sessionToken = 0;
 
 async function startSession(slug: string): Promise<void> {
   const token = ++sessionToken;
-  document.getElementById('kickflow-chat-overlay')?.remove();
-  document.documentElement.classList.remove('kickflow-chat-active');
 
   const lifecycle = new Lifecycle();
   currentLifecycle = lifecycle;
@@ -486,8 +352,8 @@ async function startSession(slug: string): Promise<void> {
     setStatus({ reason: 'chat paneli bulunamadı — native chat' });
     return;
   }
-  // chatContainer (checked above) is the gate that the chat panel exists; the overlay mount
-  // then tracks #chatroom-messages by selector itself (it must survive Kick replacing it).
+  // chatContainer (checked above) is the gate that the chat panel exists; the native augmenter
+  // then observes #chatroom-messages and survives Kick replacing the inner list.
   initChatIntegrity(slug, lifecycle);
 }
 
@@ -515,10 +381,9 @@ function installStatusBridge(): void {
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'kickflow:getStatus') {
-      const ownList = document.getElementById('kickflow-message-list');
       sendResponse({
         ...getStatus(),
-        messageCount: ownList ? ownList.querySelectorAll('.kickflow-message').length : 0,
+        messageCount: document.querySelectorAll('#chatroom-messages [data-index]').length,
         preservedCount: document.querySelectorAll('.kickflow-preserved').length,
         bannedCount: document.querySelectorAll('.kickflow-banned').length,
         deletedCount: document.querySelectorAll('.kickflow-deleted').length,

@@ -5,6 +5,7 @@ dist/
 .ax_dispatch/
 .claude/_dispatch/
 council_mokick-lite/
+.playwright-mcp/
 
 # 7/24 monitor server — never commit data or secrets
 server/node_modules/
