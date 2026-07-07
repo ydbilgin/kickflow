@@ -27,27 +27,26 @@ export function liveEdge(video: HTMLVideoElement): number | null {
   return saneBoundary(buffered.end(buffered.length - 1));
 }
 
-/** How far BACK a seek may go. `seekable.start(0)` can be > 0 for DVR windows, but
- * seekable.end/video.duration are deliberately not used because Kick can expose sentinel
- * values there. */
+/** How far BACK a seek may go. Kick reports `seekable.start(0) === 0` even when that is
+ * only a bogus sentinel below the playable buffer; `buffered.start(0)` is the real floor
+ * that keeps rewind targets inside media the player can actually decode. */
 export function seekFloor(video: HTMLVideoElement): number {
-  const seekable = video.seekable;
-  if (seekable.length > 0) {
-    const start = saneBoundary(seekable.start(0));
-    if (start !== null) return start;
-  }
   const buffered = video.buffered;
   if (buffered.length > 0) {
     const start = saneBoundary(buffered.start(0));
+    if (start !== null) return start;
+  }
+  const seekable = video.seekable;
+  if (seekable.length > 0) {
+    const start = saneBoundary(seekable.start(0));
     if (start !== null) return start;
   }
   return 0;
 }
 
 /** Shared by this file's inline buttons and rewind-hotkeys.ts's arrow keys. Clamps to
- * [seekFloor, liveEdge]: the floor preserves DVR rewind when seekable is trustworthy, while
- * the ceiling is the real playable live edge (`buffered.end`) — never Kick's bogus
- * `seekable.end` — so a forward seek can't catapult past what is actually playable. */
+ * [seekFloor, liveEdge]: both ends prefer the playable buffered range, avoiding Kick's
+ * bogus `seekable` sentinels so seeks can't catapult outside media the player can decode. */
 export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
   const target = video.currentTime + delta;
   const floor = seekFloor(video);

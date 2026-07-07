@@ -22,6 +22,7 @@ const STYLE_ID = 'kickflow-styles';
 const CHAT_CONTAINER_WAIT_MS = 15000;
 const VIDEO_ELEMENT_WAIT_MS = 15000;
 const PRESERVED_SWEEP_INTERVAL_MS = 60_000;
+const NAVIGATION_POLL_INTERVAL_MS = 400;
 
 const NON_CHANNEL_SLUGS = new Set([
   'video',
@@ -466,6 +467,9 @@ let sessionToken = 0;
 
 async function startSession(slug: string): Promise<void> {
   const token = ++sessionToken;
+  document.getElementById('kickflow-chat-overlay')?.remove();
+  document.documentElement.classList.remove('kickflow-chat-active');
+
   const lifecycle = new Lifecycle();
   currentLifecycle = lifecycle;
 
@@ -549,20 +553,14 @@ async function applySavedFlags(): Promise<void> {
   }
 }
 
-// Kick is a client-routed SPA (History API, no full reload on channel switch), so
-// navigation must be detected by patching pushState/replaceState in addition to popstate.
-function installHistoryPatch(methodName: 'pushState' | 'replaceState'): void {
-  const original = history[methodName].bind(history);
-  history[methodName] = ((data: unknown, unused: string, url?: string | URL | null) => {
-    const result = original(data, unused, url);
-    window.dispatchEvent(new Event('kickflow:locationchange'));
-    return result;
-  }) as typeof history.pushState;
-}
-
 function installNavigationHooks(): void {
-  installHistoryPatch('pushState');
-  installHistoryPatch('replaceState');
+  let lastHref = window.location.href;
+  window.setInterval(() => {
+    const href = window.location.href;
+    if (href === lastHref) return;
+    lastHref = href;
+    window.dispatchEvent(new Event('kickflow:locationchange'));
+  }, NAVIGATION_POLL_INTERVAL_MS);
   window.addEventListener('popstate', () => window.dispatchEvent(new Event('kickflow:locationchange')));
   window.addEventListener('kickflow:locationchange', handlePotentialNavigation);
 }

@@ -2,12 +2,10 @@ import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
 import {
-  MANUAL_SEEK_EVENT,
   NORMAL_PLAYBACK_RATE,
   ensurePlayerStateLoaded,
   getPlayerState,
   setAutoMode,
-  setDvrSuspended,
   setManualRate,
   setPlayerPlaybackRate,
   subscribePlayerState,
@@ -19,9 +17,6 @@ const CONTROLS_ID = 'kickflow-catchup-controls';
 const CATCHUP_PLAYBACK_RATE = 1.5;
 const BEHIND_THRESHOLD_SECONDS = 3;
 const CAUGHT_UP_THRESHOLD_SECONDS = 1.5;
-const SNAP_THRESHOLD_SECONDS = 15;
-const SNAP_HEADROOM_SECONDS = 0.5;
-const REQUIRED_SNAP_TICKS = 2;
 
 // Behind-live sanity bound, not a product cap. Kick's HLS state can report bogus media
 // boundaries during rebuffering; never drive catch-up behavior from those readings.
@@ -48,7 +43,6 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   }
 
   let catchingUp = false;
-  let overSnapThresholdTicks = 0;
   let lastDisplayedSeconds = -1;
   let indicatorEl: HTMLButtonElement | null = null;
   let toggleEl: HTMLButtonElement | null = null;
@@ -73,7 +67,6 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
 
   const resetAutoPlaybackRate = (): void => {
     catchingUp = false;
-    overSnapThresholdTicks = 0;
     if (getPlayerState().mode === 'auto') {
       setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
     }
@@ -94,7 +87,6 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     if (edge === null) return;
     try {
       video.currentTime = edge;
-      setDvrSuspended(false);
       if (getPlayerState().mode === 'auto') {
         resetAutoPlaybackRate();
       }
@@ -104,18 +96,24 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     }
   };
 
-  const onManualSeek = (): void => {
-    setDvrSuspended(true);
-    resetAutoPlaybackRate();
-  };
-
   const onTimeUpdate = (): void => {
-    let playerState = getPlayerState();
+    const playerState = getPlayerState();
 
     if (playerState.mode === 'manual') {
       catchingUp = false;
-      overSnapThresholdTicks = 0;
       hideIndicator();
+      const liveEdge = getLiveEdgeSeconds(video);
+      if (liveEdge === null) return;
+      const behindBy = liveEdge - video.currentTime;
+      const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
+      if (
+        playerState.manualRate > NORMAL_PLAYBACK_RATE &&
+        plausible &&
+        behindBy <= CAUGHT_UP_THRESHOLD_SECONDS
+      ) {
+        setManualRate(NORMAL_PLAYBACK_RATE);
+        setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
+      }
       return;
     }
 
@@ -134,38 +132,11 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       return;
     }
 
-    if (playerState.dvrSuspended && behindBy <= BEHIND_THRESHOLD_SECONDS) {
-      setDvrSuspended(false);
-      playerState = getPlayerState();
-    }
-
     if (behindBy > BEHIND_THRESHOLD_SECONDS) {
       setIndicatorBehindBy(behindBy);
     } else {
       hideIndicator();
     }
-
-    if (playerState.dvrSuspended) {
-      resetAutoPlaybackRate();
-      return;
-    }
-
-    if (behindBy > SNAP_THRESHOLD_SECONDS) {
-      overSnapThresholdTicks++;
-      if (overSnapThresholdTicks >= REQUIRED_SNAP_TICKS) {
-        const target = Math.max(0, liveEdge - SNAP_HEADROOM_SECONDS);
-        try {
-          video.currentTime = target;
-          resetAutoPlaybackRate();
-          logger.debug('live-catchup: snapped to live edge headroom at', target);
-        } catch (error) {
-          logger.warn('live-catchup: snap-to-live failed', error);
-        }
-      }
-      return;
-    }
-
-    overSnapThresholdTicks = 0;
 
     if (!catchingUp && behindBy > BEHIND_THRESHOLD_SECONDS) {
       catchingUp = true;
@@ -178,13 +149,11 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   };
 
   lifecycle.addEventListener(video, 'timeupdate', onTimeUpdate);
-  lifecycle.addEventListener(window, MANUAL_SEEK_EVENT, onManualSeek);
   lifecycle.add(resetAutoPlaybackRate);
   lifecycle.add(subscribePlayerState(() => {
     updateToggleVisual();
     if (getPlayerState().mode === 'manual') {
       catchingUp = false;
-      overSnapThresholdTicks = 0;
       hideIndicator();
     }
   }));
@@ -214,7 +183,6 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
         setManualRate(NORMAL_PLAYBACK_RATE);
         setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
         catchingUp = false;
-        overSnapThresholdTicks = 0;
         hideIndicator();
       } else {
         setAutoMode();
