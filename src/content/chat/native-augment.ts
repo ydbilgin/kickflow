@@ -23,6 +23,13 @@ const GHOST_STRIP_CLASS = 'kickflow-ghost-strip';
 const GHOST_STRIP_COLLAPSED_CLASS = 'kickflow-ghost-strip--collapsed';
 const GHOST_STRIP_BODY_CLASS = 'kickflow-ghost-strip__body';
 
+// Bounds so a high-moderation channel (mass bans) can't pile ghosts onto the few visible
+// rows. A banned message only anchors INLINE if its chronological context is still near the
+// viewport (a mounted neighbor within this many seq); otherwise it goes to the bounded strip.
+const ANCHOR_MAX_SEQ_DISTANCE = 20;
+const MAX_GHOSTS_PER_ANCHOR = 4;
+const MAX_STRIP_GHOSTS = 15;
+
 const INJECTED_SELECTOR = [
   `.${GHOST_BLOCK_CLASS}`,
   '.kickflow-status-label',
@@ -360,7 +367,14 @@ export class NativeChatAugmenter {
       if (seq < bannedSeq && (!previous || seq > previous.seq)) previous = { mid, row, seq };
       if (seq > bannedSeq && (!next || seq < next.seq)) next = { mid, row, seq };
     });
-    return previous ?? next;
+    // `as` cast: previous/next are assigned inside the forEach closure, which TS control-flow
+    // narrowing doesn't track (it would otherwise treat them as still-null here).
+    const chosen = (previous ?? next) as { mid: string; row: HTMLElement; seq: number } | null;
+    // Only anchor inline when the banned message's context is still near the viewport. If the
+    // nearest mounted neighbor is far away (its real neighbors scrolled off), don't pile it onto
+    // an unrelated visible row — leave it for the strip.
+    if (!chosen || Math.abs(chosen.seq - bannedSeq) > ANCHOR_MAX_SEQ_DISTANCE) return null;
+    return { mid: chosen.mid, row: chosen.row };
   }
 
   private reapplyGhostsForAnchor(anchorMid: string, row: HTMLElement): void {
@@ -378,7 +392,8 @@ export class NativeChatAugmenter {
         const message = this.store.getMessageById(id);
         return message?.preserved === true && message.preservedReason === 'banned';
       })
-      .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0));
+      .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0))
+      .slice(-MAX_GHOSTS_PER_ANCHOR); // cap per-anchor: keep the newest few, never stack a giant block
 
     const host = this.findGhostHost(anchorRow);
     const existing = host.querySelector<HTMLElement>(`:scope > .${GHOST_BLOCK_CLASS}`);
@@ -479,7 +494,9 @@ export class NativeChatAugmenter {
         message.preservedReason === 'banned' &&
         !this.isMessageMounted(message.id)
       ))
-      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0)) // newest first
+      .slice(0, MAX_STRIP_GHOSTS) // bounded: only the most-recent N in the strip
+      .reverse(); // display oldest -> newest among those
 
     if (messages.length === 0) {
       this.strip?.remove();
