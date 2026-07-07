@@ -28,7 +28,9 @@ const GHOST_STRIP_BODY_CLASS = 'kickflow-ghost-strip__body';
 // viewport (a mounted neighbor within this many seq); otherwise it goes to the bounded strip.
 const ANCHOR_MAX_SEQ_DISTANCE = 20;
 const MAX_GHOSTS_PER_ANCHOR = 4;
-const MAX_STRIP_GHOSTS = 15;
+// "Kaldırılanlar" panel: a persistent, on-demand drawer listing every removed (banned/timeout/
+// deleted) message this session — the owner opens/closes it whenever they want.
+const MAX_PANEL_ROWS = 60;
 
 const INJECTED_SELECTOR = [
   `.${GHOST_BLOCK_CLASS}`,
@@ -75,7 +77,8 @@ export class NativeChatAugmenter {
   private readonly ghostsByAnchor = new Map<string, Set<string>>();
   private reanchorTimer: number | null = null;
   private strip: HTMLElement | null = null;
-  private stripCollapsed = false;
+  private stripCollapsed = true; // the removed-messages panel starts closed; owner opens on demand
+  private lastPanelSig = ''; // skip rebuilding the open panel body when its contents are unchanged
   private ghostEvicted = 0;
 
   constructor(
@@ -85,7 +88,10 @@ export class NativeChatAugmenter {
     const attach = (): void => this.attachToCurrentChat();
     activeAugmenter = this;
     attach();
-    lifecycle.setInterval(attach, 1000);
+    lifecycle.setInterval(() => {
+      attach();
+      this.renderRemovedPanel(); // keep the counter/panel current (ban, delete, eviction) — cheap when closed
+    }, 1000);
     lifecycle.add(() => {
       if (activeAugmenter === this) activeAugmenter = null;
       this.dispose();
@@ -115,7 +121,7 @@ export class NativeChatAugmenter {
     this.removeGhostFromAnchor(id);
     this.removeFromStrip(id);
     if (hadGhost) this.ghostEvicted++;
-    this.renderFallbackStrip();
+    this.renderRemovedPanel();
   }
 
   reconcileAll(): void {
@@ -325,7 +331,7 @@ export class NativeChatAugmenter {
     Array.from(ids)
       .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0))
       .forEach((id) => this.reanchorGhost(id));
-    this.renderFallbackStrip();
+    this.renderRemovedPanel();
   }
 
   /** Removes ghost DOM that duplicates or strands — the main defense against the same banned
@@ -533,20 +539,16 @@ export class NativeChatAugmenter {
     return anchorRow.querySelector(`[data-kickflow-ghost-mid="${CSS.escape(id)}"]`) !== null;
   }
 
-  private renderFallbackStrip(): void {
-    const messages = Array.from(this.ghostsNeeded)
-      .map((id) => this.store.getMessageById(id))
-      .filter((message): message is NonNullable<ReturnType<ChatIntegrityStore['getMessageById']>> => (
-        message?.preserved === true &&
-        message.preservedReason === 'banned' &&
-        !this.isMessageMounted(message.id) &&
-        !this.ghostAnchorById.has(message.id) // anchored inline already — never also in the strip
-      ))
-      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0)) // newest first
-      .slice(0, MAX_STRIP_GHOSTS) // bounded: only the most-recent N in the strip
-      .reverse(); // display oldest -> newest among those
+  /** Renders the persistent "Kaldırılanlar" panel: a body-level drawer the owner opens on demand,
+   * listing every removed (banned / timeout / deleted) message the store still holds this session.
+   * Starts collapsed (just a counter button); clicking the header expands it. Cheap when closed
+   * (only the header count updates — the hidden list isn't rebuilt). */
+  private renderRemovedPanel(): void {
+    const removed = this.store.getPreserved()
+      .filter((message) => message.preserved === true)
+      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 
-    if (messages.length === 0) {
+    if (removed.length === 0) {
       this.strip?.remove();
       this.strip = null;
       return;
@@ -554,9 +556,17 @@ export class NativeChatAugmenter {
 
     const strip = this.ensureStrip();
     strip.classList.toggle(GHOST_STRIP_COLLAPSED_CLASS, this.stripCollapsed);
+    const toggle = strip.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle');
+    if (toggle) toggle.textContent = `${this.stripCollapsed ? '▸' : '▾'} kaldırılanlar (${removed.length})`;
+    if (this.stripCollapsed) return; // closed — leave the hidden list as-is
+
     const body = strip.querySelector<HTMLElement>(`.${GHOST_STRIP_BODY_CLASS}`);
     if (!body) return;
-    body.replaceChildren(...messages.map((message) => this.buildGhostRow(message)));
+    const shown = removed.slice(-MAX_PANEL_ROWS);
+    const sig = `${removed.length}:${shown[shown.length - 1]?.id ?? ''}`;
+    if (sig === this.lastPanelSig) return; // unchanged since last open render — don't churn/scroll-jump
+    this.lastPanelSig = sig;
+    body.replaceChildren(...shown.map((message) => this.buildGhostRow(message)));
   }
 
   private ensureStrip(): HTMLElement {
@@ -568,10 +578,10 @@ export class NativeChatAugmenter {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'kickflow-ghost-strip__toggle';
-    button.textContent = 'son kaldırılanlar';
+    button.textContent = 'kaldırılanlar';
     button.addEventListener('click', () => {
       this.stripCollapsed = !this.stripCollapsed;
-      this.renderFallbackStrip();
+      this.renderRemovedPanel();
     });
 
     const body = document.createElement('div');
