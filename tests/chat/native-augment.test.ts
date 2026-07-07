@@ -168,6 +168,36 @@ describe('NativeChatAugmenter', () => {
     expect(banned?.classList.contains('kickflow-banned')).toBe(true);
   });
 
+  it('reconciles visible deleted rows when showDeletedMessages changes', () => {
+    installChat(['m1']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 7, 'deleted'));
+    store.markMessageDeleted('m1');
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+    const row = document.querySelector<HTMLElement>('[data-kickflow-mid="m1"]');
+    if (!row) throw new Error('missing row');
+
+    augmenter.markById('m1');
+    expect(row.classList.contains('kickflow-preserved')).toBe(true);
+    expect(row.classList.contains('kickflow-deleted')).toBe(true);
+    expect(row.querySelector('.kickflow-original-content')).not.toBeNull();
+
+    featureFlags.showDeletedMessages = false;
+    augmenter.reconcileAll();
+
+    expect(row.classList.contains('kickflow-preserved')).toBe(false);
+    expect(row.classList.contains('kickflow-deleted')).toBe(false);
+    expect(row.querySelector('.kickflow-original-content')).toBeNull();
+    expect(row.querySelector('.kickflow-status-label')).toBeNull();
+
+    featureFlags.showDeletedMessages = true;
+    augmenter.reconcileAll();
+
+    expect(row.classList.contains('kickflow-preserved')).toBe(true);
+    expect(row.classList.contains('kickflow-deleted')).toBe(true);
+    expect(row.querySelector('.kickflow-original-content')?.textContent).toContain('deleted');
+  });
+
   it('does not keep appending injected content while the observer settles', async () => {
     installChat(['m1']);
     const store = new ChatIntegrityStore();

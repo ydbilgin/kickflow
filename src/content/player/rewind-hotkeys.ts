@@ -1,6 +1,5 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
-import { dispatchManualSeek } from './player-state';
 import { clampSeekTarget } from './rewind-controls';
 import type { Lifecycle } from '../shared/lifecycle';
 
@@ -58,7 +57,6 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
     try {
       const target = clampSeekTarget(video, direction * SEEK_STEP_SECONDS);
       video.currentTime = target;
-      dispatchManualSeek();
       keyboardEvent.preventDefault();
       logger.debug('rewind-hotkeys: seeked to', target);
     } catch (error) {

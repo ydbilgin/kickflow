@@ -3,10 +3,12 @@ const ROW_SELECTOR = '[data-index]';
 const MID_ATTR = 'data-kickflow-mid';
 const DEBUG_SAMPLE_LIMIT = 25;
 
-let observedList: HTMLElement | null = null;
-let listObserver: MutationObserver | null = null;
-let bodyObserver: MutationObserver | null = null;
 let debugSamples = 0;
+
+export interface ReactKeyStamperController {
+  restampCurrentList(): void;
+  teardown(): void;
+}
 
 function debugEnabled(): boolean {
   try {
@@ -31,7 +33,12 @@ export function parseMessageId(key: string): string {
   return parts.length > 1 ? parts.slice(1).join('-') : key;
 }
 
-function stampRow(row: HTMLElement): void {
+function readMessageId(row: HTMLElement): string | null {
+  const rawKey = rawReactKey(row);
+  return rawKey ? parseMessageId(rawKey) : null;
+}
+
+export function stampRow(row: HTMLElement): void {
   const rawKey = rawReactKey(row);
   const messageId = rawKey ? parseMessageId(rawKey) : null;
 
@@ -66,35 +73,86 @@ function stampExistingRows(list: HTMLElement): void {
   list.querySelectorAll<HTMLElement>(ROW_SELECTOR).forEach(stampRow);
 }
 
-function observeList(list: HTMLElement): void {
-  if (list === observedList) return;
-  listObserver?.disconnect();
-  observedList = list;
-  stampExistingRows(list);
+export function initReactKeyStamper(root: Document | HTMLElement = document): ReactKeyStamperController {
+  const ownerDocument = root instanceof Document ? root : root.ownerDocument;
+  const observerRoot = root instanceof Document ? ownerDocument.body : root;
+  const MutationObserverCtor = ownerDocument.defaultView?.MutationObserver ?? MutationObserver;
 
-  listObserver = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      const targetRow = closestRow(mutation.target);
-      if (targetRow) stampRow(targetRow);
-      for (const node of mutation.addedNodes) {
-        collectRows(node).forEach(stampRow);
+  let observedList: HTMLElement | null = null;
+  let listObserver: MutationObserver | null = null;
+  let bodyObserver: MutationObserver | null = null;
+  const delayedPasses: number[] = [];
+
+  const restampCurrentList = (): void => {
+    if (!observedList) return;
+    observedList.querySelectorAll<HTMLElement>(ROW_SELECTOR).forEach((row) => {
+      const currentId = row.getAttribute(MID_ATTR);
+      const nextId = readMessageId(row);
+      if (!currentId || currentId !== nextId) {
+        stampRow(row);
       }
+    });
+  };
+
+  const scheduleDelayedRestamps = (): void => {
+    for (const delayMs of [100, 1000]) {
+      delayedPasses.push(window.setTimeout(restampCurrentList, delayMs));
     }
-  });
-  listObserver.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-index'] });
-}
+  };
 
-function attachToCurrentList(): void {
-  const list = document.querySelector<HTMLElement>(CHAT_LIST_SELECTOR);
-  if (list) observeList(list);
-}
+  const observeList = (list: HTMLElement): void => {
+    if (list === observedList) return;
+    listObserver?.disconnect();
+    observedList = list;
+    stampExistingRows(list);
+    scheduleDelayedRestamps();
 
-function start(): void {
+    listObserver = new MutationObserverCtor((mutations) => {
+      for (const mutation of mutations) {
+        const targetRow = closestRow(mutation.target);
+        if (targetRow) stampRow(targetRow);
+        for (const node of mutation.addedNodes) {
+          collectRows(node).forEach(stampRow);
+        }
+      }
+    });
+    listObserver.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-index'] });
+  };
+
+  const attachToCurrentList = (): void => {
+    const list = root.querySelector<HTMLElement>(CHAT_LIST_SELECTOR);
+    if (list) observeList(list);
+  };
+
   attachToCurrentList();
 
-  bodyObserver = new MutationObserver(() => attachToCurrentList());
-  bodyObserver.observe(document.body, { childList: true, subtree: true });
-  window.setInterval(attachToCurrentList, 1000);
+  bodyObserver = new MutationObserverCtor(() => attachToCurrentList());
+  if (observerRoot) {
+    bodyObserver.observe(observerRoot, { childList: true, subtree: true });
+  }
+  const intervalId = window.setInterval(() => {
+    attachToCurrentList();
+    restampCurrentList();
+  }, 1000);
+
+  return {
+    restampCurrentList,
+    teardown(): void {
+      listObserver?.disconnect();
+      bodyObserver?.disconnect();
+      window.clearInterval(intervalId);
+      delayedPasses.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      listObserver = null;
+      bodyObserver = null;
+      observedList = null;
+    },
+  };
+}
+
+let autoController: ReactKeyStamperController | null = null;
+
+function start(): void {
+  autoController ??= initReactKeyStamper();
 }
 
 if (document.body) {
@@ -104,6 +162,6 @@ if (document.body) {
 }
 
 window.addEventListener('pagehide', () => {
-  listObserver?.disconnect();
-  bodyObserver?.disconnect();
+  autoController?.teardown();
+  autoController = null;
 });

@@ -6,7 +6,7 @@ import { getStatus, setStatus, resetStatus } from './status';
 import { ChatIntegrityStore } from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
-import { NativeChatAugmenter } from './chat/native-augment';
+import { NativeChatAugmenter, reconcileActiveNativeChat } from './chat/native-augment';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -398,6 +398,7 @@ function installStatusBridge(): void {
     ) {
       const key = msg.key as keyof FeatureFlags;
       setFeatureFlag(key, msg.value);
+      if (key === 'showDeletedMessages') reconcileActiveNativeChat();
       if (key === 'debugLogging') setDebugLogging(msg.value);
       void chrome.storage.local.set({ ['kf_flag_' + key]: msg.value });
       sendResponse({ ok: true });

@@ -31,6 +31,12 @@ const PRESERVED_CLASSES = [
   DELETED_CLASS,
 ];
 
+let activeAugmenter: NativeChatAugmenter | null = null;
+
+export function reconcileActiveNativeChat(): void {
+  activeAugmenter?.reconcileAll();
+}
+
 export class NativeChatAugmenter {
   private observer: MutationObserver | null = null;
   private observedRoot: HTMLElement | null = null;
@@ -40,9 +46,13 @@ export class NativeChatAugmenter {
     private readonly store: ChatIntegrityStore,
   ) {
     const attach = (): void => this.attachToCurrentChat();
+    activeAugmenter = this;
     attach();
     lifecycle.setInterval(attach, 1000);
-    lifecycle.add(() => this.disconnect());
+    lifecycle.add(() => {
+      if (activeAugmenter === this) activeAugmenter = null;
+      this.disconnect();
+    });
   }
 
   markById(id: string): void {
@@ -50,6 +60,10 @@ export class NativeChatAugmenter {
       `${CHAT_ROOT_SELECTOR} [data-kickflow-mid="${CSS.escape(id)}"]`,
     );
     if (row) this.reconcileRow(row);
+  }
+
+  reconcileAll(): void {
+    this.reconcileVisibleRows();
   }
 
   private attachToCurrentChat(): void {

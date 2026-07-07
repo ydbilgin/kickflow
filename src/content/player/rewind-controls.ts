@@ -1,7 +1,6 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
-import { dispatchManualSeek, setDvrSuspended } from './player-state';
 import type { Lifecycle } from '../shared/lifecycle';
 
 const CONTROLS_ID = 'kickflow-rewind-controls';
@@ -59,7 +58,6 @@ function seekBy(video: HTMLVideoElement, delta: number): void {
   try {
     const target = clampSeekTarget(video, delta);
     video.currentTime = target;
-    dispatchManualSeek();
     logger.debug('rewind-controls: seek', delta, '-> currentTime', target);
   } catch (error) {
     logger.warn('rewind-controls: seek failed', error);
@@ -71,7 +69,6 @@ function goLive(video: HTMLVideoElement): void {
   if (edge === null) return;
   try {
     video.currentTime = edge;
-    setDvrSuspended(false);
     if (video.paused) void video.play().catch(() => undefined);
   } catch (error) {
     logger.warn('rewind-controls: go-live failed', error);

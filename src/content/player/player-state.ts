@@ -5,19 +5,16 @@ export type PlayerMode = 'auto' | 'manual';
 export interface PlayerState {
   mode: PlayerMode;
   manualRate: number;
-  dvrSuspended: boolean;
 }
 
 export const PLAYER_STATE_CHANGED_EVENT = 'kickflow:playerStateChanged';
 export const CATCHUP_TOGGLED_EVENT = 'kickflow:catchupToggled';
-export const MANUAL_SEEK_EVENT = 'kickflow:manualSeek';
 export const NORMAL_PLAYBACK_RATE = 1.0;
 
 const TOGGLE_STORAGE_KEY = 'kickflow.catchupEnabled';
 const DEFAULT_STATE: PlayerState = {
   mode: 'auto',
   manualRate: NORMAL_PLAYBACK_RATE,
-  dvrSuspended: false,
 };
 
 type PlayerStateListener = (state: PlayerState, previous: PlayerState) => void;
@@ -50,13 +47,11 @@ function setState(next: PlayerState, options: { persistMode?: boolean; emitToggl
   const normalized: PlayerState = {
     mode: next.mode,
     manualRate: normalizeRate(next.manualRate),
-    dvrSuspended: next.dvrSuspended,
   };
 
   if (
     normalized.mode === state.mode &&
-    normalized.manualRate === state.manualRate &&
-    normalized.dvrSuspended === state.dvrSuspended
+    normalized.manualRate === state.manualRate
   ) {
     return;
   }
@@ -107,7 +102,6 @@ export function ensurePlayerStateLoaded(): Promise<void> {
         {
           mode: value ? 'auto' : 'manual',
           manualRate: NORMAL_PLAYBACK_RATE,
-          dvrSuspended: false,
         },
         { emitToggle: false, persistMode: false },
       );
@@ -124,7 +118,6 @@ export function setAutoMode(): void {
     {
       mode: 'auto',
       manualRate: state.manualRate,
-      dvrSuspended: false,
     },
     { emitToggle: true, persistMode: true },
   );
@@ -135,22 +128,9 @@ export function setManualRate(rate: number): void {
     {
       mode: 'manual',
       manualRate: normalizeRate(rate),
-      dvrSuspended: false,
     },
     { emitToggle: true, persistMode: true },
   );
-}
-
-export function setDvrSuspended(suspended: boolean): void {
-  setState({
-    mode: state.mode,
-    manualRate: state.manualRate,
-    dvrSuspended: suspended,
-  });
-}
-
-export function dispatchManualSeek(): void {
-  window.dispatchEvent(new CustomEvent(MANUAL_SEEK_EVENT));
 }
 
 export function setPlayerPlaybackRate(video: HTMLVideoElement, rate: number): void {
