@@ -71,6 +71,15 @@ function appendLink(parent: HTMLElement, rawUrl: string): void {
   anchor.target = '_blank';
   anchor.rel = 'noopener noreferrer';
   anchor.className = 'kickflow-link';
+  // Plain left-click: open it ourselves so the click can't bubble to Kick's SPA router and navigate
+  // the page (a same-origin kick.com link pasted in chat would otherwise route). Modified/middle
+  // clicks fall through to the native new-tab (Kick's router ignores those).
+  anchor.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    window.open(url.href, '_blank', 'noopener,noreferrer');
+  });
   parent.appendChild(anchor);
 }
 
@@ -227,25 +236,35 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
   const privacyMasked = isMasqueradeEnabled() || (
     message.sender.displayName != null && message.sender.displayName !== message.sender.username
   );
-  const username = isSafeKickSlug(slug) && !privacyMasked
-    ? document.createElement('a')
-    : document.createElement('span');
+  // Deliberately NOT an <a href="kick.com/{slug}">: our list is a body-level overlay inside Kick's
+  // React SPA, whose document/window click router would classify a same-origin anchor and navigate
+  // the page (the "refresh at top" bug) — and a capture-phase router fires before any handler we
+  // could add. A plain <span role="link"> has no href for the router to see, so we own every
+  // gesture: left-click → our card, middle/ctrl/shift/meta → new tab, Enter/Space → our card.
+  const username = document.createElement('span');
   username.className = 'kickflow-message__username';
   username.textContent = displayName;
-  if (username instanceof HTMLAnchorElement) {
-    username.href = `https://kick.com/${slug}`;
-    username.target = '_blank';
-    username.rel = 'noopener noreferrer';
-    username.addEventListener('click', (event) => {
-      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      // Our list is a body-level overlay, so a plain left-click on this <a href="kick.com/{slug}">
-      // otherwise bubbles to Kick's document-level SPA router, which does its own router.push to the
-      // profile — navigating the page ("refresh" at top) and tearing our card down. Stop the event
-      // here so ONLY our card opens; middle/ctrl-click still fall through to the native new tab.
+  if (isSafeKickSlug(slug) && !privacyMasked) {
+    const profileUrl = `https://kick.com/${slug}`;
+    username.classList.add('kickflow-message__username--link');
+    username.setAttribute('role', 'link');
+    username.tabIndex = 0;
+    const act = (event: MouseEvent): void => {
       event.preventDefault();
-      event.stopPropagation();
       event.stopImmediatePropagation();
-      void openUserCard(slug, displayName, event.clientX, event.clientY);
+      if (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey) {
+        window.open(profileUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        void openUserCard(slug, displayName, event.clientX, event.clientY);
+      }
+    };
+    username.addEventListener('click', (event) => { if (event.button === 0) act(event); });
+    username.addEventListener('auxclick', (event) => { if (event.button === 1) act(event); });
+    username.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      const rect = username.getBoundingClientRect();
+      void openUserCard(slug, displayName, rect.left, rect.bottom);
     });
   }
   // Property assignment only — the setter rejects invalid values. Never

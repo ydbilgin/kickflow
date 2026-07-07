@@ -60,15 +60,18 @@ describe('message-view safe rendering', () => {
     expect(parent.querySelector('.kickflow-badge-text')?.textContent).toBe('VIP');
   });
 
-  it('renders safe username slugs as profile anchors', () => {
+  it('renders safe username slugs as an interactive span (NOT a router-recognizable anchor)', () => {
     const row = buildMessageElement(message('alice_123'));
 
-    const username = row.querySelector<HTMLAnchorElement>('.kickflow-message__username');
-    expect(username?.tagName).toBe('A');
-    expect(username?.href).toBe('https://kick.com/alice_123');
-    expect(username?.target).toBe('_blank');
-    expect(username?.rel).toContain('noopener');
+    const username = row.querySelector<HTMLElement>('.kickflow-message__username');
+    // Deliberately a <span role="link">, not <a href> — so Kick's SPA click router can't classify
+    // it and navigate the page. We handle left-click (card) / modified-click (new tab) ourselves.
+    expect(username?.tagName).toBe('SPAN');
+    expect(username?.getAttribute('role')).toBe('link');
+    expect(username?.tabIndex).toBe(0);
+    expect(username?.classList.contains('kickflow-message__username--link')).toBe(true);
     expect(username?.textContent).toBe('Alice');
+    expect(row.querySelector('a[href*="kick.com"]')).toBeNull();
   });
 
   it('does not link unsafe username slugs', () => {

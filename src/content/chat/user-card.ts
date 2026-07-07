@@ -178,6 +178,11 @@ async function fetchUserCard(username: string, fallbackName: string): Promise<Us
     );
   });
   cache.set(username, promise);
+  // Don't retain a null result for the whole session — a transient API/Cloudflare failure would
+  // otherwise pin this user to a minimal card until the channel switches. Drop it so a later click retries.
+  void promise.then((model) => {
+    if (!model && cache.get(username) === promise) cache.delete(username);
+  });
   return promise;
 }
 
@@ -269,6 +274,14 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = `kick.com/${model.slug} → aç`;
+  // Same-origin link inside our overlay — open it ourselves so a plain left-click can't bubble to
+  // Kick's SPA router and navigate the current page instead of opening the profile in a new tab.
+  link.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    window.open(link.href, '_blank', 'noopener,noreferrer');
+  });
   card.appendChild(link);
   return card;
 }
@@ -313,12 +326,16 @@ function makeDraggable(card: HTMLElement, handle: HTMLElement): void {
       card.style.left = `${x}px`;
       card.style.top = `${y}px`;
     };
-    const up = (): void => {
+    // Clean up on mouseup OR if the card is dismissed mid-drag (Escape / another card / channel
+    // switch) — otherwise the document listeners leak and keep the detached card alive.
+    const stop = (): void => {
       document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
+      document.removeEventListener('mouseup', stop);
+      card.removeEventListener('kickflow:dismiss', stop);
     };
     document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
+    document.addEventListener('mouseup', stop);
+    card.addEventListener('kickflow:dismiss', stop);
   });
 }
 

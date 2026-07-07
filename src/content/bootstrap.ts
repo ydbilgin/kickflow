@@ -147,9 +147,10 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message__badges:empty { display: none; }
     #${OWN_LIST_ID} .kickflow-message__badges { margin-right: 3px; }
     #${OWN_LIST_ID} .kickflow-message__username {
-      font-weight: 700; color: inherit; text-decoration: none; cursor: pointer;
+      font-weight: 700; color: inherit; text-decoration: none;
     }
-    #${OWN_LIST_ID} .kickflow-message__username:hover { text-decoration: underline; }
+    #${OWN_LIST_ID} .kickflow-message__username--link { cursor: pointer; }
+    #${OWN_LIST_ID} .kickflow-message__username--link:hover { text-decoration: underline; }
     #${OWN_LIST_ID} .kickflow-message__separator { color: #adadb8; }
     #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; }
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
