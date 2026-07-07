@@ -23,6 +23,39 @@ const CAUGHT_UP_THRESHOLD_SECONDS = 1.5;
 const MAX_PLAUSIBLE_BEHIND_SECONDS = 12 * 60 * 60;
 const MAX_REASONABLE_MEDIA_SECONDS = 24 * 60 * 60;
 
+export type CatchupAction =
+  | { kind: 'none' }
+  | { kind: 'setRate'; rate: number }
+  | { kind: 'manualDropToNormal' };
+
+export function decideCatchup(input: {
+  mode: 'auto' | 'manual';
+  manualRate: number;
+  catchingUp: boolean;
+  behindBy: number;
+  behindPlausible: boolean;
+}): CatchupAction {
+  if (!input.behindPlausible) return { kind: 'none' };
+
+  if (input.mode === 'manual') {
+    if (
+      input.manualRate > NORMAL_PLAYBACK_RATE &&
+      input.behindBy <= CAUGHT_UP_THRESHOLD_SECONDS
+    ) {
+      return { kind: 'manualDropToNormal' };
+    }
+    return { kind: 'none' };
+  }
+
+  if (!input.catchingUp && input.behindBy > BEHIND_THRESHOLD_SECONDS) {
+    return { kind: 'setRate', rate: CATCHUP_PLAYBACK_RATE };
+  }
+  if (input.catchingUp && input.behindBy <= CAUGHT_UP_THRESHOLD_SECONDS) {
+    return { kind: 'setRate', rate: NORMAL_PLAYBACK_RATE };
+  }
+  return { kind: 'none' };
+}
+
 function saneBoundary(value: number): number | null {
   return Number.isFinite(value) && value >= 0 && value <= MAX_REASONABLE_MEDIA_SECONDS ? value : null;
 }
@@ -106,11 +139,14 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       if (liveEdge === null) return;
       const behindBy = liveEdge - video.currentTime;
       const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
-      if (
-        playerState.manualRate > NORMAL_PLAYBACK_RATE &&
-        plausible &&
-        behindBy <= CAUGHT_UP_THRESHOLD_SECONDS
-      ) {
+      const action = decideCatchup({
+        mode: playerState.mode,
+        manualRate: playerState.manualRate,
+        catchingUp,
+        behindBy,
+        behindPlausible: plausible,
+      });
+      if (action.kind === 'manualDropToNormal') {
         setManualRate(NORMAL_PLAYBACK_RATE);
         setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
       }
@@ -138,11 +174,19 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       hideIndicator();
     }
 
-    if (!catchingUp && behindBy > BEHIND_THRESHOLD_SECONDS) {
+    const action = decideCatchup({
+      mode: playerState.mode,
+      manualRate: playerState.manualRate,
+      catchingUp,
+      behindBy,
+      behindPlausible: plausible,
+    });
+
+    if (action.kind === 'setRate' && action.rate === CATCHUP_PLAYBACK_RATE) {
       catchingUp = true;
-      setPlayerPlaybackRate(video, CATCHUP_PLAYBACK_RATE);
+      setPlayerPlaybackRate(video, action.rate);
       logger.debug('live-catchup: behind by', behindBy.toFixed(1), 's, speeding up');
-    } else if (catchingUp && behindBy <= CAUGHT_UP_THRESHOLD_SECONDS) {
+    } else if (action.kind === 'setRate' && action.rate === NORMAL_PLAYBACK_RATE) {
       resetAutoPlaybackRate();
       logger.debug('live-catchup: caught up, resetting playback rate');
     }

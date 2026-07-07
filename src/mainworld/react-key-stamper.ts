@@ -26,7 +26,7 @@ function rawReactKey(el: Element): string | null {
   }
 }
 
-function parseMessageId(key: string): string {
+export function parseMessageId(key: string): string {
   const parts = key.split('-');
   return parts.length > 1 ? parts.slice(1).join('-') : key;
 }

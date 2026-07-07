@@ -132,7 +132,7 @@ function extractBannedBy(data: Record<string, unknown>): string | null {
  * duration}. Only user identification is required; permanent / duration / banned_by / expires_at are
  * extracted defensively (present on real bans, may be absent) so the row can show BANLANDI (perma)
  * vs TIMEOUT <süre> + the moderator. Accepts both flat {user_id,username} and nested {user:{...}}. */
-function normalizeBanPayload(raw: unknown): BanEventPayload | null {
+export function normalizeBanPayload(raw: unknown): BanEventPayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const data = raw as Record<string, unknown>;
 
@@ -158,6 +158,20 @@ function normalizeBanPayload(raw: unknown): BanEventPayload | null {
     bannedBy: extractBannedBy(data),
     expiresAt: firstString(data.expires_at, data.banned_until, data.expiresAt),
   };
+}
+
+export function normalizeDeletePayload(raw: unknown): DeleteEventPayload | null {
+  const data = raw as
+    | { id?: unknown; message?: { id?: unknown }; aiModerated?: unknown; violatedRules?: unknown }
+    | null;
+  const rawId = data?.message?.id ?? data?.id;
+  const messageId = typeof rawId === 'string' ? rawId : undefined;
+  if (!messageId) return null;
+  const aiModerated = typeof data?.aiModerated === 'boolean' ? data.aiModerated : null;
+  const violatedRules = Array.isArray(data?.violatedRules)
+    ? data.violatedRules.filter((rule): rule is string => typeof rule === 'string')
+    : [];
+  return { messageId, aiModerated, violatedRules };
 }
 
 /** Opens KickFlow's own, independent, read-only Pusher connection — never the page's
@@ -274,17 +288,9 @@ export class PusherClient {
         // flag was off, since KickFlow renders its own list and native never sees it (cx review 2).
         // Live-captured shape: {id, message:{id}, aiModerated, violatedRules:[...]}. aiModerated
         // distinguishes an AI-moderation delete (with the flagged rule) from a human-mod delete.
-        const data = payload as
-          | { id?: unknown; message?: { id?: unknown }; aiModerated?: unknown; violatedRules?: unknown }
-          | null;
-        const rawId = data?.message?.id ?? data?.id;
-        const messageId = typeof rawId === 'string' ? rawId : undefined;
-        if (!messageId) return;
-        const aiModerated = typeof data?.aiModerated === 'boolean' ? data.aiModerated : null;
-        const violatedRules = Array.isArray(data?.violatedRules)
-          ? data.violatedRules.filter((rule): rule is string => typeof rule === 'string')
-          : [];
-        this.callbacks.onMessageDeleted?.({ messageId, aiModerated, violatedRules });
+        const normalized = normalizeDeletePayload(payload);
+        if (!normalized) return;
+        this.callbacks.onMessageDeleted?.(normalized);
         return;
       }
       default: {
