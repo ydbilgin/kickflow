@@ -7,6 +7,27 @@
 - **KickFlow** = Yasin'in kişisel Chrome MV3 eklentisi (Kick.com) + **7/24 sunucu monitörü**. Repo: `F:\GitHub\kickflow` (lokal git, remote YOK, commit sadece Yasin Derya Bilgin).
 - **Amaç:** (1) banlanan/silinen chat mesajlarını YERİNDE üstü-çizili koru, (2) player QoL (rewind/adaptif/kalite/screenshot/pill), (3) **7/24 ban/silme takibi** (Oracle sunucu → banlist.laureth.xyz).
 
+## 🔴 AÇIK BUGLAR — SIRADAKİ İŞ (4 player bug; KOD YAZILMADI — owner /clear istedi)
+Player rework (commit `26a10fe`) canlıda çalışıyor AMA owner **4 sorun** bildirdi. BUG 1&2 izole Chromium'da (`scratchpad/playertest3.cjs`) teşhis edildi + fix belli. BUG 3 teşhis EDİLMEDİ (canlı reprodüksiyon gerek). BUG 4 = TASARIM GERİ-ALMA (owner smooth 1.5x tercih ediyor; onay al). Fix'ler küçük+cerrahi → doğrudan uygula (council gerekmez) → izole Chromium doğrula → `debugLogging=false` → commit. Test scriptleri `scratchpad/playertest{,2,3}.cjs`.
+
+**BUG 1 — ⏪10 kümülatif geri sarma çalışmıyor** (owner: "5 kere basınca 50sn geri gitmeli; geri aldım biraz ileri geldi, tekrar bastığımda o andan 10sn daha geri gitmeli").
+- **Kök sebep (canlı ölçüm):** Kick sadece ~30sn buffer tutuyor (`buffered=[start,end]`), `seekable`=`[0, 2^30]` BOGUS sentinel. Bizim `seekFloor()` (`src/content/player/rewind-controls.ts`) `seekable.start(0)=0`'a güveniyor → `buffered.start`'tan öncesine seek edince Kick oynatamıyor → **CANLIYA GERİ FIRLIYOR** (tüm rewind kaybolur). Test: 1-3. basış birikti (11→21→31sn) ama 4. basış (buffered.start=6 öncesi, ct=3) → 1.8sn sonra ct=44'e (canlıya) fırladı, buffer pencere de öne kaydı.
+- **FIX:** `seekFloor()` → **`buffered.start(0)` kullan** (gerçek oynatılabilir taban), `seekable.start(0)` DEĞİL. Böylece ⏪10 ~30sn buffer içinde birikir, fazlası en-eski buffered noktaya clamp'lenir (canlıya fırlamaz). ⚠️ Kick ~30sn buffer = FİZİKSEL LİMİT → 50sn+ geri fiziksel olarak gidilemez (Mo'Kick de ~25sn cap'liyor); owner'a açıkla.
+
+**BUG 2 — Manuel 3x canlıya gelince 1x'e düşmüyor** (owner: "3x'e aldım, live'a gelse bile hâlâ 3x deniyor; live'a geldiği an 1x'e düşmeli").
+- **Kök sebep:** `src/content/player/live-catchup.ts` manuel modda HİÇBİR ŞEY yapmıyor (erken return). Manuel >1x canlı-kenara gelince düşmüyor → realtime'dan hızlı oynatamayınca canlı-kenarda takılıyor.
+- **FIX:** `live-catchup.ts` `onTimeUpdate` manuel-mod dalına: `playerState.manualRate > 1` VE `behindBy <= CAUGHT_UP_THRESHOLD_SECONDS (1.5)` → 1x'e düş (`setManualRate(1)` + `setPlayerPlaybackRate(video, 1)`). (Kök sebep koddan net; test #2 kesin değildi — 2x'te 12sn pencerede canlıya ulaşamadı.)
+- ⚠️ EK ŞÜPHE: test'te "3x" seçince `rate=2` göründü (3 değil). **3x'in gerçekten uygulandığını doğrula** — menü seçim eşleşmesi mi, yoksa starvation-guard (rate≥2.5 → 1.5) artefaktı mı, incele.
+
+**BUG 3 — kanal değişince eski kanalın chat'i kalıyor, yenilenmiyor** (owner). TEŞHİS EDİLMEDİ.
+- Hipotez: SPA nav'da `handlePotentialNavigation` (`bootstrap.ts`) → `stopSession()` (lifecycle dispose → overlay `root.remove()` + store/registry gitmeli) → `startSession(B)`. Ya nav algılanmıyor, ya lifecycle dispose eksik, ya eski overlay body'de kalıyor, ya yeni overlay eskiyi silmeden ekleniyor.
+- **SIRADAKİ:** izole Chromium'da kanal A→B naviga et; `document.querySelectorAll('#kickflow-message-list, #kickflow-chat-overlay')` sayısını + eski mesajların kalıp kalmadığını gözle. `bootstrap.ts` `stopSession`/`startSession`/`sessionToken` + `overlay-mount.ts` dispose'unu izle. Muhtemelen overlay body-level olduğu için eski root dispose'da silinmiyor VEYA nav-detection kaçıyor.
+
+**BUG 4 — geri sarınca ATLAYARAK canlıya gidiyor; 1.5x crawl ile YETİŞMELİ** (owner, TASARIM GERİ-ALMA).
+- Owner: "geri aldığımda **kaldığı yerden yetişmeye çalışmalı**; şimdi geri alınca yetişmek için **atlaya atlaya canlıya gidiyor**; **1.5 hızda** yetişmeli, **atlama YAPMAMALI**." → Yani owner AUTO-SNAP (>15sn anında zıplama) İSTEMİYOR; geri sardığı içeriği **1.5x'te İZLEYEREK** canlıya yetişsin.
+- **FIX:** `live-catchup.ts`'ten **>15sn snap tier'ını KALDIR** (`SNAP_THRESHOLD_SECONDS`/`overSnapThresholdTicks`/snap bloğu). Catch-up = `behindBy>3` iken HER ZAMAN düz **1.5x crawl** (≤1.5sn'de 1x). **Sticky DVR-suspend'i de kaldır/nötrle** (owner geri-sarınca 1.5x-crawl istiyor, 1x'te kalmasını DEĞİL). Anlık-canlı hâlâ **CANLI butonu + tıklanabilir gösterge** (manuel).
+- ⚠️ Bu, council/critic'in ">15sn instant-jump" + "sticky DVR guard" kararlarını GERİ ALIR — owner smooth crawl'ı tercih ediyor. **Owner'a onaylat:** "geri sarınca 1.5x izleyerek yetişir (atlamaz); anlık canlı istersen CANLI'ya bas. 1x re-watch istersen OTO kapat / hız 1x." Bu memory `kickflow-player-controls`'daki 3-tier tasarımı da güncelle.
+
 ## 🟢 7/24 MONITOR SERVER + banlist.laureth.xyz (2026-07-05, CANLI)
 - **Ne:** Kick public Pusher chat'ten 7/24 silinen+banlanan mesaj toplayıcı (orijinal metin + kim banladı + süre). Kaynak artık **AYRI REPO: `F:\GitHub\banlist-monitor`** (lokal git, initial commit `115c556`, kickflow'dan çıkarıldı 2026-07-05 — istenirse yayınlanabilir; deploy source buradan). Node/ws/SQLite/fastify. Deploy: Oracle `/opt/kickflow/server`, systemd `kickflow-monitor` (active+enabled). (Not: eski `kickflow/server/src` kalıntısı bir sistem-process kilidi yüzünden silinemedi → reboot sonrası elle sil.) İzlenen: levo `24906135`, hype `24495088`. Şu an ~5 ban + 26 silme yakalandı (mod'lar: Chhatto, SelamBenDi görünüyor; banned_by+süre çalışıyor).
 - **Viewer:** `https://banlist.laureth.xyz` — sayfa-içi şifre **`kick`** (Cloudflare Access DIŞI → sadece bu şifre). Tunnel route + DNS **CF API'den** eklendi (`/opt/laureth/secrets/cf_api_token`).
@@ -25,6 +46,7 @@
 - **Review:** overlay fix cx cross-family review'landı (pill bug bulundu+düzeltildi+doğrulandı). Mode-A+popup için cx review #2 (devam ediyor). Build (tsc+esbuild) temiz.
 - **Sıradaki özellikler (ax_pro envanteri):** `docs/mokick-feature-gap-plan.md` — Top 5: @mention+ses, ok-tuşu ses+oto-theatre, kanal gizleme, chat Ctrl+tık, öncelikli-kullanıcı+mod-log.
 - **Ban/timeout etiketleri (2026-07-05):** perma → **BANLANDI**, süreli → **timeout <süre>**, ikisi de **mod adı** ("· Creed"); silme → **SİLİNDİ**. `UserBannedEvent` zaten `permanent`/`duration`/`banned_by` taşıyor, artık extract ediliyor. Oracle viewer (`banlist.laureth.xyz`) de non-perma → **TIMEOUT** (amber) gösteriyor, deploy edildi. Commit'ler `c5fe266` (ext) + `f21f983` (server).
+- **Silme atıflandırması (2026-07-05):** `MessageDeletedEvent` gerçek payload'ı (Oracle ham logdan doğrulandı) `aiModerated`+`violatedRules` taşıyor AMA insan-mod ADINI TAŞIMIYOR (sadece ban'lar `banned_by`). Silmeler artık **"silindi · AI mod (hate)"** (AI moderasyon + kural) / **"silindi · mod"** (insan mod, adsız) / bilinmeyen "silindi". Oracle viewer de "· AI mod (hate)" / "· mod" / "· system" gösteriyor + deploy. Commit'ler `0b69e6c` (ext) + `18b415b` (server). Canlı silme-render'ı henüz gözlenmedi (silme seyrek + kanallar sessizdi) — mantık+gerçek-payload doğrulandı, mekanizma ban-atıflandırmasıyla aynı (o canlı doğrulandı).
 - **Player kontrolleri rework (2026-07-05, council+critic+cx+doğrulama):** commit `26a10fe`. **Anında canlı:** ≤3sn canlı / 3–15sn 1.5x crawl / **>15sn anında snap** (buffered.end-0.5, debounced). YETİŞİLİYOR göstergesi artık **tıklanabilir** (→canlı) + sadece geride görünür. **Sticky DVR guard:** manuel seek → OTO askıda (yank yok), CANLI temizler. **Manuel HIZ menüsü** (`speed-controls.ts`): 3x…0.25x + OTO, karşılıklı dışlama (tek `player-state.ts` kaynağı), fullscreen-safe menü, starvation guard, preservesPitch. Hotkey Lexical-chat guard. Kritik ölçüm: `video.duration`=Infinity/2^30 + `seekable.end`=2^30 sentinel (isStreamOnLive=duration>2^30). Karar: `.claude/_dispatch/council_player-controls/DECISION_SPEC.md`. F10 izole-Chromium doğrulaması geçti.
 
 ## Ne YAPILDI (kod yazıldı + review'landı + build temiz)
@@ -49,6 +71,16 @@
 5. **Stutter MPO fix ile geçti mi:** `OverlayTestMode=5` zaten yazılı AMA reboot bekliyor (memory `multimonitor-mpo-stutter`). Reboot sonrası test.
 
 ## SIRADAKİ ADIMLAR
+- [ ] **CHAT REFACTOR: "Mode B" (Native Chat Augmentation) - CLAUDE İLE YAPILACAK PLAN:**
+  - **Mevcut Sorun (Mode A):** Şu anki overlay sistemi Kick'in yerel sohbetini (`#chatroom-messages`) CSS ile gizliyor ve kendi render listesini çiziyor. Ancak bu yüzden izleyicilerin isimlerine tıklayıp kanal profillerine gitmek, emote'ların detayını görmek gibi native Kick özellikleri devre dışı kalıyor.
+  - **Ulaşılmak İstenen Hedef (Mode B):** Özel render dosyalarımızı (`overlay-mount.ts`, `render-queue.ts`, `history.ts`, `dom-window.ts`) **tamamen silmek**. Kick'in orijinal sohbet akışını ekranda tutarak sadece silinen/banlanan mesajlara "DOM müdahalesi" yapmak.
+  - **Claude İçin Detaylı Uygulama Adımları:** 
+    1. **Dosya Temizliği:** `src/content/chat/` içindeki `overlay-mount.ts`, `render-queue.ts`, `history.ts` dosyalarını projeden tamamen kaldır ve bunlara referans veren `bootstrap.ts` gibi yerleri temizle.
+    2. **Pusher İskeleti Korunacak:** `pusher-client.ts` arka planda salt-okunur şekilde çalışmaya ve public ban/delete mesajlarını toplamaya devam edecek.
+    3. **MutationObserver (Yeni Entegrasyon):** Kick'in kendi DOM'u olan `#chatroom-messages` konteynerine bir `MutationObserver` bağlanacak. Gelen mesajların data id'leri ve textleri hafızada (MessageStore) tutulacak.
+    4. **Ban/Delete Eşleşmesi ve Etiketleme:** `ban-guard.ts` bir ban/silme eventi aldığında, bu observer aracılığıyla React DOM'daki orijinal mesaj satırını bulacak. DOM elementine `.kickflow-preserved` class'ını ekleyecek (metnin üstü çizilmesi için) ve yanına küçük bir "BANLANDI" / "SİLİNDİ" kırmızı etiket dom'u enjekte edecek.
+    5. **React Silme Koruması:** Normalde bir kullanıcı banlandığında React o mesaj div'ini DOM'dan söker. Observer'ımız bu Node silme (removedNodes) işlemini fark edip, silinmesi istenen mesaj eğer "preserved" ise bu işlemi override edecek (örn. `node.cloneNode(true)` ile geri ekleyerek veya React'in state'ine etki edemediğimiz için DOM üzerinde zorla tutarak) React'in mesajı yok etmesine engel olacak.
+    6. Sonuç olarak kullanıcı Kick'in tüm orijinal özelliklerini kullanmaya devam edecek, ban atıldığında sadece o mesajların yok olması engellenecek.
 - [ ] Owner reboot (MPO fix aktifleşsin) → Kick takılma testi.
 - [ ] Owner: `chrome://extensions` → KickFlow reload → Kick F5 → player+chat test.
 - [ ] Owner geri bildirim: takılma? rewind/adaptif/kalite? chat?
