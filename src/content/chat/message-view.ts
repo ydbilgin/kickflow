@@ -238,7 +238,13 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
     username.rel = 'noopener noreferrer';
     username.addEventListener('click', (event) => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      // Our list is a body-level overlay, so a plain left-click on this <a href="kick.com/{slug}">
+      // otherwise bubbles to Kick's document-level SPA router, which does its own router.push to the
+      // profile — navigating the page ("refresh" at top) and tearing our card down. Stop the event
+      // here so ONLY our card opens; middle/ctrl-click still fall through to the native new tab.
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       void openUserCard(slug, displayName, event.clientX, event.clientY);
     });
   }
