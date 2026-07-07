@@ -173,14 +173,27 @@ function ensureStyles(): void {
       box-shadow: 0 12px 34px rgba(0,0,0,0.44);
       font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px;
     }
-    .kickflow-user-card__header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+    .kickflow-user-card__header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; padding-right: 20px; cursor: move; user-select: none; }
     .kickflow-user-card__avatar {
-      display: block; width: 38px; height: 38px; border-radius: 50%; object-fit: cover;
-      background: rgba(255,255,255,0.08);
+      display: block; width: 44px; height: 44px; border-radius: 50%; object-fit: cover;
+      background: rgba(255,255,255,0.08); flex: none;
     }
     .kickflow-user-card__title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .kickflow-user-card__title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kickflow-user-card__nameRow { display: flex; align-items: center; gap: 5px; min-width: 0; }
+    .kickflow-user-card__nameRow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kickflow-user-card__verified { color: #53fc18; font-size: 11px; flex: none; }
     .kickflow-user-card__role { color: #53fc18; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .kickflow-user-card__close {
+      position: absolute; top: 5px; right: 6px; width: 20px; height: 20px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      border: 0; border-radius: 5px; background: rgba(255,255,255,0.08); color: #d0d0d8;
+      font-size: 15px; line-height: 1; cursor: pointer;
+    }
+    .kickflow-user-card__close:hover { background: rgba(233,17,60,0.7); color: #fff; }
+    .kickflow-user-card__bio {
+      color: #c7c7d1; font-size: 11px; line-height: 1.4; margin: 0 0 8px;
+      max-height: 56px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    }
     .kickflow-user-card__field {
       display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
       border-top: 1px solid rgba(255,255,255,0.07);

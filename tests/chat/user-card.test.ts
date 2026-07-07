@@ -8,33 +8,33 @@ describe('user-card', () => {
     vi.restoreAllMocks();
   });
 
-  it('maps endpoint fields without exposing a level field', () => {
+  it('maps card + channel fields (avatar/bio/followers/verified) without exposing a level field', () => {
     const model = mapUserCardResponse({
       username: 'alice',
       slug: 'alice',
-      profile_pic: 'https://kick.com/avatar.png',
+      profile_pic: '', // empty on the card endpoint -> falls back to the channel avatar
       is_moderator: true,
       created_at: '2024-01-11T12:00:00Z',
       following_since: null,
       subscribed_for: 18,
       badges_v2: [{ text: 'VIP' }],
+    }, {
+      followers_count: 12345,
+      verified: true,
+      user: { profile_pic: 'https://kick.com/channel-avatar.png', bio: 'merhaba dünya' },
     }, 'fallback', 'fallback');
 
-    const text = [
-      model.username,
-      model.role,
-      model.createdAt,
-      model.followingSince,
-      model.subscribedFor,
-      model.badges[0]?.text,
-    ].join(' ');
-    expect(text).toContain('alice');
-    expect(text).toContain('mod');
-    expect(text).toContain('2024');
-    expect(text).toContain('takip etmiyor');
-    expect(text).toContain('18 ay abone');
-    expect(text).toContain('VIP');
-    expect(text).not.toContain('level');
+    expect(model.username).toContain('alice');
+    expect(model.role).toBe('mod');
+    expect(model.createdAt).toContain('2024');
+    expect(model.followingSince).toBe('takip etmiyor');
+    expect(model.subscribedFor).toBe('18 ay abone');
+    expect(model.badges[0]?.text).toBe('VIP');
+    expect(model.profilePic).toBe('https://kick.com/channel-avatar.png');
+    expect(model.bio).toBe('merhaba dünya');
+    expect(model.followers).toContain('12');
+    expect(model.verified).toBe(true);
+    expect(JSON.stringify(model).toLowerCase()).not.toContain('level');
   });
 
   it('fetches and renders card fields for left-click popovers', async () => {

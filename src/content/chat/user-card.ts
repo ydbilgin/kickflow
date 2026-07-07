@@ -31,11 +31,21 @@ export interface KickUserCardResponse {
   banned?: unknown;
 }
 
+/** The user's own channel — richer profile fields (avatar, bio, followers) the card endpoint lacks. */
+export interface KickChannelResponse {
+  followers_count?: unknown;
+  verified?: unknown;
+  user?: unknown;
+}
+
 export interface UserCardViewModel {
   username: string;
   slug: string;
   profilePic: string | null;
   role: string | null;
+  verified: boolean;
+  bio: string | null;
+  followers: string | null;
   createdAt: string;
   followingSince: string;
   subscribedFor: string;
@@ -92,6 +102,11 @@ function formatDate(value: unknown): string | null {
   return new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
 }
 
+function formatFollowers(value: unknown): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return new Intl.NumberFormat('tr-TR').format(value);
+}
+
 function roleFrom(raw: KickUserCardResponse): string | null {
   if (raw.is_channel_owner === true) return 'owner';
   if (raw.is_staff === true) return 'staff';
@@ -99,21 +114,40 @@ function roleFrom(raw: KickUserCardResponse): string | null {
   return null;
 }
 
-export function mapUserCardResponse(raw: KickUserCardResponse, fallbackName: string, fallbackSlug: string): UserCardViewModel {
-  const slug = typeof raw.slug === 'string' && SAFE_SLUG_RE.test(raw.slug) ? raw.slug : fallbackSlug;
-  const username = typeof raw.username === 'string' && raw.username ? raw.username : fallbackName;
-  const subscribedFor = typeof raw.subscribed_for === 'number' && raw.subscribed_for > 0
-    ? `${raw.subscribed_for} ay abone`
+function readChannel(raw: KickChannelResponse): { profilePic: string | null; bio: string | null } {
+  const user = raw && typeof raw.user === 'object' && raw.user
+    ? (raw.user as { profile_pic?: unknown; bio?: unknown })
+    : null;
+  const profilePic = user && typeof user.profile_pic === 'string' && user.profile_pic ? user.profile_pic : null;
+  const bio = user && typeof user.bio === 'string' && user.bio.trim() ? user.bio.trim() : null;
+  return { profilePic, bio };
+}
+
+export function mapUserCardResponse(
+  card: KickUserCardResponse,
+  channel: KickChannelResponse,
+  fallbackName: string,
+  fallbackSlug: string,
+): UserCardViewModel {
+  const slug = typeof card.slug === 'string' && SAFE_SLUG_RE.test(card.slug) ? card.slug : fallbackSlug;
+  const username = typeof card.username === 'string' && card.username ? card.username : fallbackName;
+  const subscribedFor = typeof card.subscribed_for === 'number' && card.subscribed_for > 0
+    ? `${card.subscribed_for} ay abone`
     : 'abone değil';
-  const badgesV2 = normalizeBadges(raw.badges_v2);
-  const badges = badgesV2.length > 0 ? badgesV2 : normalizeBadges(raw.badges);
+  const badgesV2 = normalizeBadges(card.badges_v2);
+  const badges = badgesV2.length > 0 ? badgesV2 : normalizeBadges(card.badges);
+  const { profilePic: channelPic, bio } = readChannel(channel);
+  const cardPic = typeof card.profile_pic === 'string' && card.profile_pic ? card.profile_pic : null;
   return {
     username,
     slug,
-    profilePic: typeof raw.profile_pic === 'string' && raw.profile_pic ? raw.profile_pic : null,
-    role: roleFrom(raw),
-    createdAt: formatDate(raw.created_at) ?? '-',
-    followingSince: formatDate(raw.following_since) ?? 'takip etmiyor',
+    profilePic: cardPic ?? channelPic,
+    role: roleFrom(card),
+    verified: Boolean(channel?.verified),
+    bio,
+    followers: formatFollowers(channel?.followers_count),
+    createdAt: formatDate(card.created_at) ?? '-',
+    followingSince: formatDate(card.following_since) ?? 'takip etmiyor',
     subscribedFor,
     badges,
   };
@@ -124,14 +158,25 @@ async function fetchUserCard(username: string, fallbackName: string): Promise<Us
   const cached = cache.get(username);
   if (cached) return cached;
 
-  const promise = fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(channelSlug)}/users/${encodeURIComponent(username)}`, {
-    headers: { accept: 'application/json' },
-  })
-    .then(async (response) => {
-      if (!response.ok) return null;
-      return mapUserCardResponse((await response.json()) as KickUserCardResponse, fallbackName, username);
-    })
-    .catch(() => null);
+  const getJson = (url: string): Promise<unknown> =>
+    fetch(url, { headers: { accept: 'application/json' } })
+      .then((response) => (response.ok ? response.json() : null))
+      .catch(() => null);
+
+  // Card endpoint = this-channel relationship (following/subscribed/badges); channel endpoint =
+  // the user's own profile (avatar, bio, follower count, verified). Fetch both in parallel + merge.
+  const promise = Promise.all([
+    getJson(`https://kick.com/api/v2/channels/${encodeURIComponent(channelSlug)}/users/${encodeURIComponent(username)}`),
+    getJson(`https://kick.com/api/v2/channels/${encodeURIComponent(username)}`),
+  ]).then(([cardRaw, channelRaw]) => {
+    if (!cardRaw && !channelRaw) return null;
+    return mapUserCardResponse(
+      (cardRaw ?? {}) as KickUserCardResponse,
+      (channelRaw ?? {}) as KickChannelResponse,
+      fallbackName,
+      username,
+    );
+  });
   cache.set(username, promise);
   return promise;
 }
@@ -154,6 +199,15 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   card.className = CARD_CLASS;
   card.tabIndex = -1;
 
+  // Persistent card: an explicit close button — the owner dismisses it when they want.
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'kickflow-user-card__close';
+  close.textContent = '×';
+  close.setAttribute('aria-label', 'kapat');
+  close.addEventListener('click', () => dismissUserCard());
+  card.appendChild(close);
+
   const header = document.createElement('div');
   header.className = 'kickflow-user-card__header';
   if (model.profilePic) {
@@ -167,9 +221,19 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
 
   const title = document.createElement('div');
   title.className = 'kickflow-user-card__title';
+  const nameRow = document.createElement('div');
+  nameRow.className = 'kickflow-user-card__nameRow';
   const name = document.createElement('strong');
   name.textContent = model.username;
-  title.appendChild(name);
+  nameRow.appendChild(name);
+  if (model.verified) {
+    const verified = document.createElement('span');
+    verified.className = 'kickflow-user-card__verified';
+    verified.textContent = '✔';
+    verified.title = 'doğrulanmış';
+    nameRow.appendChild(verified);
+  }
+  title.appendChild(nameRow);
   if (model.role) {
     const role = document.createElement('span');
     role.className = 'kickflow-user-card__role';
@@ -178,7 +242,16 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   }
   header.appendChild(title);
   card.appendChild(header);
+  makeDraggable(card, header);
 
+  if (model.bio) {
+    const bio = document.createElement('div');
+    bio.className = 'kickflow-user-card__bio';
+    bio.textContent = model.bio;
+    card.appendChild(bio);
+  }
+
+  if (model.followers) appendField(card, 'takipçi', model.followers);
   appendField(card, 'hesap oluşturma', model.createdAt);
   appendField(card, 'takip', model.followingSince);
   appendField(card, 'abonelik', model.subscribedFor);
@@ -195,7 +268,7 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   link.href = `https://kick.com/${model.slug}`;
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = `kick.com/${model.slug} \u2192 aç`;
+  link.textContent = `kick.com/${model.slug} → aç`;
   card.appendChild(link);
   return card;
 }
@@ -206,6 +279,9 @@ function buildMinimalCard(displayName: string, slug: string | null): HTMLElement
     slug: slug && SAFE_SLUG_RE.test(slug) ? slug : displayName,
     profilePic: null,
     role: null,
+    verified: false,
+    bio: null,
+    followers: null,
     createdAt: '-',
     followingSince: 'takip etmiyor',
     subscribedFor: 'abone değil',
@@ -218,24 +294,44 @@ function buildMinimalCard(displayName: string, slug: string | null): HTMLElement
 function positionCard(card: HTMLElement, x: number, y: number): void {
   const margin = 8;
   card.style.left = `${Math.min(x + margin, window.innerWidth - 284)}px`;
-  card.style.top = `${Math.min(y + margin, window.innerHeight - 220)}px`;
+  card.style.top = `${Math.min(y + margin, window.innerHeight - 260)}px`;
+}
+
+/** Grab the card by its header (the top) and drag it anywhere on the page. Ignores drags that
+ * start on the close button or the profile link so those keep working. */
+function makeDraggable(card: HTMLElement, handle: HTMLElement): void {
+  handle.addEventListener('mousedown', (event: MouseEvent) => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('.kickflow-user-card__close, a')) return;
+    event.preventDefault();
+    const rect = card.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    const move = (moveEvent: MouseEvent): void => {
+      const x = Math.max(4, Math.min(moveEvent.clientX - offsetX, window.innerWidth - card.offsetWidth - 4));
+      const y = Math.max(4, Math.min(moveEvent.clientY - offsetY, window.innerHeight - card.offsetHeight - 4));
+      card.style.left = `${x}px`;
+      card.style.top = `${y}px`;
+    };
+    const up = (): void => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
 }
 
 function installDismissHandlers(card: HTMLElement): void {
-  const outside = (event: MouseEvent) => {
-    if (!card.contains(event.target as Node)) dismissUserCard();
-  };
+  // Persistent card: stays open until the owner closes it (× button, Escape, or opening another
+  // card). NO scroll / outside-click auto-dismiss — the chat scrolls constantly and would snap it
+  // shut the instant it appeared.
   const key = (event: KeyboardEvent) => {
     if (event.key === 'Escape') dismissUserCard();
   };
-  const scroll = () => dismissUserCard();
-  window.setTimeout(() => document.addEventListener('mousedown', outside), 0);
   document.addEventListener('keydown', key);
-  window.addEventListener('scroll', scroll, true);
   card.addEventListener('kickflow:dismiss', () => {
-    document.removeEventListener('mousedown', outside);
     document.removeEventListener('keydown', key);
-    window.removeEventListener('scroll', scroll, true);
   }, { once: true });
 }
 
