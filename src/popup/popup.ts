@@ -17,7 +17,12 @@ interface StatusResponse {
   ghostPendingNoAnchor: number;
   ghostStrip: number;
   ghostEvicted: number;
-  flags: { showDeletedMessages: boolean; preserveBansInline: boolean; debugLogging: boolean };
+  flags: {
+    chatMode: 'native' | 'own';
+    showDeletedMessages: boolean;
+    preserveBansInline: boolean;
+    debugLogging: boolean;
+  };
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
@@ -51,7 +56,7 @@ function render(res: StatusResponse | null, error?: string): void {
   $('stats').style.display = '';
   $('toggles').style.display = '';
   setDot(res.active ? 'active' : (res.slug ? 'native' : 'off'));
-  $('reason').textContent = res.active ? '✅ KickFlow aktif — native chat' : ('○ ' + res.reason);
+  $('reason').textContent = res.active ? `✅ KickFlow aktif — ${res.flags.chatMode} chat` : ('○ ' + res.reason);
 
   $('slug').textContent = res.slug || '—';
   $('chatroomId').textContent = res.chatroomId != null ? String(res.chatroomId) : '—';
@@ -69,6 +74,7 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-deleted') as HTMLInputElement)).checked = res.flags.showDeletedMessages;
   (($('t-bans-inline') as HTMLInputElement)).checked = res.flags.preserveBansInline;
   (($('t-debug') as HTMLInputElement)).checked = res.flags.debugLogging;
+  (($('t-chat-mode') as HTMLSelectElement)).value = res.flags.chatMode;
 }
 
 async function refresh(): Promise<void> {
@@ -83,7 +89,12 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function setFlag(key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging', value: boolean): Promise<void> {
+async function setFlag(key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging', value: boolean): Promise<void>;
+async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
+async function setFlag(
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'chatMode',
+  value: boolean | 'native' | 'own'
+): Promise<void> {
   const id = await activeTabId();
   if (id === undefined) return;
   try {
@@ -97,6 +108,7 @@ async function setFlag(key: 'showDeletedMessages' | 'preserveBansInline' | 'debu
 $('t-deleted').addEventListener('change', (e) => setFlag('showDeletedMessages', (e.target as HTMLInputElement).checked));
 $('t-bans-inline').addEventListener('change', (e) => setFlag('preserveBansInline', (e.target as HTMLInputElement).checked));
 $('t-debug').addEventListener('change', (e) => setFlag('debugLogging', (e.target as HTMLInputElement).checked));
+$('t-chat-mode').addEventListener('change', (e) => setFlag('chatMode', (e.target as HTMLSelectElement).value as 'native' | 'own'));
 
 void refresh();
 window.setInterval(refresh, 1000);

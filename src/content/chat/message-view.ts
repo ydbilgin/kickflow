@@ -1,4 +1,5 @@
 import type { ChatBadge, ChatMessage, PreservedMeta } from './message-store';
+import { isMasqueradeEnabled, isSafeKickSlug, openUserCard } from './user-card';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -221,9 +222,26 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
     : message.sender.identity.badges;
   appendBadges(badges, badgeSource);
 
-  const username = document.createElement('span');
+  const displayName = message.sender.displayName || message.sender.username;
+  const slug = message.sender.slug;
+  const privacyMasked = isMasqueradeEnabled() || (
+    message.sender.displayName != null && message.sender.displayName !== message.sender.username
+  );
+  const username = isSafeKickSlug(slug) && !privacyMasked
+    ? document.createElement('a')
+    : document.createElement('span');
   username.className = 'kickflow-message__username';
-  username.textContent = message.sender.username;
+  username.textContent = displayName;
+  if (username instanceof HTMLAnchorElement) {
+    username.href = `https://kick.com/${slug}`;
+    username.target = '_blank';
+    username.rel = 'noopener noreferrer';
+    username.addEventListener('click', (event) => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      void openUserCard(slug, displayName, event.clientX, event.clientY);
+    });
+  }
   // Property assignment only — the setter rejects invalid values. Never
   // setAttribute('style', ...) / .cssText, which would accept arbitrary CSS text.
   username.style.color = message.sender.identity.color || 'inherit';

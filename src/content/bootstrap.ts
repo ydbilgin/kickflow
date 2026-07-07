@@ -3,10 +3,15 @@ import { Lifecycle } from './shared/lifecycle';
 import { SELECTORS } from './shared/selectors';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
-import { ChatIntegrityStore } from './chat/message-store';
+import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
+import { RenderQueue } from './chat/render-queue';
+import { trimMessageWindow, isNearBottom } from './chat/dom-window';
+import { fetchChatHistory } from './chat/history';
+import { ChatOverlayMount } from './chat/overlay-mount';
+import { configureUserCardSession } from './chat/user-card';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -15,6 +20,7 @@ import { initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
 
 const STYLE_ID = 'kickflow-styles';
+const OWN_LIST_ID = 'kickflow-message-list';
 const CHAT_CONTAINER_WAIT_MS = 15000;
 const VIDEO_ELEMENT_WAIT_MS = 15000;
 const PRESERVED_SWEEP_INTERVAL_MS = 60_000;
@@ -53,6 +59,8 @@ const CHATROOM_ID_RETRY_BASE_MS = 800;
 interface ResolvedChannel {
   /** Pusher chatroom id — used for the live `chatrooms.{id}.v2` subscription. */
   chatroomId: number;
+  /** Channel id — used for the web.kick.com history backfill (differs from chatroomId). */
+  channelId: number;
 }
 
 async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
@@ -69,10 +77,14 @@ async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
     try {
       const response = await fetch(url, { headers: { accept: 'application/json' } });
       if (response.ok) {
-        const json = (await response.json()) as { chatroom?: { id?: number } };
+        const json = (await response.json()) as { id?: number; chatroom?: { id?: number; channel_id?: number } };
         const chatroomId = json.chatroom?.id;
         if (typeof chatroomId !== 'number') return null;
-        return { chatroomId };
+        const channelId =
+          typeof json.id === 'number' ? json.id
+          : typeof json.chatroom?.channel_id === 'number' ? json.chatroom.channel_id
+          : chatroomId;
+        return { chatroomId, channelId };
       }
       const transient = response.status === 429 || response.status >= 500;
       logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status, transient ? '(retrying)' : '(terminal)');
@@ -121,6 +133,65 @@ function ensureStyles(): void {
   // Images use `display: inline-block !important` + an explicit px height. Kick's page is built
   // with Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally.
   style.textContent = `
+    #${OWN_LIST_ID} {
+      padding: 6px 10px; overflow-y: auto; height: 100%; box-sizing: border-box;
+      font-size: 13px; line-height: 1.45; color: #efeff1;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    }
+    #${OWN_LIST_ID} .kickflow-message {
+      display: block; padding: 3px 5px; border-radius: 4px;
+      word-break: break-word; overflow-wrap: anywhere;
+    }
+    #${OWN_LIST_ID} .kickflow-message:hover { background: rgba(255,255,255,0.06); }
+    #${OWN_LIST_ID} .kickflow-message__time { color: #adadb8; font-size: 11px; margin-right: 5px; }
+    #${OWN_LIST_ID} .kickflow-message__badges:empty { display: none; }
+    #${OWN_LIST_ID} .kickflow-message__badges { margin-right: 3px; }
+    #${OWN_LIST_ID} .kickflow-message__username {
+      font-weight: 700; color: inherit; text-decoration: none; cursor: pointer;
+    }
+    #${OWN_LIST_ID} .kickflow-message__username:hover { text-decoration: underline; }
+    #${OWN_LIST_ID} .kickflow-message__separator { color: #adadb8; }
+    #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; }
+    #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
+    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
+    html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
+    .kickflow-scroll-pill {
+      position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 14px; border: 0; border-radius: 999px;
+      background: #53fc18; color: #0b0e0f; cursor: pointer;
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px; font-weight: 700;
+      line-height: 1; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+      transition: background .14s ease, transform .1s ease;
+    }
+    .kickflow-scroll-pill:hover { background: #45e00f; }
+    .kickflow-scroll-pill:active { transform: translateX(-50%) scale(0.95); }
+    .kickflow-user-card {
+      position: fixed; z-index: 2147483647; width: 276px; padding: 10px;
+      border: 1px solid rgba(255,255,255,0.16); border-radius: 8px;
+      background: rgba(18,20,24,0.98); color: #efeff1;
+      box-shadow: 0 12px 34px rgba(0,0,0,0.44);
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px;
+    }
+    .kickflow-user-card__header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+    .kickflow-user-card__avatar {
+      display: block; width: 38px; height: 38px; border-radius: 50%; object-fit: cover;
+      background: rgba(255,255,255,0.08);
+    }
+    .kickflow-user-card__title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .kickflow-user-card__title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kickflow-user-card__role { color: #53fc18; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .kickflow-user-card__field {
+      display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
+      border-top: 1px solid rgba(255,255,255,0.07);
+    }
+    .kickflow-user-card__key { color: #adadb8; }
+    .kickflow-user-card__value { color: #fff; text-align: right; }
+    .kickflow-user-card__badges { padding-top: 7px; }
+    .kickflow-user-card__link {
+      display: inline-block; margin-top: 8px; color: #66bfff; text-decoration: underline;
+      max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .kickflow-badge-icon {
       display: inline-block !important; height: 15px !important; width: auto !important;
       vertical-align: -3px; margin-right: 3px;
@@ -297,7 +368,7 @@ function ensureStyles(): void {
   document.head.appendChild(style);
 }
 
-function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   let augmenter: NativeChatAugmenter | null = null;
   const store = new ChatIntegrityStore({
     onPreservedEvicted: (message) => augmenter?.forgetGhost(message.id),
@@ -340,6 +411,116 @@ function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   });
 }
 
+function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+  configureUserCardSession(slug);
+  lifecycle.add(() => configureUserCardSession(null));
+
+  const registry = new ChatDomRegistry();
+  const store = new ChatIntegrityStore({
+    onPreservedEvicted: (message: ChatMessage) => {
+      const element = registry.getElementForMessageId(message.id);
+      if (!element) return;
+      registry.forget(element);
+      element.remove();
+    },
+  });
+
+  const mount = new ChatOverlayMount(lifecycle);
+  const ownList = mount.ownList;
+
+  const scrollPill = document.createElement('button');
+  scrollPill.type = 'button';
+  scrollPill.className = 'kickflow-scroll-pill';
+  scrollPill.textContent = '↓ Yeni mesajlar';
+  scrollPill.style.display = 'none';
+  scrollPill.addEventListener('click', () => {
+    ownList.scrollTop = ownList.scrollHeight;
+    scrollPill.style.display = 'none';
+  });
+  mount.root.appendChild(scrollPill);
+  lifecycle.add(() => scrollPill.remove());
+
+  lifecycle.addEventListener(ownList, 'scroll', () => {
+    if (isNearBottom(ownList)) scrollPill.style.display = 'none';
+  });
+
+  let activated = false;
+  const renderQueue = new RenderQueue({
+    getContainer: () => ownList,
+    registry,
+    onFlush: (appended, wasAtBottom) => {
+      if (!activated && appended.length > 0) {
+        activated = true;
+        mount.activate();
+        setStatus({ active: true, reason: 'aktif — kendi liste render ediliyor' });
+      }
+
+      trimMessageWindow(ownList, registry);
+      if (wasAtBottom) {
+        ownList.scrollTop = ownList.scrollHeight;
+        scrollPill.style.display = 'none';
+      } else if (appended.length > 0) {
+        scrollPill.style.display = '';
+      }
+    },
+  });
+  lifecycle.add(() => renderQueue.dispose());
+  lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
+
+  resolveChannel(slug).then(async (resolved) => {
+    if (lifecycle.isDisposed) return;
+    if (!resolved) {
+      logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
+      setStatus({ reason: 'chatroom-id çözülemedi — native chat' });
+      return;
+    }
+    const { chatroomId, channelId } = resolved;
+    setStatus({ chatroomId, reason: 'geçmiş yükleniyor…' });
+
+    const history = await fetchChatHistory(channelId);
+    if (lifecycle.isDisposed) return;
+    for (const message of history) {
+      store.addMessage(message);
+      renderQueue.enqueue(message);
+    }
+
+    setStatus({ reason: 'Pusher bağlanıyor…' });
+    const client = new PusherClient(chatroomId, {
+      onConnected: () => {
+        setStatus({ pusherConnected: true });
+        if (!getStatus().active) setStatus({ reason: 'Pusher bağlı — ilk mesaj bekleniyor' });
+      },
+      onDisconnected: () => {
+        setStatus({ pusherConnected: false });
+      },
+      onMessage: (message) => {
+        store.addMessage(message);
+        renderQueue.enqueue(message);
+      },
+      onUserBanned: (payload) => {
+        setStatus({ lastBanAt: Date.now() });
+        handleUserBanned(payload, { store, registry });
+      },
+      onMessageDeleted: (payload) => {
+        handleMessageDeleted(payload, { store, registry });
+      },
+    });
+    lifecycle.add(() => {
+      client.dispose();
+      setStatus({ pusherConnected: false });
+    });
+    client.connect();
+  });
+}
+
+function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+  if (featureFlags.chatMode === 'own') {
+    initOwnChatIntegrity(slug, lifecycle);
+  } else {
+    initNativeChatIntegrity(slug, lifecycle);
+  }
+}
+
 /** Fully independent of chat readiness — gated only on the video element, not on
  * #chatroom-messages (which can legitimately take a while, or never resolve). */
 async function initPlayerQolSession(lifecycle: Lifecycle): Promise<void> {
@@ -366,6 +547,9 @@ let sessionToken = 0;
 
 async function startSession(slug: string): Promise<void> {
   const token = ++sessionToken;
+  document.getElementById('kickflow-chat-overlay')?.remove();
+  document.documentElement.classList.remove('kickflow-chat-active');
+  configureUserCardSession(null);
 
   const lifecycle = new Lifecycle();
   currentLifecycle = lifecycle;
@@ -412,14 +596,18 @@ function installStatusBridge(): void {
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'kickflow:getStatus') {
+      const ownList = document.getElementById(OWN_LIST_ID);
       sendResponse({
         ...getStatus(),
-        messageCount: document.querySelectorAll('#chatroom-messages [data-index]').length,
+        messageCount: ownList
+          ? ownList.querySelectorAll('.kickflow-message').length
+          : document.querySelectorAll('#chatroom-messages [data-index]').length,
         preservedCount: document.querySelectorAll('.kickflow-preserved').length,
         bannedCount: document.querySelectorAll('.kickflow-banned').length,
         deletedCount: document.querySelectorAll('.kickflow-deleted').length,
         ...getActiveNativeChatGhostStats(),
         flags: {
+          chatMode: featureFlags.chatMode,
           showDeletedMessages: featureFlags.showDeletedMessages,
           preserveBansInline: featureFlags.preserveBansInline,
           debugLogging: featureFlags.debugLogging,
@@ -440,6 +628,21 @@ function installStatusBridge(): void {
       sendResponse({ ok: true });
       return;
     }
+    if (
+      msg.type === 'kickflow:setFlag' &&
+      msg.key === 'chatMode' &&
+      (msg.value === 'native' || msg.value === 'own')
+    ) {
+      setFeatureFlag('chatMode', msg.value);
+      void chrome.storage.local.set({ kf_flag_chatMode: msg.value });
+      if (currentSlug) {
+        stopSession();
+        resetStatus(currentSlug);
+        void startSession(currentSlug);
+      }
+      sendResponse({ ok: true });
+      return;
+    }
   });
 }
 
@@ -448,10 +651,12 @@ function installStatusBridge(): void {
 async function applySavedFlags(): Promise<void> {
   try {
     const saved = await chrome.storage.local.get([
+      'kf_flag_chatMode',
       'kf_flag_showDeletedMessages',
       'kf_flag_preserveBansInline',
       'kf_flag_debugLogging',
     ]);
+    if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
     if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
     if (typeof saved.kf_flag_preserveBansInline === 'boolean') setFeatureFlag('preserveBansInline', saved.kf_flag_preserveBansInline);
     if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);

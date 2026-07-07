@@ -32,6 +32,10 @@
     .row label { color: #dcdce1; }
     .hint { color: #7a7a85; font-size: 10.5px; margin-top: 8px; }
     input[type=checkbox] { width: 16px; height: 16px; accent-color: #53fc18; cursor: pointer; }
+    select {
+      min-width: 96px; height: 24px; border: 1px solid rgba(255,255,255,0.14); border-radius: 5px;
+      background: #18181b; color: #efeff1; font: inherit; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -57,6 +61,7 @@
   </div>
 
   <div id="toggles" class="toggles">
+    <div class="row"><label for="t-chat-mode">Chat modu</label><select id="t-chat-mode"><option value="native">Native</option><option value="own">Own</option></select></div>
     <div class="row"><label for="t-deleted">Silinen mesajları göster</label><input type="checkbox" id="t-deleted" /></div>
     <div class="row"><label for="t-bans-inline">Banları inline koru</label><input type="checkbox" id="t-bans-inline" /></div>
     <div class="row"><label for="t-debug">Debug log (F12)</label><input type="checkbox" id="t-debug" /></div>

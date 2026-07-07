@@ -1,16 +1,18 @@
 import { logger } from '../shared/logger';
 import { featureFlags } from './feature-flags';
+import { applyPreservedMarking } from './message-view';
 import type { BanEventPayload, DeleteEventPayload } from './pusher-client';
-import type { ChatIntegrityStore } from './message-store';
+import type { ChatDomRegistry, ChatIntegrityStore } from './message-store';
 import type { NativeChatAugmenter } from './native-augment';
 
 export interface BanGuardDeps {
   store: ChatIntegrityStore;
-  augmenter: NativeChatAugmenter;
+  augmenter?: NativeChatAugmenter;
+  registry?: ChatDomRegistry;
 }
 
-/** The store is the single source of truth; the native augmenter updates currently
- * mounted rows immediately and re-applies from the store when Kick re-mounts rows. */
+/** The store is the single source of truth; Mode B updates native rows through the augmenter,
+ * while Mode A updates already-rendered own rows through the DOM registry. */
 export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): void {
   const messages = deps.store.markUserBanned(payload.userId, {
     permanent: payload.permanent,
@@ -21,10 +23,17 @@ export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): 
 
   let updatedCount = 0;
   for (const message of messages) {
-    deps.augmenter.markById(message.id);
+    if (deps.augmenter) {
+      deps.augmenter.markById(message.id);
+      updatedCount++;
+      continue;
+    }
+    const element = deps.registry?.getElementForMessageId(message.id);
+    if (!element) continue;
+    applyPreservedMarking(element, message);
     updatedCount++;
   }
-  deps.augmenter.seedBannedGhosts(messages.map((message) => message.id));
+  deps.augmenter?.seedBannedGhosts(messages.map((message) => message.id));
   logger.debug('ban-guard: updated', updatedCount, 'message(s) for user', payload.userId,
     payload.permanent === false ? `(timeout ${payload.durationMin ?? '?'}m by ${payload.bannedBy ?? '?'})` : '(ban)');
 }
@@ -41,7 +50,25 @@ export function handleMessageDeleted(payload: DeleteEventPayload, deps: BanGuard
       violatedRules: payload.violatedRules,
     });
     if (!message) return;
-    deps.augmenter.markById(messageId);
+    if (deps.augmenter) {
+      deps.augmenter.markById(messageId);
+    } else {
+      const element = deps.registry?.getElementForMessageId(messageId);
+      if (element) applyPreservedMarking(element, message);
+    }
     logger.debug('ban-guard: struck-through deleted message', messageId, payload.aiModerated ? '(AI)' : '(mod)');
+    return;
+  }
+
+  if (deps.registry) {
+    const existing = deps.store.getMessageById(messageId);
+    if (existing?.preserved) return;
+    const element = deps.registry.getElementForMessageId(messageId);
+    if (element) {
+      deps.registry.forget(element);
+      element.remove();
+    }
+    deps.store.removeMessage(messageId);
+    logger.debug('ban-guard: removed deleted message (showDeletedMessages off)', messageId);
   }
 }

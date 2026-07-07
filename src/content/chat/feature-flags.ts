@@ -1,4 +1,6 @@
 export interface FeatureFlags {
+  /** Chat rendering mode: native augment keeps Kick's chat; own renders KickFlow's overlay list. */
+  chatMode: 'native' | 'own';
   /** Gates debug/info logging plus the unknown-Pusher-event logger. Off by default. */
   debugLogging: boolean;
   /** Deleted-message display: preserve deleted messages in place, struck-through, with their
@@ -14,6 +16,7 @@ export interface FeatureFlags {
 }
 
 export const featureFlags: FeatureFlags = {
+  chatMode: 'native',
   debugLogging: false,
   showDeletedMessages: true,
   preserveBansInline: true,

@@ -8,6 +8,7 @@ export interface ChatBadge {
 export interface ChatMessageSender {
   id: number;
   username: string;
+  displayName?: string;
   slug: string;
   identity: {
     color: string;
@@ -80,6 +81,55 @@ export class LimitedQueue<T> {
 
   clear(): void {
     this.items = [];
+  }
+}
+
+/** DOM node <-> message association for Mode A's own-rendered rows. WeakMap is used in the
+ * element->message direction so detached nodes can still be GC'd; callers clean the Map indexes
+ * with forget() when rows are trimmed or removed. */
+export class ChatDomRegistry {
+  private readonly messageByElement = new WeakMap<HTMLElement, ChatMessage>();
+  private readonly elementByMessageId = new Map<string, HTMLElement>();
+  private readonly elementsByUserId = new Map<number, Set<HTMLElement>>();
+
+  register(element: HTMLElement, message: ChatMessage): void {
+    this.messageByElement.set(element, message);
+    this.elementByMessageId.set(message.id, element);
+    let set = this.elementsByUserId.get(message.sender.id);
+    if (!set) {
+      set = new Set();
+      this.elementsByUserId.set(message.sender.id, set);
+    }
+    set.add(element);
+  }
+
+  getMessage(element: HTMLElement): ChatMessage | undefined {
+    return this.messageByElement.get(element);
+  }
+
+  getElementForMessageId(messageId: string): HTMLElement | undefined {
+    return this.elementByMessageId.get(messageId);
+  }
+
+  getElementsForUser(userId: number): HTMLElement[] {
+    const set = this.elementsByUserId.get(userId);
+    return set ? Array.from(set) : [];
+  }
+
+  forget(element: HTMLElement): void {
+    const message = this.messageByElement.get(element);
+    if (!message) return;
+    this.elementByMessageId.delete(message.id);
+    const set = this.elementsByUserId.get(message.sender.id);
+    if (set) {
+      set.delete(element);
+      if (set.size === 0) this.elementsByUserId.delete(message.sender.id);
+    }
+  }
+
+  clear(): void {
+    this.elementByMessageId.clear();
+    this.elementsByUserId.clear();
   }
 }
 
@@ -164,6 +214,19 @@ export class ChatIntegrityStore {
 
   getMessageSeq(messageId: string): number | undefined {
     return this.messageById.get(messageId)?.seq;
+  }
+
+  /** Fully drop a non-preserved message from the index, used by own-render mode when
+   * showDeletedMessages is off and KickFlow must mimic native row removal itself. */
+  removeMessage(messageId: string): void {
+    const message = this.messageById.get(messageId);
+    if (!message || message.preserved) return;
+    this.messageById.delete(messageId);
+    const ids = this.messagesByUserId.get(message.sender.id);
+    if (ids) {
+      ids.delete(messageId);
+      if (ids.size === 0) this.messagesByUserId.delete(message.sender.id);
+    }
   }
 
   isPreservedBanned(messageId: string): boolean {

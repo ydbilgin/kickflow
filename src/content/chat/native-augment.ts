@@ -439,7 +439,7 @@ export class NativeChatAugmenter {
 
     const username = document.createElement('span');
     username.className = 'kickflow-ghost-row__username';
-    username.textContent = message.sender.username;
+    username.textContent = message.sender.displayName || message.sender.username;
     username.style.color = message.sender.identity.color || 'inherit';
 
     const separator = document.createElement('span');

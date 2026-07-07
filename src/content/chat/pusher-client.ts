@@ -96,6 +96,7 @@ export function normalizeMessage(raw: unknown): ChatMessage | null {
     sender: {
       id: s.id,
       username: s.username,
+      displayName: typeof s.display_name === 'string' ? s.display_name : undefined,
       slug: typeof s.slug === 'string' ? s.slug : '',
       identity: {
         color: identity && typeof identity.color === 'string' ? identity.color : '',
@@ -248,7 +249,12 @@ export class PusherClient {
       return;
     }
     if (eventName === 'pusher:error') {
-      logger.warn('pusher-client: server error frame', frame.data);
+      // Pusher error frames carry {code, message}. Stringify so the code is readable in the
+      // console (was logging a bare object → "[object Object]"). Typically transient — e.g. a
+      // per-IP connection/rate limit when many tabs/clients hit the same public app — and the
+      // reconnect/heartbeat logic recovers; a single normal connection does not see these.
+      const data = this.parseInnerData(frame.data);
+      logger.warn('pusher-client: server error frame', typeof data === 'string' ? data : JSON.stringify(data));
       return;
     }
     if (eventName.startsWith('pusher_internal:') || eventName.startsWith('pusher:')) {

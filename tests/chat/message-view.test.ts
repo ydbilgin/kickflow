@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { appendBadges, appendParsedContent } from '../../src/content/chat/message-view';
+import { appendBadges, appendParsedContent, buildMessageElement } from '../../src/content/chat/message-view';
+import type { ChatMessage } from '../../src/content/chat/message-store';
+
+function message(slug: string): ChatMessage {
+  return {
+    id: 'm1',
+    chatroomId: 1,
+    content: 'hello',
+    type: 'message',
+    createdAt: '',
+    sender: {
+      id: 1,
+      username: 'Alice',
+      slug,
+      identity: { color: '', badges: [], badgesV2: [] },
+    },
+    preserved: false,
+  };
+}
 
 describe('message-view safe rendering', () => {
   it('renders parsed emotes, mentions, links, and script-looking text safely', () => {
@@ -40,5 +58,25 @@ describe('message-view safe rendering', () => {
 
     expect(parent.querySelector('img')).toBeNull();
     expect(parent.querySelector('.kickflow-badge-text')?.textContent).toBe('VIP');
+  });
+
+  it('renders safe username slugs as profile anchors', () => {
+    const row = buildMessageElement(message('alice_123'));
+
+    const username = row.querySelector<HTMLAnchorElement>('.kickflow-message__username');
+    expect(username?.tagName).toBe('A');
+    expect(username?.href).toBe('https://kick.com/alice_123');
+    expect(username?.target).toBe('_blank');
+    expect(username?.rel).toContain('noopener');
+    expect(username?.textContent).toBe('Alice');
+  });
+
+  it('does not link unsafe username slugs', () => {
+    const row = buildMessageElement(message('../evil'));
+
+    const username = row.querySelector<HTMLElement>('.kickflow-message__username');
+    expect(username?.tagName).toBe('SPAN');
+    expect(username?.textContent).toBe('Alice');
+    expect(row.querySelector('a[href*="evil"]')).toBeNull();
   });
 });
