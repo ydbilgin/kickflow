@@ -1,6 +1,7 @@
 import { featureFlags } from './feature-flags';
 import { appendBadges } from './message-view';
 import { mergeIdentityBadges } from './message-store';
+import { makeDraggable } from '../shared/draggable';
 import type { FeatureFlags } from './feature-flags';
 import type { ChatBadge } from './message-store';
 
@@ -260,7 +261,7 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   }
   header.appendChild(title);
   card.appendChild(header);
-  makeDraggable(card, header);
+  makeDraggable(card, header, '.kickflow-user-card__close, a');
 
   if (model.bio) {
     const bio = document.createElement('div');
@@ -321,35 +322,6 @@ function positionCard(card: HTMLElement, x: number, y: number): void {
   const margin = 8;
   card.style.left = `${Math.min(x + margin, window.innerWidth - 284)}px`;
   card.style.top = `${Math.min(y + margin, window.innerHeight - 260)}px`;
-}
-
-/** Grab the card by its header (the top) and drag it anywhere on the page. Ignores drags that
- * start on the close button or the profile link so those keep working. */
-function makeDraggable(card: HTMLElement, handle: HTMLElement): void {
-  handle.addEventListener('mousedown', (event: MouseEvent) => {
-    if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('.kickflow-user-card__close, a')) return;
-    event.preventDefault();
-    const rect = card.getBoundingClientRect();
-    const offsetX = event.clientX - rect.left;
-    const offsetY = event.clientY - rect.top;
-    const move = (moveEvent: MouseEvent): void => {
-      const x = Math.max(4, Math.min(moveEvent.clientX - offsetX, window.innerWidth - card.offsetWidth - 4));
-      const y = Math.max(4, Math.min(moveEvent.clientY - offsetY, window.innerHeight - card.offsetHeight - 4));
-      card.style.left = `${x}px`;
-      card.style.top = `${y}px`;
-    };
-    // Clean up on mouseup OR if the card is dismissed mid-drag (Escape / another card / channel
-    // switch) — otherwise the document listeners leak and keep the detached card alive.
-    const stop = (): void => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', stop);
-      card.removeEventListener('kickflow:dismiss', stop);
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', stop);
-    card.addEventListener('kickflow:dismiss', stop);
-  });
 }
 
 function installDismissHandlers(card: HTMLElement): void {

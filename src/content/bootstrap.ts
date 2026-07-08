@@ -9,6 +9,7 @@ import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage, type SubscriberB
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
+import { RemovedMessagesPanel } from './chat/removed-panel';
 import { RenderQueue } from './chat/render-queue';
 import { trimMessageWindow, isNearBottom, decideScrollFollow } from './chat/dom-window';
 import { fetchChatHistory } from './chat/history';
@@ -256,11 +257,17 @@ function ensureStyles(): void {
       box-shadow: 0 12px 34px rgba(0,0,0,0.44);
       font-family: 'Inter','Segoe UI',system-ui,sans-serif;
     }
+    .kickflow-ghost-strip__header { display: flex; align-items: stretch; }
+    .kickflow-ghost-strip__grip {
+      display: flex; align-items: center; padding: 0 8px; cursor: move; user-select: none;
+      background: rgba(233,17,60,0.18); color: #fff; font-size: 12px;
+    }
     .kickflow-ghost-strip__toggle {
       appearance: none; width: 100%; height: 30px; border: 0; margin: 0; padding: 0 10px;
       background: rgba(233,17,60,0.18); color: #fff; cursor: pointer;
       font-size: 11px; font-weight: 800; text-align: left; text-transform: uppercase;
     }
+    .kickflow-ghost-strip__toggle { flex: 1; }
     .kickflow-ghost-strip__body { max-height: calc(34vh - 30px); overflow: auto; padding: 6px 10px 8px; }
     .kickflow-ghost-strip--collapsed .kickflow-ghost-strip__body { display: none; }
 
@@ -391,6 +398,7 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     onPreservedEvicted: (message) => augmenter?.forgetGhost(message.id),
   });
   augmenter = new NativeChatAugmenter(lifecycle, store);
+  new RemovedMessagesPanel(lifecycle, store);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
 
   resolveChannel(slug).then((resolved) => {
@@ -442,6 +450,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       element.remove();
     },
   });
+  new RemovedMessagesPanel(lifecycle, store);
 
   const mount = new ChatOverlayMount(lifecycle);
   const ownList = mount.ownList;

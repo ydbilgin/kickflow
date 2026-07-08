@@ -67,7 +67,6 @@ function render(res: StatusResponse | null, error?: string): void {
   $('deleted').textContent = String(res.deletedCount);
   $('ghostAnchored').textContent = String(res.ghostAnchored);
   $('ghostPending').textContent = String(res.ghostPendingNoAnchor);
-  $('ghostStrip').textContent = String(res.ghostStrip);
   $('ghostEvicted').textContent = String(res.ghostEvicted);
   $('lastBan').textContent = fmtAgo(res.lastBanAt);
 

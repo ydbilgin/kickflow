@@ -122,26 +122,20 @@ describe('NativeChatAugmenter ghost blocks', () => {
     nextAnchor?.remove();
     await flushObserver();
 
-    // No inline anchor left: both bans live only in the persistent "Kaldırılanlar" panel, which
-    // starts COLLAPSED (owner opens it on demand). It exists with a count; expanding shows them.
-    const panel = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
-    expect(panel).not.toBeNull();
-    const toggle = panel?.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle');
-    expect(toggle?.textContent).toContain('(2)');
+    // No inline anchor left: both bans are pending re-anchor (still preserved this session). The
+    // augmenter no longer owns a panel for these — that's RemovedMessagesPanel's job now (tested
+    // separately in removed-panel.test.ts), driven off the same store independent of anchoring.
+    expect(document.querySelector('.kickflow-ghost-block')).toBeNull();
+    expect(document.querySelector('.kickflow-ghost-strip')).toBeNull();
     expect(augmenter.getGhostStats()).toMatchObject({ ghostAnchored: 0, ghostPendingNoAnchor: 2 });
-    toggle?.click();
-    await flushObserver();
-    expect(panel?.textContent).toContain('first banned');
-    expect(panel?.textContent).toContain('second banned');
 
     const lateAnchor = makeRow('m4', 11);
     list.appendChild(lateAnchor);
     await flushObserver();
 
-    // The bans re-anchor inline; the panel persists (they are still preserved this session).
+    // The bans re-anchor inline once a neighbor row is mounted again.
     expect(lateAnchor.querySelector('.kickflow-ghost-block')?.textContent).toContain('second banned');
     expect(augmenter.getGhostStats()).toMatchObject({ ghostAnchored: 2, ghostPendingNoAnchor: 0 });
-    expect(document.querySelector('.kickflow-ghost-strip')).not.toBeNull();
 
     store.addMessage(message('del1', 9, 'deleted text'));
     store.markMessageDeleted('del1');
