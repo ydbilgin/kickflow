@@ -8,6 +8,11 @@ export interface ChatBadge {
   sortOrder?: number; // Kick's sort_order — for stable ordering across both arrays
 }
 
+/** A channel's own custom subscriber-tier image, keyed by the month threshold it unlocks at
+ * (from `GET /api/v2/channels/{slug}` → `subscriber_badges`). Resolved against a subscriber
+ * badge's `count` (months subscribed) in message-view.ts. */
+export interface SubscriberBadge { readonly months: number; readonly src: string; }
+
 /** Kick sends role badges in `badges` (no image) and global/level badges in `badges_v2` (with
  * image_url). They are disjoint and BOTH must render — never one-or-the-other. Merge, dedup by
  * (type||name)+count, and sort by Kick's sort_order ascending so the row matches native order. */

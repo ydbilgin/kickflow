@@ -1,5 +1,6 @@
-import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type PreservedMeta } from './message-store';
+import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type PreservedMeta, type SubscriberBadge } from './message-store';
 import { isMasqueradeEnabled, isSafeKickSlug, openUserCard } from './user-card';
+import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -114,70 +115,131 @@ export function appendParsedContent(parent: HTMLElement, content: string): void 
   }
 }
 
-// Kick renders role badges from bundled icons keyed by `type` — the chat payload carries NO
-// image for them (only badges_v2/level/special carry image_url). So we render our own compact
-// colored chip per known role. Colors are our own, chosen to be distinct & readable on dark chat.
-interface RoleBadgeStyle { glyph: string; color: string; label: string; }
-const ROLE_BADGE_STYLES: Record<string, RoleBadgeStyle> = {
-  broadcaster: { glyph: '★', color: '#E9113C', label: 'Yayıncı' },
-  moderator:   { glyph: '⚔', color: '#16A34A', label: 'Moderatör' },
-  vip:         { glyph: '◆', color: '#D946EF', label: 'VIP' },
-  verified:    { glyph: '✓', color: '#1DA1F2', label: 'Onaylı' },
-  og:          { glyph: 'OG', color: '#F59E0B', label: 'OG' },
-  founder:     { glyph: '♛', color: '#F97316', label: 'Kurucu' },
-  staff:       { glyph: '⚙', color: '#7C3AED', label: 'Kick Staff' },
-  sub_gifter:  { glyph: 'G', color: '#22C55E', label: 'Hediye Aboneliği' },
-  bot:         { glyph: 'BOT', color: '#64748B', label: 'Bot' },
-  // TODO(phase2): real subscriber-tier image from the channel's subscriber_badges (matched by
-  // months via badge.count) instead of this generic chip — needs channel data threaded into render.
-  subscriber:  { glyph: '★', color: '#3B82F6', label: 'Abone' },
+// Kick draws role badges from its own bundled inline SVGs, keyed by `type`. We've captured the
+// authentic ones into ROLE_BADGE_ASSETS (./badge-assets) for moderator/vip/og/sub_gifter/
+// verified/staff — those render as real <img>s below. Types with no captured asset yet
+// (broadcaster/founder/sidekick/bot/trainwreckstv) fall back to our own compact colored chip.
+// Colors are our own, chosen to be distinct & readable on dark chat.
+interface RoleBadgeFallbackStyle { glyph: string; color: string; }
+const ROLE_BADGE_FALLBACK_STYLES: Record<string, RoleBadgeFallbackStyle> = {
+  broadcaster:   { glyph: '★', color: '#E9113C' },
+  founder:       { glyph: '♛', color: '#F97316' },
+  sidekick:      { glyph: '✦', color: '#8B5CF6' },
+  bot:           { glyph: '⚙', color: '#64748B' },
+  trainwreckstv: { glyph: '▲', color: '#F59E0B' },
 };
+// Subscriber has no bundled role-level asset — Kick serves the CHANNEL's own custom image
+// instead (resolveSubscriberBadge below). This is its chip fallback for when that image isn't
+// available (channel has no subscriber_badges yet, or the count doesn't clear a tier).
+const SUBSCRIBER_FALLBACK_STYLE: RoleBadgeFallbackStyle = { glyph: '★', color: '#3B82F6' };
 
-function appendRoleBadge(parent: HTMLElement, badge: ChatBadge, style: RoleBadgeStyle): void {
+// Set from bootstrap.ts once the channel's `subscriber_badges` are resolved (Kick's own custom
+// per-month images). Empty until then, or on a channel with no custom tiers configured.
+let subscriberBadges: SubscriberBadge[] = [];
+
+export function setSubscriberBadges(badges: SubscriberBadge[]): void {
+  subscriberBadges = badges;
+}
+
+/** Highest-tier sub badge whose month threshold the user has reached (list is months-ASC). */
+function resolveSubscriberBadge(count: number | undefined): SubscriberBadge | null {
+  if (!count || !subscriberBadges.length) return null;
+  let match: SubscriberBadge | null = null;
+  for (const b of subscriberBadges) {
+    if (count >= b.months) match = b;
+    else break;
+  }
+  return match;
+}
+
+function appendRoleBadge(parent: HTMLElement, label: string, style: RoleBadgeFallbackStyle, count?: number): void {
   const chip = document.createElement('span');
   chip.className = 'kickflow-badge-role';
   // Property assignment only (never setAttribute('style')/.cssText) — color is one of our own
   // trusted constants above, same pattern as username.style.color elsewhere in this file.
   chip.style.backgroundColor = style.color;
-  chip.title = style.label + (badge.count ? ` (${badge.count})` : '');
+  chip.title = label + (count ? ` (${count})` : '');
   const glyph = document.createElement('span');
   glyph.textContent = style.glyph;
   chip.appendChild(glyph);
-  if ((badge.type === 'subscriber' || badge.type === 'sub_gifter') && badge.count) {
-    const count = document.createElement('span');
-    count.className = 'kickflow-badge-role__count';
-    count.textContent = String(badge.count);
-    chip.appendChild(count);
+  if (count) {
+    const countEl = document.createElement('span');
+    countEl.className = 'kickflow-badge-role__count';
+    countEl.textContent = String(count);
+    chip.appendChild(countEl);
   }
   parent.appendChild(chip);
 }
 
+/** Per-badge render order: badges_v2 image → authentic role asset → subscriber's real channel
+ * image → labelled chip fallback → plain text fallback. Every rendered badge gets a `title`
+ * (hover tooltip) so unlabelled icons/chips are still identifiable. */
 export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
   for (const badge of badges) {
+    // 1. badges_v2 image (level, and anything else Kick sends pre-rendered with image_url).
     if (badge.imageUrl) {
       const url = isTrustedBadgeImageUrl(badge.imageUrl);
       if (url) {
         const img = document.createElement('img');
         img.src = url.href;
-        img.alt = badge.level != null ? `Seviye ${badge.level}` : (badge.name || badge.text || badge.type || 'badge');
-        img.title = img.alt;
+        const title = badge.level != null ? `${badge.level}. Seviye` : (badge.name || badge.text || 'rozet');
+        img.alt = title;
+        img.title = title;
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
         parent.appendChild(img);
         continue;
       }
-      // untrusted scheme/host (tracking/IP-leak risk) — fall through to text fallback
+      // untrusted scheme/host (tracking/IP-leak risk) — fall through to the other renders below
     }
-    const roleStyle = badge.type ? ROLE_BADGE_STYLES[badge.type] : undefined;
-    if (roleStyle) {
-      appendRoleBadge(parent, badge, roleStyle);
+
+    // 2. Authentic Kick role asset (our own constants — no trust check needed).
+    const asset = badge.type ? ROLE_BADGE_ASSETS[badge.type] : undefined;
+    if (asset) {
+      const img = document.createElement('img');
+      img.src = asset.uri;
+      img.alt = asset.label;
+      img.title = asset.label;
+      img.className = 'kickflow-badge-icon';
+      img.loading = 'lazy';
+      parent.appendChild(img);
       continue;
     }
+
+    // 3. Subscriber — the channel's own real image, resolved by month count.
+    if (badge.type === 'subscriber') {
+      const sub = resolveSubscriberBadge(badge.count);
+      const subUrl = sub ? isTrustedBadgeImageUrl(sub.src) : null;
+      if (subUrl) {
+        const img = document.createElement('img');
+        img.src = subUrl.href;
+        const title = `Abone${badge.count ? ` — ${badge.count} ay` : ''}`;
+        img.alt = title;
+        img.title = title;
+        img.className = 'kickflow-badge-icon';
+        img.loading = 'lazy';
+        parent.appendChild(img);
+      } else {
+        appendRoleBadge(parent, 'Abone', SUBSCRIBER_FALLBACK_STYLE, badge.count);
+      }
+      continue;
+    }
+
+    // 4. Labelled chip fallback (no captured asset for this role type).
+    const fallbackStyle = badge.type ? ROLE_BADGE_FALLBACK_STYLES[badge.type] : undefined;
+    if (fallbackStyle) {
+      const label = (badge.type && ROLE_BADGE_FALLBACK_LABELS[badge.type]) || badge.type || '';
+      appendRoleBadge(parent, label, fallbackStyle, badge.count);
+      continue;
+    }
+
+    // 5. Plain text fallback (unknown type entirely).
     const label = badge.text || badge.name || badge.type;
     if (label) {
       const span = document.createElement('span');
       span.className = 'kickflow-badge-text';
       span.textContent = label;
+      span.title = label;
       parent.appendChild(span);
     }
   }

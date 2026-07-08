@@ -4,7 +4,7 @@ import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
-import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from './chat/message-store';
+import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage, type SubscriberBadge } from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
@@ -13,6 +13,7 @@ import { trimMessageWindow, isNearBottom, decideScrollFollow } from './chat/dom-
 import { fetchChatHistory } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
+import { setSubscriberBadges } from './chat/message-view';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -60,6 +61,8 @@ interface ResolvedChannel {
   chatroomId: number;
   /** Channel id — used for the web.kick.com history backfill (differs from chatroomId). */
   channelId: number;
+  /** Channel's custom subscriber-tier images, sorted by months ASC; [] if the channel has none. */
+  subscriberBadges: SubscriberBadge[];
 }
 
 async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
@@ -76,14 +79,24 @@ async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
     try {
       const response = await fetch(url, { headers: { accept: 'application/json' } });
       if (response.ok) {
-        const json = (await response.json()) as { id?: number; chatroom?: { id?: number; channel_id?: number } };
+        const json = (await response.json()) as {
+          id?: number;
+          chatroom?: { id?: number; channel_id?: number };
+          subscriber_badges?: Array<{ months?: number; badge_image?: { src?: string } }>;
+        };
         const chatroomId = json.chatroom?.id;
         if (typeof chatroomId !== 'number') return null;
         const channelId =
           typeof json.id === 'number' ? json.id
           : typeof json.chatroom?.channel_id === 'number' ? json.chatroom.channel_id
           : chatroomId;
-        return { chatroomId, channelId };
+        const subscriberBadges: SubscriberBadge[] = Array.isArray(json.subscriber_badges)
+          ? json.subscriber_badges
+              .map((b) => ({ months: Number(b?.months), src: typeof b?.badge_image?.src === 'string' ? b.badge_image.src : '' }))
+              .filter((b) => Number.isFinite(b.months) && b.src)
+              .sort((a, b) => a.months - b.months)
+          : [];
+        return { chatroomId, channelId, subscriberBadges };
       }
       const transient = response.status === 429 || response.status >= 500;
       if (transient) {
@@ -184,15 +197,15 @@ function ensureStyles(): void {
       max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .kickflow-badge-icon {
-      display: inline-block !important; height: 15px !important; width: auto !important;
-      vertical-align: -3px; margin-right: 3px;
+      display: inline-block !important; height: 18px !important; width: auto !important;
+      vertical-align: -4px; margin-right: 3px;
     }
     .kickflow-badge-text { font-size: 10px; font-weight: 700; margin-right: 4px; opacity: 0.75; }
     .kickflow-badge-role {
       display: inline-flex; align-items: center; justify-content: center;
-      min-width: 15px; height: 15px; padding: 0 3px; margin-right: 3px;
+      min-width: 18px; height: 18px; padding: 0 3px; margin-right: 3px;
       border-radius: 4px; color: #fff; font-size: 9px; font-weight: 800; line-height: 1;
-      vertical-align: -3px; gap: 1px;
+      vertical-align: -4px; gap: 1px;
     }
     .kickflow-badge-role__count { font-size: 8px; font-weight: 700; }
     .kickflow-emote {
@@ -384,6 +397,7 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       setStatus({ reason: 'chatroom-id çözülemedi' });
       return;
     }
+    setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId } = resolved;
     setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
     const client = new PusherClient(chatroomId, {
@@ -482,6 +496,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       setStatus({ reason: 'chatroom-id çözülemedi — native chat' });
       return;
     }
+    setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId, channelId } = resolved;
     setStatus({ chatroomId, reason: 'geçmiş yükleniyor…' });
 
