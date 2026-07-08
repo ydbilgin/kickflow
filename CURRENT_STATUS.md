@@ -1,11 +1,21 @@
 # KickFlow — CURRENT STATUS
 
 > Bu dosya = projenin anlık durumu. Owner "status oku" derse BU dosya okunur.
-> Son güncelleme: 2026-07-07
+> Son güncelleme: 2026-07-08
 
 ## Proje
 - **KickFlow** = Yasin'in kişisel Chrome MV3 eklentisi (Kick.com) + **7/24 sunucu monitörü**. Repo: `F:\GitHub\kickflow` (lokal git, remote YOK, commit sadece Yasin Derya Bilgin).
 - **Amaç:** (1) banlanan/silinen chat mesajlarını YERİNDE üstü-çizili koru, (2) player QoL (rewind/adaptif/kalite/screenshot/pill), (3) **7/24 ban/silme takibi** (Oracle sunucu → banlist.laureth.xyz).
+
+## 🟢 2026-07-08 — İKİ-MOD + KART + BUG FIX'LER + TOLERANCE HARDENING (hepsi commit'li + canlı-doğrulandı)
+Uzun bir oturum; hepsi Playwright ile westcol/hype'ta canlı doğrulandı. **Kalan iş = owner reload + günlük kullanım teyidi.**
+- **İki chat modu** (`55e46e4`): `featureFlags.chatMode: 'native' | 'own'` (default native, popup toggle). **Mode B** = native augment (değişmedi). **Mode A** = kendi liste geri geldi (`09c4a64`'ten restore + mevcut store'a ChatDomRegistry merge) — banlı/silinen kendi satırımızda üstü-çizili (virtuoso derdi yok).
+- **Delete duplicate + ban double-render fix** (`37027a3`): silinen mesajda **native içeriği HER ZAMAN gizle** (dim değil — Kick orijinali↔placeholder swap'ı race yapıyordu) + store'dan kendi kopyamızı göster (username+metin+SİLİNDİ, "Deleted by a moderator" görünmez). Ban çift-render = react-virtuoso recycle'da stranded ghost-block → `pruneStrayGhosts` temizliyor. Ghost pile-up ayrıca sınırlandı (`29fb337`).
+- **"Kaldırılanlar" paneli** (`3bbe2b6`): kalıcı, sağ-altta sayaçlı `▸ kaldırılanlar (N)` butonu (fixed, scroll'la kaymaz), tıkla-aç/kapa, oturumdaki TÜM kaldırılanları (ban+timeout+silme) gösterir. Default kapalı.
+- **Mode A user-card** (`a91a16f` + cx-review `e6cb600`): isme sol-tık → **kalıcı** kart (scroll'da kapanmaz, × ile kapat), **üstten tutup sürüklenebilir**, **profil resmi + bio + takipçi + verified** (card endpoint relationship + `/channels/{user}` endpoint avatar/bio/followers — paralel fetch). Kick "level" API'de YOK.
+- **🔑 SPA-router click fix** (`48ae042`→`e6cb600`, cx-review'la robust): overlay'deki isim `<a href="kick.com/{slug}">` sol-tık'ı **Kick'in document-level SPA router'ına** kabarıp sayfayı navige ediyordu ("üstte yenilenme" + kart açılmıyor). Fix: username artık **`<span role="link">`** (href yok → router bubble VE capture'da yakalayamaz), jestler elle (sol-tık→kart, orta/ctrl→yeni sekme). Overlay'deki diğer same-origin linkler (mesaj linkleri + kart profil linki) de korumalı açıcıdan geçiyor.
+- **Tolerance hardening** (`7bd7e96`, Opus-audit→cx→Opus-review SHIP): "vazgeç-ve-tekrar-deneme" kalıbı temizlendi. `shared/dom-observers.ts whenElementPresent()` (observe-until-present, init-once, lifecycle-scoped, timeout-give-up YOK) → **offline→live'da player+chat kendiliğinden mount** (reload yok). `player/video-element.ts` → Kick `<video>`'yu değiştirince listener'lar yeniden bağlanıyor (kontroller stale node'da boşa çalışmıyor). history retry (429/5xx backoff). Beklenen-durum warn'ları → debug (offline, pusher blip, storage, 404-slug).
+- **Test:** 45 test (12→15 dosya), build temiz. Player kontrolleri canlı mount doğrulandı.
 
 ## ✅ 4 PLAYER BUG ÇÖZÜLDÜ (commit `09c4a64`) + 🟢 CHAT MODE B SHIPPED (commit `7299736`) — 2026-07-07
 Owner "fixleri cx'e dispatch et" dedi → cx yazdı, Claude/Opus cross-family review + canlı Playwright doğrulaması + commit. **Kalan tek iş = owner reload + canlı fonksiyonel teyit** (build temiz + review PASS + core canlı-doğrulandı ama gerçek ban/silme E2E'si login'li makine ister).
