@@ -9,7 +9,7 @@ import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
 import { RenderQueue } from './chat/render-queue';
-import { trimMessageWindow, isNearBottom } from './chat/dom-window';
+import { trimMessageWindow, isNearBottom, decideScrollFollow } from './chat/dom-window';
 import { fetchChatHistory } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
@@ -436,32 +436,39 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   scrollPill.style.display = 'none';
   scrollPill.addEventListener('click', () => {
     ownList.scrollTop = ownList.scrollHeight;
+    stickToBottom = true;
     scrollPill.style.display = 'none';
   });
   mount.root.appendChild(scrollPill);
   lifecycle.add(() => scrollPill.remove());
 
+  let stickToBottom = true;
+
   lifecycle.addEventListener(ownList, 'scroll', () => {
-    if (isNearBottom(ownList)) scrollPill.style.display = 'none';
+    stickToBottom = isNearBottom(ownList);
+    if (stickToBottom) scrollPill.style.display = 'none';
   });
 
   let activated = false;
   const renderQueue = new RenderQueue({
     getContainer: () => ownList,
     registry,
-    onFlush: (appended, wasAtBottom) => {
+    onFlush: (appended /*, wasAtBottom */) => {
       if (!activated && appended.length > 0) {
         activated = true;
         mount.activate();
         setStatus({ active: true, reason: 'aktif — kendi liste render ediliyor' });
       }
 
-      trimMessageWindow(ownList, registry);
-      if (wasAtBottom) {
+      const decision = decideScrollFollow(stickToBottom, appended.length);
+      trimMessageWindow(ownList, registry, decision.trimCap);
+      if (decision.scrollToBottom) {
         ownList.scrollTop = ownList.scrollHeight;
-        scrollPill.style.display = 'none';
-      } else if (appended.length > 0) {
+      }
+      if (decision.showPill) {
         scrollPill.style.display = '';
+      } else if (decision.scrollToBottom) {
+        scrollPill.style.display = 'none';
       }
     },
   });

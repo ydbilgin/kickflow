@@ -69,7 +69,12 @@ export interface ChatMessage {
   preservedMeta?: PreservedMeta;
 }
 
-const GLOBAL_CAPACITY = 500;
+// Invariant: every message currently rendered in Mode A's DOM must still be retrievable from
+// this store (so a visible-but-scrolled-up row can still be preserved on ban/delete). Mode A's
+// paused DOM cap is MAX_NON_PRESERVED_NODES_PAUSED (dom-window.ts, currently 600) — keep
+// GLOBAL_CAPACITY comfortably above it (margin covers preserved messages interleaved in the
+// recency ring, which still occupy ring slots). If either constant changes, re-check the other.
+export const GLOBAL_CAPACITY = 800;
 const PER_USER_CAPACITY = 30;
 const PRESERVED_CAPACITY = 50;
 const PRESERVED_TTL_MS = 10 * 60 * 1000;

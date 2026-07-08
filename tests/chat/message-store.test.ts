@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ChatIntegrityStore, mergeIdentityBadges, type ChatMessage } from '../../src/content/chat/message-store';
+import { ChatIntegrityStore, GLOBAL_CAPACITY, mergeIdentityBadges, type ChatMessage } from '../../src/content/chat/message-store';
+import { MAX_NON_PRESERVED_NODES_PAUSED } from '../../src/content/chat/dom-window';
 
 function message(id: string, userId = 1, createdAt = new Date().toISOString()): ChatMessage {
   return {
@@ -29,7 +30,7 @@ describe('ChatIntegrityStore', () => {
     expect(store.getMessageById('u-0')).toBeUndefined();
     expect(store.getMessageById('u-30')).toBeDefined();
 
-    for (let i = 0; i < 501; i++) store.addMessage(message(`g-${i}`, 1000 + i));
+    for (let i = 0; i < GLOBAL_CAPACITY + 1; i++) store.addMessage(message(`g-${i}`, 1000 + i));
     expect(store.getMessageById('same')).toBeUndefined();
   });
 
@@ -38,7 +39,7 @@ describe('ChatIntegrityStore', () => {
     store.addMessage(message('keep', 1));
     store.markUserBanned(1);
 
-    for (let i = 0; i < 501; i++) store.addMessage(message(`later-${i}`, 100 + i));
+    for (let i = 0; i < GLOBAL_CAPACITY + 1; i++) store.addMessage(message(`later-${i}`, 100 + i));
 
     expect(store.getMessageById('keep')?.preserved).toBe(true);
   });
@@ -128,5 +129,27 @@ describe('mergeIdentityBadges', () => {
     expect(merged).toHaveLength(2);
     expect(merged.find((b) => b.type === 'founder')).toBeDefined();
     expect(merged.find((b) => b.name === 'GoldenK')).toBeDefined();
+  });
+});
+
+describe('GLOBAL_CAPACITY vs Mode A paused DOM cap', () => {
+  // Regression guard: while the user is scrolled up, Mode A lets the DOM grow to
+  // MAX_NON_PRESERVED_NODES_PAUSED (dom-window.ts) before trimming. Every row still visible in
+  // that DOM must still be retrievable from the store, or a visible row can no longer be
+  // preserved when it's banned/deleted. See the cross-referencing comments on both constants.
+  it('stays >= MAX_NON_PRESERVED_NODES_PAUSED (dom-window.ts)', () => {
+    expect(GLOBAL_CAPACITY).toBeGreaterThanOrEqual(MAX_NON_PRESERVED_NODES_PAUSED);
+  });
+
+  it('keeps the oldest message retrievable and preservable while a paused-cap worth of rows are in view', () => {
+    const store = new ChatIntegrityStore();
+    const oldestId = 'oldest';
+    store.addMessage(message(oldestId, 1));
+    for (let i = 1; i < MAX_NON_PRESERVED_NODES_PAUSED; i++) {
+      store.addMessage(message(`m-${i}`, 1000 + i));
+    }
+
+    expect(store.getMessageById(oldestId)).toBeDefined();
+    expect(store.markMessageDeleted(oldestId)?.id).toBe(oldestId);
   });
 });
