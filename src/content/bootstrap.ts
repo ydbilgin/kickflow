@@ -188,6 +188,13 @@ function ensureStyles(): void {
       vertical-align: -3px; margin-right: 3px;
     }
     .kickflow-badge-text { font-size: 10px; font-weight: 700; margin-right: 4px; opacity: 0.75; }
+    .kickflow-badge-role {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 15px; height: 15px; padding: 0 3px; margin-right: 3px;
+      border-radius: 4px; color: #fff; font-size: 9px; font-weight: 800; line-height: 1;
+      vertical-align: -3px; gap: 1px;
+    }
+    .kickflow-badge-role__count { font-size: 8px; font-weight: 700; }
     .kickflow-emote {
       display: inline-block !important; height: 24px !important; width: auto !important;
       vertical-align: middle; margin: 0 2px;

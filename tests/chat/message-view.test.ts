@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { appendBadges, appendParsedContent, buildMessageElement } from '../../src/content/chat/message-view';
 import type { ChatMessage } from '../../src/content/chat/message-store';
 
-function message(slug: string): ChatMessage {
+function message(slug: string, identity?: Partial<ChatMessage['sender']['identity']>): ChatMessage {
   return {
     id: 'm1',
     chatroomId: 1,
@@ -13,7 +13,7 @@ function message(slug: string): ChatMessage {
       id: 1,
       username: 'Alice',
       slug,
-      identity: { color: '', badges: [], badgesV2: [] },
+      identity: { color: '', badges: [], badgesV2: [], ...identity },
     },
     preserved: false,
   };
@@ -81,5 +81,42 @@ describe('message-view safe rendering', () => {
     expect(username?.tagName).toBe('SPAN');
     expect(username?.textContent).toBe('Alice');
     expect(row.querySelector('a[href*="evil"]')).toBeNull();
+  });
+
+  it('renders BOTH a role badge (from `badges`) and a level image (from `badges_v2`), in sort_order', () => {
+    const row = buildMessageElement(message('alice_123', {
+      badges: [{ type: 'moderator', text: 'Moderator', sortOrder: 4 }],
+      badgesV2: [{ name: 'level', imageUrl: 'https://ext.cdn.kick.com/chat/badges/1_x.png', level: 1, sortOrder: 1 }],
+    }));
+
+    const badgeContainer = row.querySelector('.kickflow-message__badges');
+    const levelImg = badgeContainer?.querySelector<HTMLImageElement>('img.kickflow-badge-icon');
+    const modChip = badgeContainer?.querySelector<HTMLElement>('.kickflow-badge-role');
+
+    expect(levelImg?.src).toBe('https://ext.cdn.kick.com/chat/badges/1_x.png');
+    expect(modChip?.title.startsWith('Moderatör')).toBe(true);
+
+    // sortOrder 1 (level) < sortOrder 4 (moderator) — the level image must come first.
+    const children = Array.from(badgeContainer?.children ?? []);
+    expect(children.indexOf(levelImg!)).toBeLessThan(children.indexOf(modChip!));
+  });
+
+  it('renders a subscriber role chip with its months count', () => {
+    const parent = document.createElement('span');
+
+    appendBadges(parent, [{ type: 'subscriber', count: 14 }]);
+
+    const chip = parent.querySelector('.kickflow-badge-role');
+    expect(chip).not.toBeNull();
+    expect(chip?.querySelector('.kickflow-badge-role__count')?.textContent).toBe('14');
+  });
+
+  it('falls back to badge text for an unknown role type', () => {
+    const parent = document.createElement('span');
+
+    appendBadges(parent, [{ type: 'weird', text: 'Weird' }]);
+
+    expect(parent.querySelector('.kickflow-badge-role')).toBeNull();
+    expect(parent.querySelector('.kickflow-badge-text')?.textContent).toBe('Weird');
   });
 });

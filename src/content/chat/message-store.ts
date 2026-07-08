@@ -1,8 +1,30 @@
 export interface ChatBadge {
-  type?: string;
-  text?: string;
-  count?: number;
-  imageUrl?: string;
+  type?: string;      // role badges (old array): moderator/vip/broadcaster/verified/subscriber/...
+  name?: string;      // badges_v2 label: 'level' / 'GoldenK'
+  text?: string;      // human label from old array ('Moderator', 'Verified channel')
+  count?: number;     // subscriber / sub_gifter count (months / gifts)
+  imageUrl?: string;  // badges_v2 image_url (or a resolved subscriber image)
+  level?: number;     // badges_v2 metadata.level
+  sortOrder?: number; // Kick's sort_order — for stable ordering across both arrays
+}
+
+/** Kick sends role badges in `badges` (no image) and global/level badges in `badges_v2` (with
+ * image_url). They are disjoint and BOTH must render — never one-or-the-other. Merge, dedup by
+ * (type||name)+count, and sort by Kick's sort_order ascending so the row matches native order. */
+export function mergeIdentityBadges(identity: { badges: ChatBadge[]; badgesV2: ChatBadge[] }): ChatBadge[] {
+  const out: ChatBadge[] = [];
+  const seen = new Set<string>();
+  for (const badge of [...identity.badges, ...identity.badgesV2]) {
+    const key = (badge.type ?? badge.name ?? '') + ':' + (badge.count ?? '');
+    // Badges with neither `type` nor `name` have no reliable identity to dedupe on — keep them
+    // unconditionally so the text fallback in appendBadges still has something to render.
+    if (key !== ':') {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(badge);
+  }
+  return out.sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
 }
 
 export interface ChatMessageSender {

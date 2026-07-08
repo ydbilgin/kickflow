@@ -42,6 +42,50 @@ describe('pusher-client normalizers', () => {
     expect(normalizeMessage({ id: 'm', content: 'x' })).toBeNull();
   });
 
+  it('normalizes a real Kick-shaped payload: role badges in `badges`, level in `badges_v2`', () => {
+    const message = normalizeMessage({
+      id: 'm2',
+      chatroom_id: 4,
+      content: 'hello',
+      type: 'message',
+      created_at: '2026-01-01T00:00:00Z',
+      sender: {
+        id: 10,
+        username: 'carol',
+        slug: 'carol',
+        identity: {
+          color: '#fff',
+          badges: [
+            { type: 'moderator', text: 'Moderator', sort_order: 4 },
+            { type: 'verified', text: 'Verified channel', sort_order: 10 },
+          ],
+          badges_v2: [
+            {
+              name: 'level',
+              badge_type: 'global',
+              image_url: 'https://ext.cdn.kick.com/chat/badges/33_x.png',
+              metadata: { level: 33 },
+              sort_order: 1,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(message?.sender.identity.badges).toEqual([
+      { type: 'moderator', text: 'Moderator', sortOrder: 4 },
+      { type: 'verified', text: 'Verified channel', sortOrder: 10 },
+    ]);
+    expect(message?.sender.identity.badgesV2).toEqual([
+      {
+        name: 'level',
+        imageUrl: 'https://ext.cdn.kick.com/chat/badges/33_x.png',
+        level: 33,
+        sortOrder: 1,
+      },
+    ]);
+  });
+
   it('normalizes flat and nested ban payloads', () => {
     expect(normalizeBanPayload({
       user_id: 7,

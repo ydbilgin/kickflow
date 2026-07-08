@@ -1,6 +1,6 @@
 import { featureFlags } from './feature-flags';
 import type { Lifecycle } from '../shared/lifecycle';
-import type { ChatIntegrityStore } from './message-store';
+import { mergeIdentityBadges, type ChatIntegrityStore } from './message-store';
 import {
   BANNED_CLASS,
   DELETED_CLASS,
@@ -486,9 +486,7 @@ export class NativeChatAugmenter {
 
     const badges = document.createElement('span');
     badges.className = 'kickflow-ghost-row__badges';
-    appendBadges(badges, message.sender.identity.badgesV2.length > 0
-      ? message.sender.identity.badgesV2
-      : message.sender.identity.badges);
+    appendBadges(badges, mergeIdentityBadges(message.sender.identity));
 
     const username = document.createElement('span');
     username.className = 'kickflow-ghost-row__username';

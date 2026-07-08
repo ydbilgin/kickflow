@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
+import { ChatIntegrityStore, mergeIdentityBadges, type ChatMessage } from '../../src/content/chat/message-store';
 
 function message(id: string, userId = 1, createdAt = new Date().toISOString()): ChatMessage {
   return {
@@ -86,5 +86,47 @@ describe('ChatIntegrityStore', () => {
       preservedReason: 'banned',
       preservedMeta: { permanent: false, durationMin: 5, bannedBy: 'mod' },
     });
+  });
+});
+
+describe('mergeIdentityBadges', () => {
+  it('keeps role badges (from `badges`) even when `badges_v2` is non-empty — the core regression', () => {
+    const merged = mergeIdentityBadges({
+      badges: [{ type: 'moderator', text: 'Moderator', sortOrder: 4 }],
+      badgesV2: [{ name: 'level', imageUrl: 'https://ext.cdn.kick.com/x.png', level: 33, sortOrder: 1 }],
+    });
+
+    expect(merged).toHaveLength(2);
+    expect(merged.some((b) => b.type === 'moderator')).toBe(true);
+    expect(merged.some((b) => b.name === 'level')).toBe(true);
+  });
+
+  it('sorts the merged result by sortOrder ascending', () => {
+    const merged = mergeIdentityBadges({
+      badges: [{ type: 'moderator', sortOrder: 4 }],
+      badgesV2: [{ name: 'level', sortOrder: 1 }],
+    });
+
+    expect(merged.map((b) => b.type ?? b.name)).toEqual(['level', 'moderator']);
+  });
+
+  it('does not duplicate a badge present in both arrays under the same type/count key', () => {
+    const merged = mergeIdentityBadges({
+      badges: [{ type: 'subscriber', count: 14, sortOrder: 9 }],
+      badgesV2: [{ type: 'subscriber', count: 14, sortOrder: 9 }],
+    });
+
+    expect(merged).toHaveLength(1);
+  });
+
+  it('keeps a v2-only badge (only `name`) and an old-array-only badge (only `type`) both', () => {
+    const merged = mergeIdentityBadges({
+      badges: [{ type: 'founder', text: 'Founder', sortOrder: 6 }],
+      badgesV2: [{ name: 'GoldenK', imageUrl: 'https://ext.cdn.kick.com/golden.png', sortOrder: 2 }],
+    });
+
+    expect(merged).toHaveLength(2);
+    expect(merged.find((b) => b.type === 'founder')).toBeDefined();
+    expect(merged.find((b) => b.name === 'GoldenK')).toBeDefined();
   });
 });

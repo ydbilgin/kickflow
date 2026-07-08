@@ -1,5 +1,6 @@
 import { featureFlags } from './feature-flags';
 import { appendBadges } from './message-view';
+import { mergeIdentityBadges } from './message-store';
 import type { FeatureFlags } from './feature-flags';
 import type { ChatBadge } from './message-store';
 
@@ -9,10 +10,14 @@ const FIELD_CLASS = 'kickflow-user-card__field';
 
 interface UserCardRawBadge {
   type?: unknown;
+  name?: unknown;
+  badge_type?: unknown;
   text?: unknown;
   count?: unknown;
   image_url?: unknown;
   imageUrl?: unknown;
+  metadata?: unknown;
+  sort_order?: unknown;
 }
 
 export interface KickUserCardResponse {
@@ -76,8 +81,12 @@ export function isMasqueradeEnabled(): boolean {
 }
 
 function normalizeBadge(raw: UserCardRawBadge): ChatBadge {
+  const metadata = raw.metadata && typeof raw.metadata === 'object'
+    ? raw.metadata as Record<string, unknown>
+    : null;
   return {
     type: typeof raw.type === 'string' ? raw.type : undefined,
+    name: typeof raw.name === 'string' ? raw.name : undefined,
     text: typeof raw.text === 'string' ? raw.text : undefined,
     count: typeof raw.count === 'number' ? raw.count : undefined,
     imageUrl: typeof raw.image_url === 'string'
@@ -85,6 +94,8 @@ function normalizeBadge(raw: UserCardRawBadge): ChatBadge {
       : typeof raw.imageUrl === 'string'
         ? raw.imageUrl
         : undefined,
+    level: metadata && typeof metadata.level === 'number' ? metadata.level : undefined,
+    sortOrder: typeof raw.sort_order === 'number' ? raw.sort_order : undefined,
   };
 }
 
@@ -134,8 +145,10 @@ export function mapUserCardResponse(
   const subscribedFor = typeof card.subscribed_for === 'number' && card.subscribed_for > 0
     ? `${card.subscribed_for} ay abone`
     : 'abone değil';
-  const badgesV2 = normalizeBadges(card.badges_v2);
-  const badges = badgesV2.length > 0 ? badgesV2 : normalizeBadges(card.badges);
+  const badges = mergeIdentityBadges({
+    badges: normalizeBadges(card.badges),
+    badgesV2: normalizeBadges(card.badges_v2),
+  });
   const { profilePic: channelPic, bio } = readChannel(channel);
   const cardPic = typeof card.profile_pic === 'string' && card.profile_pic ? card.profile_pic : null;
   return {

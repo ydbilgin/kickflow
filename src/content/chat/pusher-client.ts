@@ -55,15 +55,21 @@ export interface PusherClientCallbacks {
 
 /** Badge shape on the message payload wasn't pinned down to a strict schema in the
  * spec — normalize defensively, keeping only the fields message-view.ts needs and
- * dropping anything unrecognized rather than failing the whole message. */
+ * dropping anything unrecognized rather than failing the whole message.
+ * Covers both shapes Kick sends: role badges in `badges` ({type,text,count,sort_order}, no
+ * image) and global/level badges in `badges_v2` ({name,image_url,metadata.level,sort_order}). */
 function normalizeBadge(raw: unknown): ChatBadge {
   if (!raw || typeof raw !== 'object') return {};
   const data = raw as Record<string, unknown>;
+  const meta = (data.metadata ?? null) as Record<string, unknown> | null;
   return {
     type: typeof data.type === 'string' ? data.type : undefined,
+    name: typeof data.name === 'string' ? data.name : undefined,
     text: typeof data.text === 'string' ? data.text : undefined,
     count: typeof data.count === 'number' ? data.count : undefined,
     imageUrl: typeof data.image_url === 'string' ? data.image_url : undefined,
+    level: meta && typeof meta.level === 'number' ? meta.level : undefined,
+    sortOrder: typeof data.sort_order === 'number' ? data.sort_order : undefined,
   };
 }
 

@@ -1,4 +1,4 @@
-import type { ChatBadge, ChatMessage, PreservedMeta } from './message-store';
+import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type PreservedMeta } from './message-store';
 import { isMasqueradeEnabled, isSafeKickSlug, openUserCard } from './user-card';
 
 export const MESSAGE_CLASS = 'kickflow-message';
@@ -114,6 +114,44 @@ export function appendParsedContent(parent: HTMLElement, content: string): void 
   }
 }
 
+// Kick renders role badges from bundled icons keyed by `type` — the chat payload carries NO
+// image for them (only badges_v2/level/special carry image_url). So we render our own compact
+// colored chip per known role. Colors are our own, chosen to be distinct & readable on dark chat.
+interface RoleBadgeStyle { glyph: string; color: string; label: string; }
+const ROLE_BADGE_STYLES: Record<string, RoleBadgeStyle> = {
+  broadcaster: { glyph: '★', color: '#E9113C', label: 'Yayıncı' },
+  moderator:   { glyph: '⚔', color: '#16A34A', label: 'Moderatör' },
+  vip:         { glyph: '◆', color: '#D946EF', label: 'VIP' },
+  verified:    { glyph: '✓', color: '#1DA1F2', label: 'Onaylı' },
+  og:          { glyph: 'OG', color: '#F59E0B', label: 'OG' },
+  founder:     { glyph: '♛', color: '#F97316', label: 'Kurucu' },
+  staff:       { glyph: '⚙', color: '#7C3AED', label: 'Kick Staff' },
+  sub_gifter:  { glyph: 'G', color: '#22C55E', label: 'Hediye Aboneliği' },
+  bot:         { glyph: 'BOT', color: '#64748B', label: 'Bot' },
+  // TODO(phase2): real subscriber-tier image from the channel's subscriber_badges (matched by
+  // months via badge.count) instead of this generic chip — needs channel data threaded into render.
+  subscriber:  { glyph: '★', color: '#3B82F6', label: 'Abone' },
+};
+
+function appendRoleBadge(parent: HTMLElement, badge: ChatBadge, style: RoleBadgeStyle): void {
+  const chip = document.createElement('span');
+  chip.className = 'kickflow-badge-role';
+  // Property assignment only (never setAttribute('style')/.cssText) — color is one of our own
+  // trusted constants above, same pattern as username.style.color elsewhere in this file.
+  chip.style.backgroundColor = style.color;
+  chip.title = style.label + (badge.count ? ` (${badge.count})` : '');
+  const glyph = document.createElement('span');
+  glyph.textContent = style.glyph;
+  chip.appendChild(glyph);
+  if ((badge.type === 'subscriber' || badge.type === 'sub_gifter') && badge.count) {
+    const count = document.createElement('span');
+    count.className = 'kickflow-badge-role__count';
+    count.textContent = String(badge.count);
+    chip.appendChild(count);
+  }
+  parent.appendChild(chip);
+}
+
 export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
   for (const badge of badges) {
     if (badge.imageUrl) {
@@ -121,7 +159,8 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       if (url) {
         const img = document.createElement('img');
         img.src = url.href;
-        img.alt = badge.text || badge.type || 'badge';
+        img.alt = badge.level != null ? `Seviye ${badge.level}` : (badge.name || badge.text || badge.type || 'badge');
+        img.title = img.alt;
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
         parent.appendChild(img);
@@ -129,7 +168,12 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       }
       // untrusted scheme/host (tracking/IP-leak risk) — fall through to text fallback
     }
-    const label = badge.text || badge.type;
+    const roleStyle = badge.type ? ROLE_BADGE_STYLES[badge.type] : undefined;
+    if (roleStyle) {
+      appendRoleBadge(parent, badge, roleStyle);
+      continue;
+    }
+    const label = badge.text || badge.name || badge.type;
     if (label) {
       const span = document.createElement('span');
       span.className = 'kickflow-badge-text';
@@ -226,10 +270,7 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
 
   const badges = document.createElement('span');
   badges.className = 'kickflow-message__badges';
-  const badgeSource = message.sender.identity.badgesV2.length > 0
-    ? message.sender.identity.badgesV2
-    : message.sender.identity.badges;
-  appendBadges(badges, badgeSource);
+  appendBadges(badges, mergeIdentityBadges(message.sender.identity));
 
   const displayName = message.sender.displayName || message.sender.username;
   const slug = message.sender.slug;
