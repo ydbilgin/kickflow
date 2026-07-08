@@ -1,7 +1,16 @@
 # KickFlow — CURRENT STATUS
 
 > Bu dosya = projenin anlık durumu. Owner "status oku" derse BU dosya okunur.
-> Son güncelleme: 2026-07-08
+> Son güncelleme: 2026-07-08 (2. oturum)
+
+## 🟢 2026-07-08 (2) — ROZETLER + SCROLL-DUR + CONTEXT-HARDENING + KALDIRILANLAR PANELİ (6 commit, hepsi Opus-plan→Sonnet→cx cross-family review→deterministik doğrulama; canlı görsel-doğrulama badge'lerde yapıldı)
+Owner geri bildirimleriyle ard arda 6 iş. Pipeline her seferinde: Opus bağlayıcı SPEC → Sonnet implement → cx cross-family review (2 turda gerçek bug yakaladı) → npm test+build → commit (yazar sadece Yasin, AI-imzasız). **Kalan iş = owner reload + F5 + günlük kullanım teyidi.**
+- **Rozetler görünür oldu** (`4eb303c`): Kök sebep — Kick badge'leri İKİ diziye bölüyor: `badges` (rol: mod/vip/broadcaster/verified/sub/sub_gifter/founder/og/staff/bot, `image_url` YOK) + `badges_v2` (level/özel, `ext.cdn.kick.com` `image_url` VAR). Kod `badgesV2.length?badgesV2:badges` (ya-biri-ya-öbürü) yapıp neredeyse herkeste level olduğu için rol rozetlerini düşürüyordu. Fix: `mergeIdentityBadges` (birleştir+sort_order sırala). Detay memory [[kickflow-chat-api-endpoints]].
+- **Gerçek Kick ikonları** (`5ac47e8` + hiza `d95010b`): rol rozetleri artık Kick'in KENDİ SVG'si (canlı absi kanalından çıkarılıp `type`'a history-API ile eşlendi) → `src/content/chat/badge-assets.ts` (data-URI, `<img>` = script-inert). HAVE: moderator/vip/og/sub_gifter/verified/staff. Chip-fallback (henüz yakalanmadı): broadcaster/founder/sidekick/bot/trainwreckstv. **subscriber** = kanalın kendi özel abone görseli (`files.kick.com/channel_subscriber_badges`, aya göre). Her rozette hover-tooltip. **Görsel doğrulama YAPILDI** (tüm tipler Playwright screenshot + hiza öncesi/sonrası; chip dikey-hizası flex-align ile düzeltildi). ⚠️ Owner uyardı: önceki turda görsel-doğrulamamıştım, gözle bakmak şart.
+- **Scroll-dur/devam** (`1d84a1e`): Mode A'da yukarı kaydırınca liste DONAR (oto-scroll yok + trim yok → okunan mesaj kırpılmaz), en alta gelince canlı akış geri gelir. `decideScrollFollow` + kalıcı `stickToBottom`. cx yakaladı: paused DOM cap 600 > store ring 500 → `GLOBAL_CAPACITY` 500→800.
+- **Context-hardening** (`c23c2e4`): eklenti reload edilince eski content-script zombie olur, `chrome.*` fırlatır ("Extension context invalidated"). `src/content/shared/extension-context.ts` (`isExtensionContextValid`+`safeStorageGet/Set`); TÜM `chrome.storage.local` bu wrapper'lardan geçer. Nav poller ölü-bağlamda kendini durdurup `teardownZombie()` (terminal: popstate+locationchange listener'ları da kaldırır) → native chat geri gelir. cx yakaladı: teardown non-terminal'di.
+- **Kaldırılanlar paneli** (`42388c3`): gömülü, **sürüklenebilir (⠿ grip) + aç/kapat + kanala göre filtreli** panel; oturumda kanalın ban/timeout/silinen mesajlarını listeler. Her iki modda (`RemovedMessagesPanel` ortak, native-augment'ten çıkarıldı). `makeDraggable`→`shared/draggable.ts`. **İzolasyon (owner şartı):** ban verisi in-memory store'da, `chrome.storage`'a YAZILMAZ → 2 sekme/2 kanal karışmaz; panel session-lifecycle'a bağlı. cx doğruladı + 2 LOW fix.
+- **Test:** 45→83 test (19 dosya). Build temiz.
 
 ## Proje
 - **KickFlow** = Yasin'in kişisel Chrome MV3 eklentisi (Kick.com) + **7/24 sunucu monitörü**. Repo: `F:\GitHub\kickflow` (lokal git, remote YOK, commit sadece Yasin Derya Bilgin).
