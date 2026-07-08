@@ -3,7 +3,7 @@ import { Lifecycle } from './shared/lifecycle';
 import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
 import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
-import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
+import { featureFlags, setFeatureFlag } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
 import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage, type SubscriberBadge } from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
@@ -270,6 +270,16 @@ function ensureStyles(): void {
     .kickflow-ghost-strip__toggle { flex: 1; }
     .kickflow-ghost-strip__body { max-height: calc(34vh - 30px); overflow: auto; padding: 6px 10px 8px; }
     .kickflow-ghost-strip--collapsed .kickflow-ghost-strip__body { display: none; }
+    .kickflow-ghost-strip__gear {
+      appearance: none; border: 0; margin: 0; padding: 0 9px; cursor: pointer;
+      background: rgba(233,17,60,0.18); color: #fff; font-size: 13px; line-height: 1;
+    }
+    .kickflow-ghost-strip__settings {
+      padding: 7px 10px; border-top: 1px solid rgba(255,255,255,0.08);
+      display: flex; flex-direction: column; gap: 7px; font-size: 11px; color: #efeff1;
+    }
+    .kickflow-ghost-strip__settings label { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
+    .kickflow-ghost-strip__settings select { background:#1c1c20; color:#efeff1; border:1px solid rgba(255,255,255,0.15); border-radius:4px; padding:2px 4px; font-size:11px; }
 
     /* --- Player controls, injected inline into Kick's native control bar. Global classes
        (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
@@ -662,6 +672,26 @@ function handlePotentialNavigation(): void {
   }
 }
 
+/** Single mutator for feature flags — used by BOTH the popup (chrome message) and the in-panel
+ * gear (window event), so featureFlags stays the one source of truth and side effects (reconcile
+ * / session restart / persist) happen exactly once per change. */
+function applyFlagChange(key: string, value: boolean | string): void {
+  if ((key === 'showDeletedMessages' || key === 'preserveBansInline' || key === 'debugLogging') && typeof value === 'boolean') {
+    setFeatureFlag(key, value);
+    if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
+    if (key === 'debugLogging') setDebugLogging(value);
+    void safeStorageSet({ ['kf_flag_' + key]: value });
+  } else if (key === 'chatMode' && (value === 'native' || value === 'own')) {
+    setFeatureFlag('chatMode', value);
+    void safeStorageSet({ kf_flag_chatMode: value });
+    if (currentSlug) {
+      stopSession();
+      resetStatus(currentSlug);
+      void startSession(currentSlug);
+    }
+  }
+}
+
 /** Popup ↔ content-script bridge: report status + apply flag toggles. activeTab grants the
  * popup access on open. Flags persist to chrome.storage.local so a toggle survives a reload. */
 function installStatusBridge(): void {
@@ -692,11 +722,7 @@ function installStatusBridge(): void {
       (msg.key === 'showDeletedMessages' || msg.key === 'preserveBansInline' || msg.key === 'debugLogging') &&
       typeof msg.value === 'boolean'
     ) {
-      const key = msg.key as keyof FeatureFlags;
-      setFeatureFlag(key, msg.value);
-      if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
-      if (key === 'debugLogging') setDebugLogging(msg.value);
-      void safeStorageSet({ ['kf_flag_' + key]: msg.value });
+      applyFlagChange(msg.key, msg.value);
       sendResponse({ ok: true });
       return;
     }
@@ -705,16 +731,18 @@ function installStatusBridge(): void {
       msg.key === 'chatMode' &&
       (msg.value === 'native' || msg.value === 'own')
     ) {
-      setFeatureFlag('chatMode', msg.value);
-      void safeStorageSet({ kf_flag_chatMode: msg.value });
-      if (currentSlug) {
-        stopSession();
-        resetStatus(currentSlug);
-        void startSession(currentSlug);
-      }
+      applyFlagChange(msg.key, msg.value);
       sendResponse({ ok: true });
       return;
     }
+  });
+
+  // In-panel gear (removed-panel.ts) dispatches this instead of a chrome.runtime message — same
+  // applyFlagChange mutator, so featureFlags stays the one source of truth either way. Registered
+  // once here (installStatusBridge runs once from main()), never per-session.
+  window.addEventListener('kickflow:setFlag', (event) => {
+    const detail = (event as CustomEvent<{ key: string; value: boolean | string }>).detail;
+    if (detail && typeof detail.key === 'string') applyFlagChange(detail.key, detail.value);
   });
 }
 

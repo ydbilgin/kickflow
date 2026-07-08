@@ -1,5 +1,6 @@
 import type { Lifecycle } from '../shared/lifecycle';
 import { makeDraggable } from '../shared/draggable';
+import { featureFlags } from './feature-flags';
 import { mergeIdentityBadges, type ChatIntegrityStore, type ChatMessage } from './message-store';
 import { appendBadges, appendParsedContent, applyPreservedMarking } from './message-view';
 
@@ -8,12 +9,21 @@ const STRIP_COLLAPSED_CLASS = 'kickflow-ghost-strip--collapsed';
 const STRIP_HEADER_CLASS = 'kickflow-ghost-strip__header';
 const STRIP_GRIP_CLASS = 'kickflow-ghost-strip__grip';
 const STRIP_TOGGLE_CLASS = 'kickflow-ghost-strip__toggle';
+const STRIP_GEAR_CLASS = 'kickflow-ghost-strip__gear';
+const STRIP_SETTINGS_CLASS = 'kickflow-ghost-strip__settings';
 const STRIP_BODY_CLASS = 'kickflow-ghost-strip__body';
 const GHOST_ROW_CLASS = 'kickflow-ghost-row';
 
 // Bounded so a high-moderation channel (mass bans) can't grow the panel without limit — keep the
 // newest N removed messages only.
 const MAX_PANEL_ROWS = 60;
+
+/** Dispatched by the settings controls; bootstrap.ts's single `applyFlagChange` mutator (also
+ * called by the popup's chrome.runtime message) is the only thing that ever writes featureFlags
+ * — this window event is the panel's route into that same shared mutator. */
+function dispatchFlag(key: string, value: boolean | string): void {
+  window.dispatchEvent(new CustomEvent('kickflow:setFlag', { detail: { key, value } }));
+}
 
 /** Persistent "kaldırılanlar" panel: a body-level, draggable, collapsible drawer listing every
  * removed (banned/timeout/deleted) message the session's `ChatIntegrityStore` still holds. Mode-
@@ -28,6 +38,11 @@ export class RemovedMessagesPanel {
   private collapsed = true; // starts closed; owner opens on demand — in-memory only (tab isolation)
   private lastSig = ''; // skip rebuilding the open body when its contents are unchanged
   private disposeDrag: (() => void) | null = null;
+  private showSettings = false; // gear-revealed quick-settings section — in-memory only
+  private settingsSection: HTMLElement | null = null;
+  private chatModeSelect: HTMLSelectElement | null = null;
+  private showDeletedCheckbox: HTMLInputElement | null = null;
+  private banInlineCheckbox: HTMLInputElement | null = null;
 
   constructor(
     lifecycle: Lifecycle,
@@ -54,6 +69,13 @@ export class RemovedMessagesPanel {
     section.classList.toggle(STRIP_COLLAPSED_CLASS, this.collapsed);
     const toggle = section.querySelector<HTMLElement>(`.${STRIP_TOGGLE_CLASS}`);
     if (toggle) toggle.textContent = `${this.collapsed ? '▸' : '▾'} kaldırılanlar (${removed.length})`;
+
+    // Settings visibility is independent of the ghost-list collapse state (gear lives in the same
+    // header as the toggle). Keep the controls' displayed values current — e.g. a flag changed via
+    // the Chrome popup, which routes through the same applyFlagChange mutator — without stealing
+    // focus mid-interaction (update in place, never rebuild while open).
+    if (this.showSettings) this.refreshSettingsControls();
+
     if (this.collapsed) return; // closed — leave the hidden body as-is
 
     const body = section.querySelector<HTMLElement>(`.${STRIP_BODY_CLASS}`);
@@ -98,17 +120,98 @@ export class RemovedMessagesPanel {
       this.render();
     });
 
-    header.append(grip, toggle);
+    const gear = document.createElement('button');
+    gear.type = 'button';
+    gear.className = STRIP_GEAR_CLASS;
+    gear.title = 'Ayarlar';
+    gear.textContent = '⚙';
+    gear.addEventListener('click', () => {
+      this.showSettings = !this.showSettings;
+      if (this.showSettings) this.refreshSettingsControls();
+      this.updateSettingsVisibility();
+    });
+
+    header.append(grip, toggle, gear);
+
+    const settings = this.buildSettingsSection();
+    this.settingsSection = settings;
 
     const body = document.createElement('div');
     body.className = STRIP_BODY_CLASS;
 
-    section.append(header, body);
+    section.append(header, settings, body);
     document.body.appendChild(section);
     this.section = section;
     this.disposeDrag?.();
     this.disposeDrag = makeDraggable(section, grip);
     return section;
+  }
+
+  /** Quick-settings section — the same three owner-facing flags the Chrome popup exposes, so bans
+   * + settings live in one on-page surface. Built once (kept in the DOM, visibility toggled by the
+   * gear) — controls dispatch `kickflow:setFlag`, which bootstrap.ts's single `applyFlagChange`
+   * mutator applies (same side effects as the popup path: reconcile / session restart / persist). */
+  private buildSettingsSection(): HTMLElement {
+    const settings = document.createElement('div');
+    settings.className = STRIP_SETTINGS_CLASS;
+    settings.style.display = this.showSettings ? '' : 'none';
+
+    const modeLabel = document.createElement('label');
+    const modeText = document.createElement('span');
+    modeText.textContent = 'Chat modu';
+    const modeSelect = document.createElement('select');
+    const nativeOption = document.createElement('option');
+    nativeOption.value = 'native';
+    nativeOption.textContent = 'Native';
+    const ownOption = document.createElement('option');
+    ownOption.value = 'own';
+    ownOption.textContent = 'Kendi liste';
+    modeSelect.append(nativeOption, ownOption);
+    modeSelect.value = featureFlags.chatMode;
+    modeSelect.addEventListener('change', () => dispatchFlag('chatMode', modeSelect.value));
+    modeLabel.append(modeText, modeSelect);
+    this.chatModeSelect = modeSelect;
+
+    const deletedLabel = document.createElement('label');
+    const deletedText = document.createElement('span');
+    deletedText.textContent = 'Silinenleri göster';
+    const deletedCheckbox = document.createElement('input');
+    deletedCheckbox.type = 'checkbox';
+    deletedCheckbox.checked = featureFlags.showDeletedMessages;
+    deletedCheckbox.addEventListener('change', () => dispatchFlag('showDeletedMessages', deletedCheckbox.checked));
+    deletedLabel.append(deletedText, deletedCheckbox);
+    this.showDeletedCheckbox = deletedCheckbox;
+
+    const banLabel = document.createElement('label');
+    const banText = document.createElement('span');
+    banText.textContent = 'Ban satır-içi';
+    const banCheckbox = document.createElement('input');
+    banCheckbox.type = 'checkbox';
+    banCheckbox.checked = featureFlags.preserveBansInline;
+    banCheckbox.addEventListener('change', () => dispatchFlag('preserveBansInline', banCheckbox.checked));
+    banLabel.append(banText, banCheckbox);
+    this.banInlineCheckbox = banCheckbox;
+
+    settings.append(modeLabel, deletedLabel, banLabel);
+    return settings;
+  }
+
+  private updateSettingsVisibility(): void {
+    if (this.settingsSection) this.settingsSection.style.display = this.showSettings ? '' : 'none';
+  }
+
+  /** Keeps the controls' displayed value/checked current with featureFlags without replacing
+   * nodes — a rebuild-on-every-render would steal focus/close an open <select> mid-interaction. */
+  private refreshSettingsControls(): void {
+    if (this.chatModeSelect && this.chatModeSelect.value !== featureFlags.chatMode) {
+      this.chatModeSelect.value = featureFlags.chatMode;
+    }
+    if (this.showDeletedCheckbox && this.showDeletedCheckbox.checked !== featureFlags.showDeletedMessages) {
+      this.showDeletedCheckbox.checked = featureFlags.showDeletedMessages;
+    }
+    if (this.banInlineCheckbox && this.banInlineCheckbox.checked !== featureFlags.preserveBansInline) {
+      this.banInlineCheckbox.checked = featureFlags.preserveBansInline;
+    }
   }
 
   /** Mirrors the row shape native-augment.ts uses for its inline ghost blocks: time + badges +
@@ -158,6 +261,12 @@ export class RemovedMessagesPanel {
     }
     this.disposeDrag?.();
     this.disposeDrag = null;
+    // showSettings stays in-memory (owner's preference survives an empty-state teardown/rebuild);
+    // only the now-detached DOM refs are dropped.
+    this.settingsSection = null;
+    this.chatModeSelect = null;
+    this.showDeletedCheckbox = null;
+    this.banInlineCheckbox = null;
   }
 
   private dispose(): void {
