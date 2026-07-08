@@ -270,6 +270,7 @@ function ensureStyles(): void {
     .kickflow-ghost-strip__toggle { flex: 1; }
     .kickflow-ghost-strip__body { max-height: calc(34vh - 30px); overflow: auto; padding: 6px 10px 8px; }
     .kickflow-ghost-strip--collapsed .kickflow-ghost-strip__body { display: none; }
+    .kickflow-ghost-empty { color: #adadb8; font-size: 11px; opacity: 0.75; padding: 2px 0; }
     .kickflow-ghost-strip__gear {
       appearance: none; border: 0; margin: 0; padding: 0 9px; cursor: pointer;
       background: rgba(233,17,60,0.18); color: #fff; font-size: 13px; line-height: 1;

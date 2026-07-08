@@ -54,16 +54,13 @@ export class RemovedMessagesPanel {
   }
 
   /** Cheap when collapsed (only the header count updates); rebuilds the body only when its
-   * contents actually changed. Removes the panel entirely once nothing is preserved anymore. */
+   * contents actually changed. The panel is ALWAYS present (even with 0 removed) so its ⚙ gear /
+   * quick-settings stay reachable on the page at any time — it's a small collapsed pill when empty,
+   * not hidden. It's only torn down by the session lifecycle (dispose). */
   render(): void {
     const removed = this.store.getPreserved()
       .filter((message) => message.preserved === true)
       .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-
-    if (removed.length === 0) {
-      this.removeSection(); // same teardown as dispose() — never leak a mid-drag's document listeners
-      return;
-    }
 
     const section = this.ensureSection();
     section.classList.toggle(STRIP_COLLAPSED_CLASS, this.collapsed);
@@ -84,7 +81,14 @@ export class RemovedMessagesPanel {
     const sig = `${removed.length}:${shown[shown.length - 1]?.id ?? ''}`;
     if (sig === this.lastSig) return; // unchanged since last open render — don't churn/scroll-jump
     this.lastSig = sig;
-    body.replaceChildren(...shown.map((message) => this.buildRow(message)));
+    if (shown.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'kickflow-ghost-empty';
+      empty.textContent = 'henüz kaldırılan mesaj yok';
+      body.replaceChildren(empty);
+    } else {
+      body.replaceChildren(...shown.map((message) => this.buildRow(message)));
+    }
   }
 
   private ensureSection(): HTMLElement {

@@ -34,12 +34,16 @@ describe('RemovedMessagesPanel', () => {
     document.body.innerHTML = '';
   });
 
-  it('does not show a panel when nothing is preserved', () => {
+  it('shows an always-present pill (count 0) even when nothing is preserved, so the gear stays reachable', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
     new RemovedMessagesPanel(lifecycle, store);
 
-    expect(document.querySelector('.kickflow-ghost-strip')).toBeNull();
+    const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
+    expect(section).not.toBeNull();
+    expect(section?.querySelector('.kickflow-ghost-strip__gear')).not.toBeNull();
+    const toggle = section?.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle');
+    expect(toggle?.textContent).toContain('(0)');
     lifecycle.dispose();
   });
 
@@ -297,7 +301,7 @@ describe('RemovedMessagesPanel', () => {
       lifecycle.dispose();
     });
 
-    it('the gear/settings do not break the empty-state teardown', () => {
+    it('stays present as a (0) pill when the store empties (gear reachable); only lifecycle disposes it', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       store.addMessage(message('m1', 1, 'banned text'));
@@ -313,8 +317,13 @@ describe('RemovedMessagesPanel', () => {
       store.sweepExpiredPreserved(new Date('2026-07-08T19:00:00Z').getTime() + 11 * 60 * 1000);
       panel.render();
 
-      expect(document.querySelector('.kickflow-ghost-strip')).toBeNull();
+      // Panel is now ALWAYS present so its gear/settings stay reachable — it becomes a (0) pill,
+      // not removed. Only the session lifecycle tears it down.
+      const still = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
+      expect(still).not.toBeNull();
+      expect(still?.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle')?.textContent).toContain('(0)');
       lifecycle.dispose();
+      expect(document.querySelector('.kickflow-ghost-strip')).toBeNull();
     });
   });
 });
