@@ -136,7 +136,9 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message:hover { background: rgba(255,255,255,0.06); }
     #${OWN_LIST_ID} .kickflow-message__time { color: #adadb8; font-size: 11px; margin-right: 5px; }
     #${OWN_LIST_ID} .kickflow-message__badges:empty { display: none; }
-    #${OWN_LIST_ID} .kickflow-message__badges { margin-right: 3px; }
+    #${OWN_LIST_ID} .kickflow-message__badges {
+      margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle;
+    }
     #${OWN_LIST_ID} .kickflow-message__username {
       font-weight: 700; color: inherit; text-decoration: none;
     }
@@ -192,7 +194,7 @@ function ensureStyles(): void {
     }
     .kickflow-user-card__key { color: #adadb8; }
     .kickflow-user-card__value { color: #fff; text-align: right; }
-    .kickflow-user-card__badges { padding-top: 7px; }
+    .kickflow-user-card__badges { padding-top: 7px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
     .kickflow-user-card__link {
       display: inline-block; margin-top: 8px; color: #66bfff; text-decoration: underline;
       max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -242,7 +244,7 @@ function ensureStyles(): void {
       font-size: 13px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere;
     }
     .kickflow-ghost-row__time { margin-right: 4px; color: #adadb8; font-size: 11px; }
-    .kickflow-ghost-row__badges { margin-right: 3px; }
+    .kickflow-ghost-row__badges { margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle; }
     .kickflow-ghost-row__username { font-weight: 700; }
     .kickflow-ghost-row__separator { font-weight: 700; }
     .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.75; }
