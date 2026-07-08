@@ -1,18 +1,27 @@
 import type { Lifecycle } from '../shared/lifecycle';
 import { makeDraggable } from '../shared/draggable';
+import type { FooterTogglePanel } from './footer-toggle';
 import { featureFlags } from './feature-flags';
 import { mergeIdentityBadges, type ChatIntegrityStore, type ChatMessage } from './message-store';
 import { appendBadges, appendParsedContent, applyPreservedMarking } from './message-view';
 
-const STRIP_CLASS = 'kickflow-ghost-strip';
-const STRIP_COLLAPSED_CLASS = 'kickflow-ghost-strip--collapsed';
-const STRIP_HEADER_CLASS = 'kickflow-ghost-strip__header';
-const STRIP_GRIP_CLASS = 'kickflow-ghost-strip__grip';
-const STRIP_TOGGLE_CLASS = 'kickflow-ghost-strip__toggle';
-const STRIP_GEAR_CLASS = 'kickflow-ghost-strip__gear';
-const STRIP_SETTINGS_CLASS = 'kickflow-ghost-strip__settings';
-const STRIP_BODY_CLASS = 'kickflow-ghost-strip__body';
+const PANEL_CLASS = 'kickflow-panel';
+const PANEL_HEADER_CLASS = 'kickflow-panel__header';
+const PANEL_ACCENT_CLASS = 'kickflow-panel__accent';
+const PANEL_TITLE_CLASS = 'kickflow-panel__title';
+const PANEL_COUNT_CLASS = 'kickflow-panel__count';
+const PANEL_SPACER_CLASS = 'kickflow-panel__spacer';
+const PANEL_BTN_CLASS = 'kickflow-panel__btn';
+const PANEL_GEAR_CLASS = 'kickflow-panel__gear';
+const PANEL_CLOSE_CLASS = 'kickflow-panel__close';
+const PANEL_SETTINGS_CLASS = 'kickflow-panel__settings';
+const PANEL_BODY_CLASS = 'kickflow-panel__body';
 const GHOST_ROW_CLASS = 'kickflow-ghost-row';
+const GHOST_EMPTY_CLASS = 'kickflow-ghost-empty';
+
+// The whole header is the drag handle (owner request 3) — everything a click could land on
+// that ISN'T dragging (the ⚙/× buttons, and any settings control) is excluded.
+const DRAG_IGNORE_SELECTOR = `.${PANEL_BTN_CLASS}, button, select, input, label`;
 
 // Bounded so a high-moderation channel (mass bans) can't grow the panel without limit — keep the
 // newest N removed messages only.
@@ -25,21 +34,27 @@ function dispatchFlag(key: string, value: boolean | string): void {
   window.dispatchEvent(new CustomEvent('kickflow:setFlag', { detail: { key, value } }));
 }
 
-/** Persistent "kaldırılanlar" panel: a body-level, draggable, collapsible drawer listing every
- * removed (banned/timeout/deleted) message the session's `ChatIntegrityStore` still holds. Mode-
- * independent (Mode A own-render and Mode B native-augment both instantiate one against the same
- * store) — this is the single shared implementation, extracted so neither mode duplicates it.
+/** "Kaldırılanlar" panel: a body-level, draggable drawer listing every removed (banned/timeout/
+ * deleted) message the session's `ChatIntegrityStore` still holds. Mode-independent (Mode A
+ * own-render and Mode B native-augment both instantiate one against the same store) — this is
+ * the single shared implementation, extracted so neither mode duplicates it.
+ *
+ * Hidden by default: it still instantiates immediately (subscribes to the store, builds its DOM)
+ * so the footer button's `isOpen()`/`removedCount()` reads are correct from the first tick, but
+ * the section stays `display:none` until `toggle()`'d open — by the footer button
+ * (footer-toggle.ts), never by anything inside the panel itself.
  *
  * Session/channel isolation: data comes only from the in-memory store — never any persisted,
  * cross-tab-shared storage — and the panel is torn down via the session `Lifecycle` — a channel
  * switch or tab close disposes it, so two tabs / two channels never share a panel or its data. */
-export class RemovedMessagesPanel {
+export class RemovedMessagesPanel implements FooterTogglePanel {
   private section: HTMLElement | null = null;
-  private collapsed = true; // starts closed; owner opens on demand — in-memory only (tab isolation)
-  private lastSig = ''; // skip rebuilding the open body when its contents are unchanged
+  private open = false; // hidden by default — the footer button opens it — in-memory only (tab isolation)
+  private lastSig = ''; // skip rebuilding the body when its contents are unchanged
   private disposeDrag: (() => void) | null = null;
   private showSettings = false; // gear-revealed quick-settings section — in-memory only
   private settingsSection: HTMLElement | null = null;
+  private countChip: HTMLElement | null = null;
   private chatModeSelect: HTMLSelectElement | null = null;
   private showDeletedCheckbox: HTMLInputElement | null = null;
   private banInlineCheckbox: HTMLInputElement | null = null;
@@ -53,37 +68,51 @@ export class RemovedMessagesPanel {
     lifecycle.add(() => this.dispose());
   }
 
-  /** Cheap when collapsed (only the header count updates); rebuilds the body only when its
-   * contents actually changed. The panel is ALWAYS present (even with 0 removed) so its ⚙ gear /
-   * quick-settings stay reachable on the page at any time — it's a small collapsed pill when empty,
-   * not hidden. It's only torn down by the session lifecycle (dispose). */
+  /** Flips open/closed. Called by the footer button (footer-toggle.ts) and by the panel's own
+   * × close button. */
+  toggle(): void {
+    this.open = !this.open;
+    this.render();
+  }
+
+  isOpen(): boolean {
+    return this.open;
+  }
+
+  removedCount(): number {
+    return this.store.getPreserved().filter((message) => message.preserved === true).length;
+  }
+
+  /** Keeps content current every tick regardless of open state — so the moment the footer
+   * button opens the panel, it's instant AND already up to date, never a stale snapshot from
+   * whenever it was last visible. The section itself is just `display:none` while closed. */
   render(): void {
     const removed = this.store.getPreserved()
       .filter((message) => message.preserved === true)
       .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 
     const section = this.ensureSection();
-    section.classList.toggle(STRIP_COLLAPSED_CLASS, this.collapsed);
-    const toggle = section.querySelector<HTMLElement>(`.${STRIP_TOGGLE_CLASS}`);
-    if (toggle) toggle.textContent = `${this.collapsed ? '▸' : '▾'} kaldırılanlar (${removed.length})`;
+    section.style.display = this.open ? 'flex' : 'none';
 
-    // Settings visibility is independent of the ghost-list collapse state (gear lives in the same
-    // header as the toggle). Keep the controls' displayed values current — e.g. a flag changed via
-    // the Chrome popup, which routes through the same applyFlagChange mutator — without stealing
-    // focus mid-interaction (update in place, never rebuild while open).
+    if (this.countChip) {
+      this.countChip.textContent = String(removed.length);
+      this.countChip.style.display = removed.length > 0 ? '' : 'none';
+    }
+
+    // Settings visibility is independent of open/closed (gear lives in the same header). Keep
+    // the controls' displayed values current — e.g. a flag changed via the Chrome popup, which
+    // routes through the same applyFlagChange mutator — without stealing focus mid-interaction.
     if (this.showSettings) this.refreshSettingsControls();
 
-    if (this.collapsed) return; // closed — leave the hidden body as-is
-
-    const body = section.querySelector<HTMLElement>(`.${STRIP_BODY_CLASS}`);
+    const body = section.querySelector<HTMLElement>(`.${PANEL_BODY_CLASS}`);
     if (!body) return;
     const shown = removed.slice(-MAX_PANEL_ROWS);
     const sig = `${removed.length}:${shown[shown.length - 1]?.id ?? ''}`;
-    if (sig === this.lastSig) return; // unchanged since last open render — don't churn/scroll-jump
+    if (sig === this.lastSig) return; // unchanged since last render — don't churn/scroll-jump
     this.lastSig = sig;
     if (shown.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'kickflow-ghost-empty';
+      empty.className = GHOST_EMPTY_CLASS;
       empty.textContent = 'henüz kaldırılan mesaj yok';
       body.replaceChildren(empty);
     } else {
@@ -95,38 +124,30 @@ export class RemovedMessagesPanel {
     if (this.section?.isConnected) return this.section;
 
     const section = document.createElement('section');
-    section.className = STRIP_CLASS;
+    section.className = PANEL_CLASS;
+    section.style.display = this.open ? 'flex' : 'none';
 
     const header = document.createElement('div');
-    header.className = STRIP_HEADER_CLASS;
+    header.className = PANEL_HEADER_CLASS;
 
-    const grip = document.createElement('span');
-    grip.className = STRIP_GRIP_CLASS;
-    grip.textContent = '⠿';
-    // Panel starts anchored bottom-right via CSS (right/bottom). The first drag switches it to
-    // explicit left/top at its current on-screen position, then hands off to makeDraggable — no
-    // visual jump, and the default corner anchor is cleanly disabled from then on.
-    grip.addEventListener('mousedown', (event: MouseEvent) => {
-      if (event.button !== 0) return;
-      const rect = section.getBoundingClientRect();
-      section.style.right = 'auto';
-      section.style.bottom = 'auto';
-      section.style.left = `${rect.left}px`;
-      section.style.top = `${rect.top}px`;
-    });
+    const accent = document.createElement('span');
+    accent.className = PANEL_ACCENT_CLASS;
 
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = STRIP_TOGGLE_CLASS;
-    toggle.textContent = 'kaldırılanlar';
-    toggle.addEventListener('click', () => {
-      this.collapsed = !this.collapsed;
-      this.render();
-    });
+    const title = document.createElement('span');
+    title.className = PANEL_TITLE_CLASS;
+    title.textContent = 'Kaldırılanlar';
+
+    const count = document.createElement('span');
+    count.className = PANEL_COUNT_CLASS;
+    count.style.display = 'none';
+    this.countChip = count;
+
+    const spacer = document.createElement('span');
+    spacer.className = PANEL_SPACER_CLASS;
 
     const gear = document.createElement('button');
     gear.type = 'button';
-    gear.className = STRIP_GEAR_CLASS;
+    gear.className = `${PANEL_BTN_CLASS} ${PANEL_GEAR_CLASS}`;
     gear.title = 'Ayarlar';
     gear.textContent = '⚙';
     gear.addEventListener('click', () => {
@@ -135,19 +156,42 @@ export class RemovedMessagesPanel {
       this.updateSettingsVisibility();
     });
 
-    header.append(grip, toggle, gear);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = `${PANEL_BTN_CLASS} ${PANEL_CLOSE_CLASS}`;
+    close.title = 'Kapat';
+    close.textContent = '×';
+    close.addEventListener('click', () => this.toggle());
+
+    header.append(accent, title, count, spacer, gear, close);
+
+    // Panel starts anchored bottom-right via CSS (right/bottom). The first drag switches it to
+    // explicit left/top at its current on-screen position, then hands off to makeDraggable — no
+    // visual jump, and the default corner anchor is cleanly disabled from then on. Only fires for
+    // an actual drag start (not a click landing on a button/select/input/label).
+    header.addEventListener('mousedown', (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      if ((event.target as HTMLElement).closest(DRAG_IGNORE_SELECTOR)) return;
+      const rect = section.getBoundingClientRect();
+      section.style.right = 'auto';
+      section.style.bottom = 'auto';
+      section.style.left = `${rect.left}px`;
+      section.style.top = `${rect.top}px`;
+    });
 
     const settings = this.buildSettingsSection();
     this.settingsSection = settings;
 
     const body = document.createElement('div');
-    body.className = STRIP_BODY_CLASS;
+    body.className = PANEL_BODY_CLASS;
 
     section.append(header, settings, body);
     document.body.appendChild(section);
     this.section = section;
     this.disposeDrag?.();
-    this.disposeDrag = makeDraggable(section, grip);
+    // Whole-header drag (owner request 3) — not just a grip. The ⚙/× buttons and settings
+    // controls are excluded via DRAG_IGNORE_SELECTOR so they stay clickable.
+    this.disposeDrag = makeDraggable(section, header, DRAG_IGNORE_SELECTOR);
     return section;
   }
 
@@ -157,7 +201,7 @@ export class RemovedMessagesPanel {
    * mutator applies (same side effects as the popup path: reconcile / session restart / persist). */
   private buildSettingsSection(): HTMLElement {
     const settings = document.createElement('div');
-    settings.className = STRIP_SETTINGS_CLASS;
+    settings.className = PANEL_SETTINGS_CLASS;
     settings.style.display = this.showSettings ? '' : 'none';
 
     const modeLabel = document.createElement('label');
@@ -255,8 +299,8 @@ export class RemovedMessagesPanel {
   }
 
   /** Tears the panel DOM down and stops any in-flight drag: dispatch `kickflow:dismiss` (cleans the
-   * document mousemove/mouseup listeners makeDraggable added while dragging) and dispose the grip
-   * handler. Shared by dispose() and the empty-state branch so neither can leak listeners. */
+   * document mousemove/mouseup listeners makeDraggable added while dragging) and dispose the drag
+   * handler. Shared by dispose() so it can't leak listeners. */
   private removeSection(): void {
     if (this.section) {
       this.section.dispatchEvent(new Event('kickflow:dismiss'));
@@ -265,8 +309,9 @@ export class RemovedMessagesPanel {
     }
     this.disposeDrag?.();
     this.disposeDrag = null;
-    // showSettings stays in-memory (owner's preference survives an empty-state teardown/rebuild);
-    // only the now-detached DOM refs are dropped.
+    this.countChip = null;
+    // showSettings stays in-memory (owner's preference survives a teardown/rebuild); only the
+    // now-detached DOM refs are dropped.
     this.settingsSection = null;
     this.chatModeSelect = null;
     this.showDeletedCheckbox = null;

@@ -7,7 +7,7 @@ import { Lifecycle } from '../../src/content/shared/lifecycle';
 /** Finds a settings row's control by its label text — resilient to row reordering, unlike
  * indexing into querySelectorAll('input')/('select'). */
 function settingsControl(section: HTMLElement, labelText: string): HTMLInputElement | HTMLSelectElement | null {
-  const labels = Array.from(section.querySelectorAll<HTMLLabelElement>('.kickflow-ghost-strip__settings label'));
+  const labels = Array.from(section.querySelectorAll<HTMLLabelElement>('.kickflow-panel__settings label'));
   const label = labels.find((l) => l.querySelector('span')?.textContent === labelText);
   return label?.querySelector<HTMLInputElement | HTMLSelectElement>('input, select') ?? null;
 }
@@ -34,39 +34,56 @@ describe('RemovedMessagesPanel', () => {
     document.body.innerHTML = '';
   });
 
-  it('shows an always-present pill (count 0) even when nothing is preserved, so the gear stays reachable', () => {
+  it('is hidden by default (section present but display:none) even though it already instantiates', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
-    new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store);
 
-    const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
+    const section = document.querySelector<HTMLElement>('.kickflow-panel');
     expect(section).not.toBeNull();
-    expect(section?.querySelector('.kickflow-ghost-strip__gear')).not.toBeNull();
-    const toggle = section?.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle');
-    expect(toggle?.textContent).toContain('(0)');
+    expect(section?.style.display).toBe('none');
+    expect(panel.isOpen()).toBe(false);
     lifecycle.dispose();
   });
 
-  it('shows the panel with the correct count once messages are preserved, starting collapsed', () => {
+  it('toggle() opens it (visible) and toggling again closes it', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
+    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+
+    panel.toggle();
+    expect(panel.isOpen()).toBe(true);
+    expect(section.style.display).toBe('flex');
+
+    panel.toggle();
+    expect(panel.isOpen()).toBe(false);
+    expect(section.style.display).toBe('none');
+
+    lifecycle.dispose();
+  });
+
+  it('removedCount() reflects the store\'s preserved messages, independent of open state', () => {
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    const panel = new RemovedMessagesPanel(lifecycle, store);
+    expect(panel.removedCount()).toBe(0);
+
     store.addMessage(message('m1', 1, 'banned text'));
     store.addMessage(message('m2', 2, 'deleted text'));
     store.markUserBanned(1, { permanent: true, bannedBy: 'mod1' });
     store.markMessageDeleted('m2');
-
-    const panel = new RemovedMessagesPanel(lifecycle, store);
     panel.render();
 
-    const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
-    expect(section).not.toBeNull();
-    expect(section?.classList.contains('kickflow-ghost-strip--collapsed')).toBe(true);
-    const toggle = section?.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle');
-    expect(toggle?.textContent).toContain('(2)');
+    expect(panel.removedCount()).toBe(2);
+    expect(panel.isOpen()).toBe(false); // removedCount() doesn't open it
+
+    const countChip = document.querySelector<HTMLElement>('.kickflow-panel__count');
+    expect(countChip?.textContent).toBe('2');
     lifecycle.dispose();
   });
 
-  it('clicking the toggle flips the collapsed class and renders rows with sender + status label', () => {
+  it('shows rows with sender + status label once opened', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
     store.addMessage(message('m1', 1, 'banned text'));
@@ -74,14 +91,9 @@ describe('RemovedMessagesPanel', () => {
 
     const panel = new RemovedMessagesPanel(lifecycle, store);
     panel.render();
+    panel.toggle();
 
-    const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
-    const toggle = section?.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle');
-    expect(section?.classList.contains('kickflow-ghost-strip--collapsed')).toBe(true);
-
-    toggle?.click();
-
-    expect(section?.classList.contains('kickflow-ghost-strip--collapsed')).toBe(false);
+    const section = document.querySelector<HTMLElement>('.kickflow-panel');
     const row = section?.querySelector<HTMLElement>('.kickflow-ghost-row');
     expect(row?.textContent).toContain('user1');
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('banlandı');
@@ -96,27 +108,39 @@ describe('RemovedMessagesPanel', () => {
 
     const panel = new RemovedMessagesPanel(lifecycle, store);
     panel.render();
-    const toggle = document.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle');
-    toggle?.click();
+    panel.toggle();
 
     const row = document.querySelector<HTMLElement>('.kickflow-ghost-row');
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('silindi');
     lifecycle.dispose();
   });
 
-  it('has a drag grip in the header that is the makeDraggable handle', () => {
+  it('shows the empty placeholder once opened with nothing preserved', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
-    store.addMessage(message('m1', 1));
-    store.markUserBanned(1);
+    const panel = new RemovedMessagesPanel(lifecycle, store);
+    panel.toggle();
 
-    new RemovedMessagesPanel(lifecycle, store);
+    const empty = document.querySelector<HTMLElement>('.kickflow-ghost-empty');
+    expect(empty).not.toBeNull();
+    expect(empty?.textContent).toBe('henüz kaldırılan mesaj yok');
+    lifecycle.dispose();
+  });
 
-    const header = document.querySelector('.kickflow-ghost-strip__header');
-    const grip = document.querySelector('.kickflow-ghost-strip__grip');
-    expect(header).not.toBeNull();
-    expect(grip).not.toBeNull();
-    expect(header?.contains(grip)).toBe(true);
+  it('the × close button calls toggle() (closes)', () => {
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    const panel = new RemovedMessagesPanel(lifecycle, store);
+    panel.toggle();
+    expect(panel.isOpen()).toBe(true);
+
+    const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+    const close = section.querySelector<HTMLButtonElement>('.kickflow-panel__close');
+    expect(close).not.toBeNull();
+    close?.click();
+
+    expect(panel.isOpen()).toBe(false);
+    expect(section.style.display).toBe('none');
     lifecycle.dispose();
   });
 
@@ -127,15 +151,50 @@ describe('RemovedMessagesPanel', () => {
     store.markUserBanned(1);
 
     new RemovedMessagesPanel(lifecycle, store);
-    expect(document.querySelector('.kickflow-ghost-strip')).not.toBeNull();
+    expect(document.querySelector('.kickflow-panel')).not.toBeNull();
 
     lifecycle.dispose();
 
-    expect(document.querySelector('.kickflow-ghost-strip')).toBeNull();
+    expect(document.querySelector('.kickflow-panel')).toBeNull();
+  });
+
+  describe('whole-header drag', () => {
+    it('a mousedown on the header background repositions it to explicit left/top (drag-anchor switch fires)', () => {
+      const lifecycle = new Lifecycle();
+      const store = new ChatIntegrityStore();
+      new RemovedMessagesPanel(lifecycle, store);
+
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      const header = section.querySelector<HTMLElement>('.kickflow-panel__header')!;
+      expect(section.style.left).toBe('');
+
+      header.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+
+      expect(section.style.right).toBe('auto');
+      expect(section.style.bottom).toBe('auto');
+      expect(section.style.left).not.toBe('');
+      expect(section.style.top).not.toBe('');
+      lifecycle.dispose();
+    });
+
+    it('a mousedown landing on the ⚙/× buttons or a settings control does NOT trigger the drag-anchor switch', () => {
+      const lifecycle = new Lifecycle();
+      const store = new ChatIntegrityStore();
+      new RemovedMessagesPanel(lifecycle, store);
+
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      const gear = section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')!;
+
+      gear.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+
+      expect(section.style.left).toBe('');
+      expect(section.style.right).toBe('');
+      lifecycle.dispose();
+    });
   });
 
   describe('quick-settings gear', () => {
-    it('header shows grip · toggle · gear, and the gear reveals/hides the settings section', () => {
+    it('header shows title · count · ⚙ · ×, and the gear reveals/hides the settings section', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       store.addMessage(message('m1', 1));
@@ -143,16 +202,16 @@ describe('RemovedMessagesPanel', () => {
 
       new RemovedMessagesPanel(lifecycle, store);
 
-      const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
-      const header = section?.querySelector('.kickflow-ghost-strip__header');
-      const grip = header?.querySelector('.kickflow-ghost-strip__grip');
-      const toggle = header?.querySelector('.kickflow-ghost-strip__toggle');
-      const gear = header?.querySelector<HTMLButtonElement>('.kickflow-ghost-strip__gear');
-      expect(grip).not.toBeNull();
-      expect(toggle).not.toBeNull();
+      const section = document.querySelector<HTMLElement>('.kickflow-panel');
+      const header = section?.querySelector('.kickflow-panel__header');
+      const title = header?.querySelector('.kickflow-panel__title');
+      const gear = header?.querySelector<HTMLButtonElement>('.kickflow-panel__gear');
+      const close = header?.querySelector<HTMLButtonElement>('.kickflow-panel__close');
+      expect(title?.textContent).toBe('Kaldırılanlar');
       expect(gear).not.toBeNull();
+      expect(close).not.toBeNull();
 
-      const settings = section?.querySelector<HTMLElement>('.kickflow-ghost-strip__settings');
+      const settings = section?.querySelector<HTMLElement>('.kickflow-panel__settings');
       expect(settings).not.toBeNull();
       expect(settings?.style.display).toBe('none'); // starts hidden
 
@@ -180,8 +239,8 @@ describe('RemovedMessagesPanel', () => {
         store.markUserBanned(1);
 
         new RemovedMessagesPanel(lifecycle, store);
-        const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip')!;
-        section.querySelector<HTMLButtonElement>('.kickflow-ghost-strip__gear')?.click();
+        const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+        section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
 
         const modeSelect = settingsControl(section, 'Chat modu') as HTMLSelectElement;
         const deletedCheckbox = settingsControl(section, 'Silinenleri göster') as HTMLInputElement;
@@ -209,8 +268,8 @@ describe('RemovedMessagesPanel', () => {
         store.markUserBanned(1);
 
         const panel = new RemovedMessagesPanel(lifecycle, store);
-        const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip')!;
-        section.querySelector<HTMLButtonElement>('.kickflow-ghost-strip__gear')?.click();
+        const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+        section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
 
         const deletedCheckbox = settingsControl(section, 'Silinenleri göster') as HTMLInputElement;
         expect(deletedCheckbox.checked).toBe(true);
@@ -233,8 +292,8 @@ describe('RemovedMessagesPanel', () => {
       store.markUserBanned(1);
 
       new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-ghost-strip__gear')?.click();
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
       const checkbox = settingsControl(section, 'Silinenleri göster') as HTMLInputElement;
 
       let received: { key: string; value: unknown } | null = null;
@@ -258,8 +317,8 @@ describe('RemovedMessagesPanel', () => {
       store.markUserBanned(1);
 
       new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-ghost-strip__gear')?.click();
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
       const checkbox = settingsControl(section, 'Ban satır-içi') as HTMLInputElement;
 
       let received: { key: string; value: unknown } | null = null;
@@ -283,8 +342,8 @@ describe('RemovedMessagesPanel', () => {
       store.markUserBanned(1);
 
       new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-ghost-strip__gear')?.click();
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
       const select = settingsControl(section, 'Chat modu') as HTMLSelectElement;
 
       let received: { key: string; value: unknown } | null = null;
@@ -301,29 +360,27 @@ describe('RemovedMessagesPanel', () => {
       lifecycle.dispose();
     });
 
-    it('stays present as a (0) pill when the store empties (gear reachable); only lifecycle disposes it', () => {
+    it('stays present (hidden) when the store empties; only lifecycle disposes it', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       store.addMessage(message('m1', 1, 'banned text'));
       store.markUserBanned(1);
 
       const panel = new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-ghost-strip')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-ghost-strip__gear')?.click();
-      expect(section.querySelector('.kickflow-ghost-strip__settings')).not.toBeNull();
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
+      expect(section.querySelector('.kickflow-panel__settings')).not.toBeNull();
 
       // Past the 10-min preserved TTL, relative to the fixed createdAt the `message()` helper uses
       // (not real wall-clock time, which the test run's clock may sit either side of).
       store.sweepExpiredPreserved(new Date('2026-07-08T19:00:00Z').getTime() + 11 * 60 * 1000);
       panel.render();
 
-      // Panel is now ALWAYS present so its gear/settings stay reachable — it becomes a (0) pill,
-      // not removed. Only the session lifecycle tears it down.
-      const still = document.querySelector<HTMLElement>('.kickflow-ghost-strip');
+      const still = document.querySelector<HTMLElement>('.kickflow-panel');
       expect(still).not.toBeNull();
-      expect(still?.querySelector<HTMLElement>('.kickflow-ghost-strip__toggle')?.textContent).toContain('(0)');
+      expect(panel.removedCount()).toBe(0);
       lifecycle.dispose();
-      expect(document.querySelector('.kickflow-ghost-strip')).toBeNull();
+      expect(document.querySelector('.kickflow-panel')).toBeNull();
     });
   });
 });

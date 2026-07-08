@@ -10,6 +10,7 @@ import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import { PusherClient } from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
 import { RemovedMessagesPanel } from './chat/removed-panel';
+import { FooterToggleButton } from './chat/footer-toggle';
 import { RenderQueue } from './chat/render-queue';
 import { trimMessageWindow, isNearBottom, decideScrollFollow } from './chat/dom-window';
 import { fetchChatHistory } from './chat/history';
@@ -219,13 +220,13 @@ function ensureStyles(): void {
     .kickflow-mention { color: #53fc18; font-weight: 600; }
     .kickflow-link { color: #66bfff; text-decoration: underline; }
     .kickflow-status-label {
-      display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px;
-      font-size: 10px; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle;
+      display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+      font-size: 9px; font-weight: 800; letter-spacing: 0.03em; vertical-align: middle;
       text-decoration: none; text-transform: uppercase;
     }
-    .kickflow-status-label--banned { background: #e9113c; color: #fff; }
-    .kickflow-status-label--timeout { background: #e6932b; color: #fff; }
-    .kickflow-status-label--deleted { background: #6d6d6d; color: #fff; }
+    .kickflow-status-label--banned { background: rgba(233,17,60,0.92); color: #fff; }
+    .kickflow-status-label--timeout { background: rgba(230,147,43,0.92); color: #fff; }
+    .kickflow-status-label--deleted { background: rgba(156,122,30,0.92); color: #fff; }
     .kickflow-mod-label { margin-left: 5px; font-size: 10px; font-weight: 600; opacity: 0.7; }
     .kickflow-preserved { position: relative; }
     .kickflow-original-content {
@@ -244,43 +245,78 @@ function ensureStyles(): void {
       display: block; padding: 2px 0; color: #efeff1; opacity: 0.78;
       font-size: 13px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere;
     }
-    .kickflow-ghost-row__time { margin-right: 4px; color: #adadb8; font-size: 11px; }
+    .kickflow-ghost-row__time { margin-right: 4px; color: #8b8b93; font-size: 10px; }
     .kickflow-ghost-row__badges { margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle; }
     .kickflow-ghost-row__username { font-weight: 700; }
     .kickflow-ghost-row__separator { font-weight: 700; }
-    .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.75; }
-    .kickflow-ghost-strip {
-      position: fixed; right: 14px; bottom: 74px; z-index: 2147483647;
-      width: min(340px, calc(100vw - 28px)); max-height: 34vh; overflow: hidden;
-      border: 1px solid rgba(233,17,60,0.36); border-radius: 8px;
-      background: rgba(14,14,16,0.96); color: #efeff1;
-      box-shadow: 0 12px 34px rgba(0,0,0,0.44);
+    .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.7; }
+    .kickflow-ghost-empty { color: #8b8b93; font-size: 11px; text-align: center; padding: 22px 10px; opacity: 0.9; }
+
+    /* --- "Kaldırılanlar" panel: hidden by default, opened via the footer toggle button.
+       Whole header drags; ⚙ settings + × close live at its right edge. --- */
+    .kickflow-panel {
+      position: fixed; right: 14px; bottom: 84px; z-index: 2147483000;
+      width: 330px; max-height: 60vh; display: flex; flex-direction: column;
+      border-radius: 12px; background: rgba(18,19,23,0.98);
+      border: 1px solid rgba(255,255,255,0.10);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.5);
       font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+      overflow: hidden;
     }
-    .kickflow-ghost-strip__header { display: flex; align-items: stretch; }
-    .kickflow-ghost-strip__grip {
-      display: flex; align-items: center; padding: 0 8px; cursor: move; user-select: none;
-      background: rgba(233,17,60,0.18); color: #fff; font-size: 12px;
+    .kickflow-panel__header {
+      display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+      cursor: move; user-select: none;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
     }
-    .kickflow-ghost-strip__toggle {
-      appearance: none; width: 100%; height: 30px; border: 0; margin: 0; padding: 0 10px;
-      background: rgba(233,17,60,0.18); color: #fff; cursor: pointer;
-      font-size: 11px; font-weight: 800; text-align: left; text-transform: uppercase;
+    .kickflow-panel__accent {
+      width: 7px; height: 7px; border-radius: 50%; flex: none;
+      background: #53fc18; box-shadow: 0 0 6px rgba(83,252,24,0.7);
     }
-    .kickflow-ghost-strip__toggle { flex: 1; }
-    .kickflow-ghost-strip__body { max-height: calc(34vh - 30px); overflow: auto; padding: 6px 10px 8px; }
-    .kickflow-ghost-strip--collapsed .kickflow-ghost-strip__body { display: none; }
-    .kickflow-ghost-empty { color: #adadb8; font-size: 11px; opacity: 0.75; padding: 2px 0; }
-    .kickflow-ghost-strip__gear {
-      appearance: none; border: 0; margin: 0; padding: 0 9px; cursor: pointer;
-      background: rgba(233,17,60,0.18); color: #fff; font-size: 13px; line-height: 1;
+    .kickflow-panel__title { font-weight: 800; font-size: 12px; letter-spacing: 0.02em; }
+    .kickflow-panel__count {
+      background: rgba(233,17,60,0.9); color: #fff; border-radius: 999px;
+      padding: 0 6px; font-size: 10px; font-weight: 800; line-height: 1.6;
     }
-    .kickflow-ghost-strip__settings {
-      padding: 7px 10px; border-top: 1px solid rgba(255,255,255,0.08);
-      display: flex; flex-direction: column; gap: 7px; font-size: 11px; color: #efeff1;
+    .kickflow-panel__spacer { flex: 1; }
+    .kickflow-panel__btn {
+      appearance: none; width: 22px; height: 22px; padding: 0; margin: 0; border: 0;
+      border-radius: 6px; background: transparent; color: #b5b5be; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 13px; line-height: 1;
+      transition: background .14s ease, color .14s ease;
     }
-    .kickflow-ghost-strip__settings label { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
-    .kickflow-ghost-strip__settings select { background:#1c1c20; color:#efeff1; border:1px solid rgba(255,255,255,0.15); border-radius:4px; padding:2px 4px; font-size:11px; }
+    .kickflow-panel__btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .kickflow-panel__close { font-size: 16px; }
+    .kickflow-panel__body { flex: 1; overflow: auto; padding: 6px 10px 9px; }
+    .kickflow-panel__settings {
+      padding: 8px 11px; border-top: 1px solid rgba(255,255,255,0.07);
+      display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: #efeff1;
+    }
+    .kickflow-panel__settings label { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
+    .kickflow-panel__settings select {
+      background: #1c1c20; color: #efeff1; border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 5px; padding: 3px 6px; font-size: 11px;
+    }
+
+    /* --- Footer toggle button: injected into Kick's own chat footer, next to its send/gear
+       cluster (see footer-toggle.ts). Sized to match Kick's neighboring icon buttons. --- */
+    .kickflow-footer-toggle {
+      position: relative; appearance: none; width: 30px; height: 30px; padding: 0; margin: 0;
+      border: 0; border-radius: 8px; background: transparent; color: #b5b5be; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background .14s ease, color .14s ease;
+    }
+    .kickflow-footer-toggle:hover { background: rgba(255,255,255,0.1); }
+    .kickflow-footer-toggle--active { color: #53fc18; }
+    .kickflow-footer-toggle svg { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .kickflow-footer-toggle__badge {
+      position: absolute; top: 2px; right: 2px;
+      background: #e9113c; color: #fff; border-radius: 999px;
+      min-width: 14px; height: 14px; padding: 0 3px;
+      font-size: 9px; font-weight: 800; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+    }
 
     /* --- Player controls, injected inline into Kick's native control bar. Global classes
        (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
@@ -409,7 +445,8 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     onPreservedEvicted: (message) => augmenter?.forgetGhost(message.id),
   });
   augmenter = new NativeChatAugmenter(lifecycle, store);
-  new RemovedMessagesPanel(lifecycle, store);
+  const panel = new RemovedMessagesPanel(lifecycle, store);
+  new FooterToggleButton(lifecycle, panel);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
 
   resolveChannel(slug).then((resolved) => {
@@ -461,7 +498,8 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       element.remove();
     },
   });
-  new RemovedMessagesPanel(lifecycle, store);
+  const panel = new RemovedMessagesPanel(lifecycle, store);
+  new FooterToggleButton(lifecycle, panel);
 
   const mount = new ChatOverlayMount(lifecycle);
   const ownList = mount.ownList;
@@ -649,7 +687,8 @@ function teardownZombie(): void {
   stopSession();
   configureUserCardSession(null);
   document.getElementById('kickflow-chat-overlay')?.remove();
-  document.querySelector('.kickflow-ghost-strip')?.remove();
+  document.querySelector('.kickflow-panel')?.remove();
+  document.getElementById('kickflow-footer-toggle')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
 }
 
