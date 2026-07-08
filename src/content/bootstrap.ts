@@ -2,6 +2,7 @@ import { logger, setDebugLogging } from './shared/logger';
 import { Lifecycle } from './shared/lifecycle';
 import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
+import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
 import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage, type SubscriberBadge } from './chat/message-store';
@@ -571,6 +572,12 @@ function initPlayerQolSession(lifecycle: Lifecycle): void {
 let currentLifecycle: Lifecycle | null = null;
 let currentSlug: string | null = null;
 let sessionToken = 0;
+let navPollId: number | null = null;
+
+/** Named (not inline) so teardownZombie can removeEventListener it. */
+function onPopstate(): void {
+  window.dispatchEvent(new Event('kickflow:locationchange'));
+}
 
 function startSession(slug: string): void {
   const token = ++sessionToken;
@@ -603,7 +610,35 @@ function stopSession(): void {
   currentLifecycle = null;
 }
 
+/** The extension context died (reload/update/disable) while this injected script kept running.
+ * Nothing here can talk to the extension anymore, so this must be TERMINAL: stop the nav
+ * listeners FIRST (otherwise a browser back/forward after teardown could still fire popstate ->
+ * locationchange -> handlePotentialNavigation and spin up a brand-new zombie session with no
+ * poller left to catch it), then stop all work and restore Kick's own UI: dispose the session
+ * lifecycle (timers/observers/overlay) and un-hide native chat. The next page load injects a
+ * fresh, working script. Idempotent — safe to call more than once. */
+function teardownZombie(): void {
+  window.removeEventListener('popstate', onPopstate);
+  window.removeEventListener('kickflow:locationchange', handlePotentialNavigation);
+  if (navPollId !== null) {
+    window.clearInterval(navPollId);
+    navPollId = null;
+  }
+  stopSession();
+  configureUserCardSession(null);
+  document.getElementById('kickflow-chat-overlay')?.remove();
+  document.querySelector('.kickflow-ghost-strip')?.remove();
+  document.documentElement.classList.remove('kickflow-chat-active');
+}
+
 function handlePotentialNavigation(): void {
+  if (!isExtensionContextValid()) {
+    // Belt-and-suspenders: a queued popstate/locationchange can still fire this before
+    // teardownZombie's removeEventListener above takes effect.
+    teardownZombie();
+    return;
+  }
+
   const slug = getChannelSlugFromLocation();
   if (slug === currentSlug) return;
 
@@ -650,7 +685,7 @@ function installStatusBridge(): void {
       setFeatureFlag(key, msg.value);
       if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
       if (key === 'debugLogging') setDebugLogging(msg.value);
-      void chrome.storage.local.set({ ['kf_flag_' + key]: msg.value });
+      void safeStorageSet({ ['kf_flag_' + key]: msg.value });
       sendResponse({ ok: true });
       return;
     }
@@ -660,7 +695,7 @@ function installStatusBridge(): void {
       (msg.value === 'native' || msg.value === 'own')
     ) {
       setFeatureFlag('chatMode', msg.value);
-      void chrome.storage.local.set({ kf_flag_chatMode: msg.value });
+      void safeStorageSet({ kf_flag_chatMode: msg.value });
       if (currentSlug) {
         stopSession();
         resetStatus(currentSlug);
@@ -675,31 +710,31 @@ function installStatusBridge(): void {
 /** Load flag overrides the user set via the popup, applied before the first session starts so
  * they take effect immediately (not just after the next toggle). */
 async function applySavedFlags(): Promise<void> {
-  try {
-    const saved = await chrome.storage.local.get([
-      'kf_flag_chatMode',
-      'kf_flag_showDeletedMessages',
-      'kf_flag_preserveBansInline',
-      'kf_flag_debugLogging',
-    ]);
-    if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
-    if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
-    if (typeof saved.kf_flag_preserveBansInline === 'boolean') setFeatureFlag('preserveBansInline', saved.kf_flag_preserveBansInline);
-    if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);
-  } catch {
-    // storage unavailable — fall back to the compiled-in defaults
-  }
+  const saved = await safeStorageGet([
+    'kf_flag_chatMode',
+    'kf_flag_showDeletedMessages',
+    'kf_flag_preserveBansInline',
+    'kf_flag_debugLogging',
+  ]);
+  if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
+  if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
+  if (typeof saved.kf_flag_preserveBansInline === 'boolean') setFeatureFlag('preserveBansInline', saved.kf_flag_preserveBansInline);
+  if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);
 }
 
 function installNavigationHooks(): void {
   let lastHref = window.location.href;
-  window.setInterval(() => {
+  navPollId = window.setInterval(() => {
+    if (!isExtensionContextValid()) {
+      teardownZombie();
+      return;
+    }
     const href = window.location.href;
     if (href === lastHref) return;
     lastHref = href;
     window.dispatchEvent(new Event('kickflow:locationchange'));
   }, NAVIGATION_POLL_INTERVAL_MS);
-  window.addEventListener('popstate', () => window.dispatchEvent(new Event('kickflow:locationchange')));
+  window.addEventListener('popstate', onPopstate);
   window.addEventListener('kickflow:locationchange', handlePotentialNavigation);
 }
 

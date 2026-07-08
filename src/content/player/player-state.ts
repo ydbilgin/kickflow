@@ -1,4 +1,5 @@
 import { logger } from '../shared/logger';
+import { safeStorageGet, safeStorageSet } from '../shared/extension-context';
 
 export type PlayerMode = 'auto' | 'manual';
 
@@ -34,9 +35,7 @@ function normalizeRate(rate: number): number {
 }
 
 function persistCatchupEnabled(enabled: boolean): void {
-  chrome.storage.local.set({ [TOGGLE_STORAGE_KEY]: enabled }).catch((error: unknown) => {
-    logger.debug('player-state: failed to persist catch-up toggle', error);
-  });
+  void safeStorageSet({ [TOGGLE_STORAGE_KEY]: enabled });
 }
 
 function emitCatchupToggled(enabled: boolean): void {
@@ -92,23 +91,18 @@ export function ensurePlayerStateLoaded(): Promise<void> {
   if (loadPromise) return loadPromise;
 
   const loadRevision = revision;
-  loadPromise = chrome.storage.local
-    .get(TOGGLE_STORAGE_KEY)
-    .then((stored) => {
-      if (revision !== loadRevision) return;
-      const value = stored[TOGGLE_STORAGE_KEY];
-      if (typeof value !== 'boolean') return;
-      setState(
-        {
-          mode: value ? 'auto' : 'manual',
-          manualRate: NORMAL_PLAYBACK_RATE,
-        },
-        { emitToggle: false, persistMode: false },
-      );
-    })
-    .catch((error: unknown) => {
-      logger.debug('player-state: failed to read catch-up preference, defaulting to auto', error);
-    });
+  loadPromise = safeStorageGet(TOGGLE_STORAGE_KEY).then((stored) => {
+    if (revision !== loadRevision) return;
+    const value = stored[TOGGLE_STORAGE_KEY];
+    if (typeof value !== 'boolean') return;
+    setState(
+      {
+        mode: value ? 'auto' : 'manual',
+        manualRate: NORMAL_PLAYBACK_RATE,
+      },
+      { emitToggle: false, persistMode: false },
+    );
+  });
 
   return loadPromise;
 }

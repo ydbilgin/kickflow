@@ -2,6 +2,7 @@ import { logger } from '../shared/logger';
 import { getVideoElement, findControlBar, findPlayerWrapper } from '../shared/selectors';
 import type { Lifecycle } from '../shared/lifecycle';
 import { bindVideoElementListener } from './video-element';
+import { safeStorageGet, safeStorageSet } from '../shared/extension-context';
 
 // Kick migrated its player to Amazon IVS (confirmed live 2026-07-04: localStorage carries
 // `amazon_ivs_device_config*`, `kick:player_device_id`). The old approach — writing
@@ -136,13 +137,9 @@ async function applyWithRetries(isDisposed: () => boolean): Promise<void> {
 /** Preference is currently always "highest" — persisted for forward-compat with a future
  * settings UI, not read back to change behavior yet. */
 async function ensurePreferenceStored(): Promise<void> {
-  try {
-    const stored = await chrome.storage.local.get(PREFERENCE_STORAGE_KEY);
-    if (!(PREFERENCE_STORAGE_KEY in stored)) {
-      await chrome.storage.local.set({ [PREFERENCE_STORAGE_KEY]: 'highest' });
-    }
-  } catch (error) {
-    logger.debug('quality-lock: preference read/write failed (non-fatal)', error);
+  const stored = await safeStorageGet(PREFERENCE_STORAGE_KEY);
+  if (!(PREFERENCE_STORAGE_KEY in stored)) {
+    await safeStorageSet({ [PREFERENCE_STORAGE_KEY]: 'highest' });
   }
 }
 
