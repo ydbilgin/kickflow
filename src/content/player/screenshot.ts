@@ -62,7 +62,7 @@ function captureFrame(video: HTMLVideoElement): void {
 export function initScreenshot(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
-    logger.warn('screenshot: #video-player not found, skipping');
+    logger.debug('screenshot: #video-player not found, skipping');
     return;
   }
 

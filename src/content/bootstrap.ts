@@ -1,6 +1,7 @@
 import { logger, setDebugLogging } from './shared/logger';
 import { Lifecycle } from './shared/lifecycle';
-import { SELECTORS } from './shared/selectors';
+import { SELECTORS, getVideoElement } from './shared/selectors';
+import { whenElementPresent } from './shared/dom-observers';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
 import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from './chat/message-store';
@@ -21,8 +22,6 @@ import { initScreenshot } from './player/screenshot';
 
 const STYLE_ID = 'kickflow-styles';
 const OWN_LIST_ID = 'kickflow-message-list';
-const CHAT_CONTAINER_WAIT_MS = 15000;
-const VIDEO_ELEMENT_WAIT_MS = 15000;
 const PRESERVED_SWEEP_INTERVAL_MS = 60_000;
 const NAVIGATION_POLL_INTERVAL_MS = 400;
 
@@ -87,8 +86,12 @@ async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
         return { chatroomId, channelId };
       }
       const transient = response.status === 429 || response.status >= 500;
-      logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status, transient ? '(retrying)' : '(terminal)');
-      if (!transient) return null;
+      if (transient) {
+        logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status, '(retrying)');
+      } else {
+        logger.info('bootstrap: channel lookup failed for', slug, 'status', response.status, '(terminal)');
+        return null;
+      }
     } catch (error) {
       logger.warn('bootstrap: channel lookup threw', error, '(retrying)');
     }
@@ -98,32 +101,6 @@ async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
   }
   logger.warn('bootstrap: channel lookup exhausted retries for', slug, '- native chat stays visible');
   return null;
-}
-
-function waitForElement(selector: string, timeoutMs: number): Promise<HTMLElement | null> {
-  const existing = document.querySelector<HTMLElement>(selector);
-  if (existing) return Promise.resolve(existing);
-
-  return new Promise((resolve) => {
-    let settled = false;
-    let timer: number;
-
-    const observer = new MutationObserver(() => {
-      const el = document.querySelector<HTMLElement>(selector);
-      if (el) settle(el);
-    });
-
-    const settle = (value: HTMLElement | null): void => {
-      if (settled) return;
-      settled = true;
-      observer.disconnect();
-      window.clearTimeout(timer);
-      resolve(value);
-    };
-
-    observer.observe(document.body, { childList: true, subtree: true });
-    timer = window.setTimeout(() => settle(null), timeoutMs);
-  });
 }
 
 function ensureStyles(): void {
@@ -540,29 +517,33 @@ function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
 
 /** Fully independent of chat readiness — gated only on the video element, not on
  * #chatroom-messages (which can legitimately take a while, or never resolve). */
-async function initPlayerQolSession(lifecycle: Lifecycle): Promise<void> {
-  const video = await waitForElement(SELECTORS.videoPlayer, VIDEO_ELEMENT_WAIT_MS);
-  if (lifecycle.isDisposed) return;
-  if (!video) {
-    logger.warn('bootstrap: #video-player not found, player QoL module skipped');
-    return;
+function initPlayerQolSession(lifecycle: Lifecycle): void {
+  if (!getVideoElement()) {
+    logger.debug('bootstrap: #video-player not present yet, player QoL module waiting');
   }
 
-  initQualityLock(lifecycle);
-  initRewindHotkeys(lifecycle);
-  // Mount order determines native-bar left-to-right order (see native-bar.ts): rewind
-  // controls right after LIVE, then the catch-up indicator/toggle after that.
-  initRewindControls(lifecycle);
-  initLiveCatchup(lifecycle);
-  initSpeedControls(lifecycle);
-  initScreenshot(lifecycle);
+  whenElementPresent<HTMLVideoElement>(
+    SELECTORS.videoPlayer,
+    lifecycle,
+    () => {
+      initQualityLock(lifecycle);
+      initRewindHotkeys(lifecycle);
+      // Mount order determines native-bar left-to-right order (see native-bar.ts): rewind
+      // controls right after LIVE, then the catch-up indicator/toggle after that.
+      initRewindControls(lifecycle);
+      initLiveCatchup(lifecycle);
+      initSpeedControls(lifecycle);
+      initScreenshot(lifecycle);
+    },
+    { resolve: getVideoElement },
+  );
 }
 
 let currentLifecycle: Lifecycle | null = null;
 let currentSlug: string | null = null;
 let sessionToken = 0;
 
-async function startSession(slug: string): Promise<void> {
+function startSession(slug: string): void {
   const token = ++sessionToken;
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
@@ -574,19 +555,18 @@ async function startSession(slug: string): Promise<void> {
   ensureStyles();
 
   // Player QoL and chat integrity are started concurrently and never gate each other.
-  void initPlayerQolSession(lifecycle);
+  initPlayerQolSession(lifecycle);
 
-  const chatContainer = await waitForElement(SELECTORS.chatMessagesContainer, CHAT_CONTAINER_WAIT_MS);
-  if (token !== sessionToken || lifecycle.isDisposed) return;
-
-  if (!chatContainer) {
-    logger.warn('bootstrap:', SELECTORS.chatMessagesContainer, 'not found for', slug, '- chat integrity module skipped');
-    setStatus({ reason: 'chat paneli bulunamadı — native chat' });
-    return;
+  if (!document.querySelector(SELECTORS.chatMessagesContainer)) {
+    logger.debug('bootstrap:', SELECTORS.chatMessagesContainer, 'not present yet for', slug, '- chat integrity module waiting');
+    setStatus({ reason: 'chat paneli bekleniyor…' }); // popup parity while we observe for a late panel
   }
-  // chatContainer (checked above) is the gate that the chat panel exists; the native augmenter
-  // then observes #chatroom-messages and survives Kick replacing the inner list.
-  initChatIntegrity(slug, lifecycle);
+  whenElementPresent(SELECTORS.chatMessagesContainer, lifecycle, () => {
+    if (token !== sessionToken || lifecycle.isDisposed) return;
+    // chatContainer is the gate that the chat panel exists; the native augmenter then
+    // observes #chatroom-messages and survives Kick replacing the inner list.
+    initChatIntegrity(slug, lifecycle);
+  });
 }
 
 function stopSession(): void {

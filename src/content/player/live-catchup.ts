@@ -1,6 +1,7 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
+import { bindVideoElementListener } from './video-element';
 import {
   NORMAL_PLAYBACK_RATE,
   ensurePlayerStateLoaded,
@@ -71,7 +72,7 @@ function getLiveEdgeSeconds(video: HTMLVideoElement): number | null {
 export function initLiveCatchup(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
-    logger.warn('live-catchup: #video-player not found, skipping');
+    logger.debug('live-catchup: #video-player not found, skipping');
     return;
   }
 
@@ -98,10 +99,10 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     }
   };
 
-  const resetAutoPlaybackRate = (): void => {
+  const resetAutoPlaybackRate = (current = getVideoElement()): void => {
     catchingUp = false;
-    if (getPlayerState().mode === 'auto') {
-      setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
+    if (current && getPlayerState().mode === 'auto') {
+      setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
     }
   };
 
@@ -116,28 +117,32 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   };
 
   const goLive = (): void => {
-    const edge = getLiveEdgeSeconds(video);
+    const current = getVideoElement();
+    if (!current) return;
+    const edge = getLiveEdgeSeconds(current);
     if (edge === null) return;
     try {
-      video.currentTime = edge;
+      current.currentTime = edge;
       if (getPlayerState().mode === 'auto') {
-        resetAutoPlaybackRate();
+        resetAutoPlaybackRate(current);
       }
-      if (video.paused) void video.play().catch(() => undefined);
+      if (current.paused) void current.play().catch(() => undefined);
     } catch (error) {
       logger.warn('live-catchup: go-live failed', error);
     }
   };
 
-  const onTimeUpdate = (): void => {
+  const onTimeUpdate = (event: Event): void => {
+    const current = event.currentTarget;
+    if (!(current instanceof HTMLVideoElement)) return;
     const playerState = getPlayerState();
 
     if (playerState.mode === 'manual') {
       catchingUp = false;
       hideIndicator();
-      const liveEdge = getLiveEdgeSeconds(video);
+      const liveEdge = getLiveEdgeSeconds(current);
       if (liveEdge === null) return;
-      const behindBy = liveEdge - video.currentTime;
+      const behindBy = liveEdge - current.currentTime;
       const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
       const action = decideCatchup({
         mode: playerState.mode,
@@ -148,22 +153,22 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       });
       if (action.kind === 'manualDropToNormal') {
         setManualRate(NORMAL_PLAYBACK_RATE);
-        setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
+        setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
       }
       return;
     }
 
-    const liveEdge = getLiveEdgeSeconds(video);
+    const liveEdge = getLiveEdgeSeconds(current);
     if (liveEdge === null) {
-      if (catchingUp) resetAutoPlaybackRate();
+      if (catchingUp) resetAutoPlaybackRate(current);
       hideIndicator();
       return;
     }
 
-    const behindBy = liveEdge - video.currentTime;
+    const behindBy = liveEdge - current.currentTime;
     const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
     if (!plausible) {
-      if (catchingUp) resetAutoPlaybackRate();
+      if (catchingUp) resetAutoPlaybackRate(current);
       hideIndicator();
       return;
     }
@@ -184,15 +189,15 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
 
     if (action.kind === 'setRate' && action.rate === CATCHUP_PLAYBACK_RATE) {
       catchingUp = true;
-      setPlayerPlaybackRate(video, action.rate);
+      setPlayerPlaybackRate(current, action.rate);
       logger.debug('live-catchup: behind by', behindBy.toFixed(1), 's, speeding up');
     } else if (action.kind === 'setRate' && action.rate === NORMAL_PLAYBACK_RATE) {
-      resetAutoPlaybackRate();
+      resetAutoPlaybackRate(current);
       logger.debug('live-catchup: caught up, resetting playback rate');
     }
   };
 
-  lifecycle.addEventListener(video, 'timeupdate', onTimeUpdate);
+  bindVideoElementListener(lifecycle, 'timeupdate', onTimeUpdate);
   lifecycle.add(resetAutoPlaybackRate);
   lifecycle.add(subscribePlayerState(() => {
     updateToggleVisual();
@@ -223,14 +228,15 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     // nodes and their closures together, avoiding session-long listener accumulation.
     indicator.addEventListener('click', goLive);
     toggle.addEventListener('click', () => {
+      const current = getVideoElement();
       if (getPlayerState().mode === 'auto') {
         setManualRate(NORMAL_PLAYBACK_RATE);
-        setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
+        if (current) setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
         catchingUp = false;
         hideIndicator();
       } else {
         setAutoMode();
-        setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
+        if (current) setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
       }
       updateToggleVisual();
     });

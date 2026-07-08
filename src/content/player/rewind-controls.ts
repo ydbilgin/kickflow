@@ -98,7 +98,7 @@ const ICON_FORWARD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6
 export function initRewindControls(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
-    logger.warn('rewind-controls: #video-player not found, skipping');
+    logger.debug('rewind-controls: #video-player not found, skipping');
     return;
   }
 
@@ -136,9 +136,18 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     // (referenced by a disposer) until the whole session tears down, accumulating across
     // repeated re-renders. A plain listener is GC'd along with the button node itself the
     // moment it's removed (by Kick or by us on remount/teardown) — nothing accumulates.
-    rewind.addEventListener('click', () => seekBy(video, -STEP_SECONDS));
-    forward.addEventListener('click', () => seekBy(video, STEP_SECONDS));
-    live.addEventListener('click', () => goLive(video));
+    rewind.addEventListener('click', () => {
+      const current = getVideoElement();
+      if (current) seekBy(current, -STEP_SECONDS);
+    });
+    forward.addEventListener('click', () => {
+      const current = getVideoElement();
+      if (current) seekBy(current, STEP_SECONDS);
+    });
+    live.addEventListener('click', () => {
+      const current = getVideoElement();
+      if (current) goLive(current);
+    });
 
     seekPill.append(rewind, forward);
     group.append(seekPill, live);

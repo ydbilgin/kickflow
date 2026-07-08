@@ -1,6 +1,7 @@
 import { logger } from '../shared/logger';
 import { findPlayerWrapper, getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
+import { bindVideoElementListener, observeVideoElement } from './video-element';
 import {
   NORMAL_PLAYBACK_RATE,
   ensurePlayerStateLoaded,
@@ -42,7 +43,7 @@ function menuHost(): Element | null {
 export function initSpeedControls(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
-    logger.warn('speed-controls: #video-player not found, skipping');
+    logger.debug('speed-controls: #video-player not found, skipping');
     return;
   }
 
@@ -84,7 +85,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
       return;
     }
 
-    const observedRate = video.playbackRate;
+    const observedRate = getVideoElement()?.playbackRate ?? NORMAL_PLAYBACK_RATE;
     const label =
       Math.abs(observedRate - NORMAL_PLAYBACK_RATE) > 0.05 ? `⚡${displayObservedRate(observedRate)}` : 'OTO';
     buttonEl.textContent = `${label} ▾`;
@@ -121,13 +122,15 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
 
   const selectAuto = (): void => {
     setAutoMode();
-    setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
+    const current = getVideoElement();
+    if (current) setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
     updateButtonVisual();
   };
 
   const selectManualRate = (rate: number): void => {
     setManualRate(rate);
-    setPlayerPlaybackRate(video, rate);
+    const current = getVideoElement();
+    if (current) setPlayerPlaybackRate(current, rate);
     updateButtonVisual();
   };
 
@@ -206,8 +209,10 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
     menuDisposers.push(() => window.clearInterval(disconnectTimer));
   };
 
-  const onWaiting = (): void => {
-    if (video.playbackRate < STARVATION_RATE_THRESHOLD) {
+  const onWaiting = (event: Event): void => {
+    const current = event.currentTarget;
+    if (!(current instanceof HTMLVideoElement)) return;
+    if (current.playbackRate < STARVATION_RATE_THRESHOLD) {
       waitingEvents = [];
       return;
     }
@@ -219,22 +224,32 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
     if (waitingEvents.length < STARVATION_WAITING_COUNT) return;
     waitingEvents = [];
     setManualRate(STARVATION_FALLBACK_RATE);
-    setPlayerPlaybackRate(video, STARVATION_FALLBACK_RATE);
+    setPlayerPlaybackRate(current, STARVATION_FALLBACK_RATE);
     showStarvationWarning();
-    logger.warn('speed-controls: high-rate playback starved, reduced to', STARVATION_FALLBACK_RATE);
+    logger.debug('speed-controls: high-rate playback starved, reduced to', STARVATION_FALLBACK_RATE);
   };
 
-  lifecycle.addEventListener(video, 'waiting', onWaiting);
-  lifecycle.addEventListener(video, 'ratechange', () => {
-    if (video.playbackRate < STARVATION_RATE_THRESHOLD) waitingEvents = [];
+  bindVideoElementListener(lifecycle, 'waiting', onWaiting);
+  bindVideoElementListener(lifecycle, 'ratechange', (event) => {
+    const current = event.currentTarget;
+    if (!(current instanceof HTMLVideoElement)) return;
+    if (current.playbackRate < STARVATION_RATE_THRESHOLD) waitingEvents = [];
+    updateButtonVisual();
+  });
+  observeVideoElement(lifecycle, (current) => {
+    waitingEvents = [];
+    if (current && getPlayerState().mode === 'manual') {
+      setPlayerPlaybackRate(current, getPlayerState().manualRate);
+    }
     updateButtonVisual();
   });
   lifecycle.add(subscribePlayerState((state, previous) => {
+    const current = getVideoElement();
     updateButtonVisual();
-    if (state.mode === 'manual') {
-      setPlayerPlaybackRate(video, state.manualRate);
-    } else if (previous.mode === 'manual') {
-      setPlayerPlaybackRate(video, NORMAL_PLAYBACK_RATE);
+    if (current && state.mode === 'manual') {
+      setPlayerPlaybackRate(current, state.manualRate);
+    } else if (current && previous.mode === 'manual') {
+      setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
     }
     if (menuEl) closeMenu();
   }));
@@ -268,8 +283,9 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
 
   void ensurePlayerStateLoaded().then(() => {
     const playerState = getPlayerState();
-    if (playerState.mode === 'manual') {
-      setPlayerPlaybackRate(video, playerState.manualRate);
+    const current = getVideoElement();
+    if (current && playerState.mode === 'manual') {
+      setPlayerPlaybackRate(current, playerState.manualRate);
     }
     updateButtonVisual();
   });

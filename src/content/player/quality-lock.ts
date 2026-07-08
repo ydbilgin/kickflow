@@ -1,6 +1,7 @@
 import { logger } from '../shared/logger';
 import { getVideoElement, findControlBar, findPlayerWrapper } from '../shared/selectors';
 import type { Lifecycle } from '../shared/lifecycle';
+import { bindVideoElementListener } from './video-element';
 
 // Kick migrated its player to Amazon IVS (confirmed live 2026-07-04: localStorage carries
 // `amazon_ivs_device_config*`, `kick:player_device_id`). The old approach — writing
@@ -141,7 +142,7 @@ async function ensurePreferenceStored(): Promise<void> {
       await chrome.storage.local.set({ [PREFERENCE_STORAGE_KEY]: 'highest' });
     }
   } catch (error) {
-    logger.warn('quality-lock: preference read/write failed (non-fatal)', error);
+    logger.debug('quality-lock: preference read/write failed (non-fatal)', error);
   }
 }
 
@@ -152,7 +153,7 @@ async function ensurePreferenceStored(): Promise<void> {
 export function initQualityLock(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
-    logger.warn('quality-lock: #video-player not found, skipping');
+    logger.debug('quality-lock: #video-player not found, skipping');
     return;
   }
 
@@ -169,5 +170,5 @@ export function initQualityLock(lifecycle: Lifecycle): void {
 
   const initialTimer = window.setTimeout(trigger, APPLY_DELAY_MS);
   lifecycle.add(() => window.clearTimeout(initialTimer));
-  lifecycle.addEventListener(video, 'loadstart', trigger);
+  bindVideoElementListener(lifecycle, 'loadstart', trigger);
 }

@@ -209,7 +209,7 @@ export class PusherClient {
     });
 
     socket.addEventListener('error', (event) => {
-      logger.warn('pusher-client: socket error', event);
+      logger.debug('pusher-client: socket error', event);
     });
   }
 
@@ -254,7 +254,7 @@ export class PusherClient {
       // per-IP connection/rate limit when many tabs/clients hit the same public app — and the
       // reconnect/heartbeat logic recovers; a single normal connection does not see these.
       const data = this.parseInnerData(frame.data);
-      logger.warn('pusher-client: server error frame', typeof data === 'string' ? data : JSON.stringify(data));
+      logger.debug('pusher-client: server error frame', typeof data === 'string' ? data : JSON.stringify(data));
       return;
     }
     if (eventName.startsWith('pusher_internal:') || eventName.startsWith('pusher:')) {
@@ -315,7 +315,7 @@ export class PusherClient {
     try {
       return JSON.parse(data);
     } catch (error) {
-      logger.warn('pusher-client: failed to parse inner data', error);
+      logger.debug('pusher-client: failed to parse inner data', error);
       return null;
     }
   }

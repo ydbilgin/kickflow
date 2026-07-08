@@ -44,7 +44,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function initRewindHotkeys(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
-    logger.warn('rewind-hotkeys: #video-player not found, skipping');
+    logger.debug('rewind-hotkeys: #video-player not found, skipping');
     return;
   }
 
@@ -54,9 +54,11 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
     if (keyboardEvent.key !== 'ArrowLeft' && keyboardEvent.key !== 'ArrowRight') return;
 
     const direction = keyboardEvent.key === 'ArrowLeft' ? -1 : 1;
+    const current = getVideoElement();
+    if (!current) return;
     try {
-      const target = clampSeekTarget(video, direction * SEEK_STEP_SECONDS);
-      video.currentTime = target;
+      const target = clampSeekTarget(current, direction * SEEK_STEP_SECONDS);
+      current.currentTime = target;
       keyboardEvent.preventDefault();
       logger.debug('rewind-hotkeys: seeked to', target);
     } catch (error) {
