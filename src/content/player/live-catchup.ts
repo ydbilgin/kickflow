@@ -23,6 +23,7 @@ const CAUGHT_UP_THRESHOLD_SECONDS = 1.5;
 // Behind-live sanity bound, not a product cap. Kick's HLS state can report bogus media
 // boundaries during rebuffering; never drive catch-up behavior from those readings.
 const MAX_PLAUSIBLE_BEHIND_SECONDS = 12 * 60 * 60;
+const LIVE_DURATION_SENTINEL_SECONDS = 2 ** 30;
 
 export type CatchupAction =
   | { kind: 'none' }
@@ -59,6 +60,13 @@ export function decideCatchup(input: {
 
 function getLiveEdgeSeconds(video: HTMLVideoElement): number | null {
   return liveEdge(video);
+}
+
+/** Kick's live HLS player reports an infinite duration or a large finite sentinel, while
+ * VODs and clips expose their actual finite duration. Buffered ranges alone therefore
+ * cannot distinguish a DVR/live edge from ordinary VOD buffering. */
+export function isLiveStream(video: HTMLVideoElement): boolean {
+  return video.duration === Infinity || video.duration >= LIVE_DURATION_SENTINEL_SECONDS;
 }
 
 /** Event-driven off the init-time video element. The live edge is the furthest buffered
@@ -130,6 +138,12 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     const current = event.currentTarget;
     if (!(current instanceof HTMLVideoElement)) return;
     const playerState = getPlayerState();
+
+    if (!isLiveStream(current)) {
+      if (catchingUp) resetAutoPlaybackRate(current);
+      hideIndicator();
+      return;
+    }
 
     if (playerState.mode === 'manual') {
       catchingUp = false;

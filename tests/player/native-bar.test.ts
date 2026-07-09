@@ -17,6 +17,19 @@ function setupPlayerBar(): HTMLElement {
   return bar;
 }
 
+function setupReplacementPlayerBar(): HTMLElement {
+  const wrapper = document.createElement('div');
+  const video = document.createElement('video');
+  video.id = 'video-player';
+  const bar = document.createElement('div');
+  bar.className = 'z-controls bottom-0';
+  const live = document.createElement('button');
+  live.textContent = 'LIVE';
+  bar.append(live);
+  wrapper.append(video, bar);
+  return wrapper;
+}
+
 async function flushMountDebounce(): Promise<void> {
   await Promise.resolve();
   vi.advanceTimersByTime(150);
@@ -58,6 +71,23 @@ describe('native-bar mounting', () => {
 
     expect(build).toHaveBeenCalledTimes(2);
     expect(bar.querySelectorAll('#kickflow-test-controls')).toHaveLength(1);
+
+    lifecycle.dispose();
+  });
+
+  it('rebinds to a replacement player wrapper and mounts its control there', async () => {
+    vi.useFakeTimers();
+    setupPlayerBar();
+    const lifecycle = new Lifecycle();
+    const build = vi.fn(() => document.createElement('span'));
+
+    mountIntoControlBar(lifecycle, 'kickflow-test-controls', build);
+    const replacement = setupReplacementPlayerBar();
+    document.body.firstElementChild?.replaceWith(replacement);
+    await flushMountDebounce();
+
+    expect(build).toHaveBeenCalledTimes(2);
+    expect(replacement.querySelectorAll('#kickflow-test-controls')).toHaveLength(1);
 
     lifecycle.dispose();
   });

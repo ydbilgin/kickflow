@@ -35,8 +35,8 @@ function findInsertionAnchor(): HTMLElement | null {
  * Never mounts a second copy — `document.getElementById(id)` is checked before every
  * (re-)mount, which is the exact guard MoKick's shipped "two buttons appear" bug lacked.
  *
- * The persistence observer is scoped to the VIDEO'S PARENT WRAPPER (findPlayerWrapper),
- * not the control bar node itself — deliberately:
+ * The persistence observer is scoped to the VIDEO'S CURRENT PARENT WRAPPER
+ * (findPlayerWrapper), not the control bar node itself — deliberately:
  *  - The wrapper exists as soon as `#video-player` does, so if the bar hasn't rendered
  *    yet on the first `ensure()` attempt, the observer is already watching and will pick
  *    up the bar's later insertion (no permanent give-up on first miss).
@@ -46,7 +46,11 @@ function findInsertionAnchor(): HTMLElement | null {
  *    never fire again. Observing one level up, with `subtree: true`, catches both "bar
  *    gained/lost children" and "bar node itself replaced" the same way.
  *
- * Debounced (~150ms) so a burst of unrelated bar mutations only triggers one re-check.
+ * A lightweight document observer re-resolves and rebinds that wrapper observer whenever
+ * Kick replaces the whole player wrapper (including its `#video-player` child). Without
+ * it, the wrapper observer would remain attached to the detached old node forever.
+ *
+ * Debounced (~150ms) so a burst of related mutations only triggers one re-check.
  * Only gives up via Lifecycle teardown (channel change) — never permanently on a single
  * missed attempt.
  *
@@ -69,23 +73,38 @@ export function mountIntoControlBar(lifecycle: Lifecycle, id: string, build: () 
     return element;
   };
 
-  const wrapper = findPlayerWrapper();
-  if (!wrapper) {
+  let observedWrapper = findPlayerWrapper();
+  if (!observedWrapper) {
     logger.warn('native-bar: #video-player has no parent to observe, cannot mount', id);
     return null;
   }
 
   let debounceTimer: number | null = null;
-  const observer = new MutationObserver(() => {
+  const scheduleEnsure = (): void => {
     if (debounceTimer !== null) window.clearTimeout(debounceTimer);
     debounceTimer = window.setTimeout(() => {
       debounceTimer = null;
       ensure();
     }, OBSERVER_DEBOUNCE_MS);
+  };
+  const observer = new MutationObserver(() => {
+    scheduleEnsure();
   });
-  observer.observe(wrapper, { childList: true, subtree: true });
+  observer.observe(observedWrapper, { childList: true, subtree: true });
+
+  const wrapperRebindObserver = new MutationObserver(() => {
+    const currentWrapper = findPlayerWrapper();
+    if (!currentWrapper || currentWrapper === observedWrapper) return;
+
+    observer.disconnect();
+    observedWrapper = currentWrapper;
+    observer.observe(observedWrapper, { childList: true, subtree: true });
+    scheduleEnsure();
+  });
+  wrapperRebindObserver.observe(document.body, { childList: true, subtree: true });
   lifecycle.add(() => {
     observer.disconnect();
+    wrapperRebindObserver.disconnect();
     if (debounceTimer !== null) window.clearTimeout(debounceTimer);
   });
 
