@@ -17,29 +17,52 @@ function saneBoundary(value: number): number | null {
   return Number.isFinite(value) && value >= 0 && value <= MAX_REASONABLE_MEDIA_SECONDS ? value : null;
 }
 
+interface MediaRange {
+  start: number;
+  end: number;
+}
+
+function saneRanges(ranges: TimeRanges): MediaRange[] {
+  const result: MediaRange[] = [];
+  for (let index = 0; index < ranges.length; index++) {
+    const start = saneBoundary(ranges.start(index));
+    const end = saneBoundary(ranges.end(index));
+    if (start === null || end === null || end < start) continue;
+    result.push({ start, end });
+  }
+  return result;
+}
+
+function firstFiniteStartWithFiniteEnd(ranges: TimeRanges): number | null {
+  for (let index = 0; index < ranges.length; index++) {
+    const start = saneBoundary(ranges.start(index));
+    const end = saneBoundary(ranges.end(index));
+    if (start !== null && end !== null) return start;
+  }
+  return null;
+}
+
 /** Live edge = the furthest BUFFERED (actually playable) position — mirrors Mo'Kick's player,
  * which clamps forward/"go live" to `buffered.end`, never `seekable.end`. Always a sane finite
  * value near currentTime, so it is immune to the bogus `seekable.end` sentinel. */
 export function liveEdge(video: HTMLVideoElement): number | null {
-  const buffered = video.buffered;
-  if (buffered.length === 0) return null;
-  return saneBoundary(buffered.end(buffered.length - 1));
+  const ranges = saneRanges(video.buffered);
+  return ranges.length > 0 ? ranges[ranges.length - 1].end : null;
 }
 
 /** How far BACK a seek may go. Kick reports `seekable.start(0) === 0` even when that is
  * only a bogus sentinel below the playable buffer; `buffered.start(0)` is the real floor
  * that keeps rewind targets inside media the player can actually decode. */
 export function seekFloor(video: HTMLVideoElement): number {
-  const buffered = video.buffered;
-  if (buffered.length > 0) {
-    const start = saneBoundary(buffered.start(0));
-    if (start !== null) return start;
-  }
-  const seekable = video.seekable;
-  if (seekable.length > 0) {
-    const start = saneBoundary(seekable.start(0));
-    if (start !== null) return start;
-  }
+  const bufferedStart = saneRanges(video.buffered)[0]?.start;
+  if (bufferedStart !== undefined) return bufferedStart;
+
+  const invertedBufferedStart = firstFiniteStartWithFiniteEnd(video.buffered);
+  if (invertedBufferedStart !== null) return invertedBufferedStart;
+
+  const seekableStart = saneRanges(video.seekable)[0]?.start;
+  if (seekableStart !== undefined) return seekableStart;
+
   return 0;
 }
 
@@ -48,6 +71,27 @@ export function seekFloor(video: HTMLVideoElement): number {
  * bogus `seekable` sentinels so seeks can't catapult outside media the player can decode. */
 export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
   const target = video.currentTime + delta;
+  const bufferedRanges = saneRanges(video.buffered);
+  if (bufferedRanges.length > 0) {
+    for (const range of bufferedRanges) {
+      if (target >= range.start && target <= range.end) return target;
+    }
+
+    const first = bufferedRanges[0];
+    const last = bufferedRanges[bufferedRanges.length - 1];
+    if (target < first.start) return first.start;
+    if (target > last.end) return last.end;
+
+    for (let index = 1; index < bufferedRanges.length; index++) {
+      const previous = bufferedRanges[index - 1];
+      const next = bufferedRanges[index];
+      if (target <= previous.end || target >= next.start) continue;
+      if (delta < 0) return previous.end;
+      if (delta > 0) return next.start;
+      return target - previous.end <= next.start - target ? previous.end : next.start;
+    }
+  }
+
   const floor = seekFloor(video);
   const edge = liveEdge(video) ?? target;
   const ceil = Math.max(floor, edge); // guard against inversion if edge somehow < floor
@@ -75,12 +119,27 @@ function goLive(video: HTMLVideoElement): void {
   }
 }
 
-// Stroke-based double-chevron « / » glyphs (styled via CSS: fill:none; stroke:currentColor) —
-// a clean "<<" / ">>" look, a native-looking alternative to the multicolor ⏪/⏩ emoji which
-// render inconsistently across platforms. Static, trusted markup (no interpolation) → innerHTML
-// is safe here.
-const ICON_REWIND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6l-6 6 6 6"/><path d="M19 6l-6 6 6 6"/></svg>';
-const ICON_FORWARD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6l6 6-6 6"/><path d="M5 6l6 6-6 6"/></svg>';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const REWIND_PATHS = ['M13 6l-6 6 6 6', 'M19 6l-6 6 6 6'];
+const FORWARD_PATHS = ['M11 6l6 6-6 6', 'M5 6l6 6-6 6'];
+
+function createChevronIcon(paths: string[]): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const pathData of paths) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', pathData);
+    svg.append(path);
+  }
+  return svg;
+}
+
+function createStepLabel(): HTMLSpanElement {
+  const label = document.createElement('span');
+  label.textContent = String(STEP_SECONDS);
+  return label;
+}
 
 /** Injected inline into Kick's native control bar, right after the LIVE button
  * (MoKick-style) — deliberately NOT a floating overlay. A floating overlay was tried
@@ -112,7 +171,7 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     const rewind = document.createElement('button');
     rewind.type = 'button';
     rewind.className = 'kickflow-player-btn kickflow-seek-pill__btn';
-    rewind.innerHTML = `${ICON_REWIND}<span>${STEP_SECONDS}</span>`;
+    rewind.append(createChevronIcon(REWIND_PATHS), createStepLabel());
     rewind.title = `${STEP_SECONDS} sn geri (←)`;
     rewind.setAttribute('aria-label', `${STEP_SECONDS} saniye geri sar`);
 
@@ -126,7 +185,7 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     const forward = document.createElement('button');
     forward.type = 'button';
     forward.className = 'kickflow-player-btn kickflow-seek-pill__btn';
-    forward.innerHTML = `<span>${STEP_SECONDS}</span>${ICON_FORWARD}`;
+    forward.append(createStepLabel(), createChevronIcon(FORWARD_PATHS));
     forward.title = `${STEP_SECONDS} sn ileri (→)`;
     forward.setAttribute('aria-label', `${STEP_SECONDS} saniye ileri sar`);
 

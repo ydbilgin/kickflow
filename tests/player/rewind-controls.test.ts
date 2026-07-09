@@ -7,6 +7,7 @@ const SENTINEL = 2 ** 30;
 describe('rewind-controls media boundaries', () => {
   it('uses the last sane buffered end as the live edge', () => {
     expect(liveEdge(fakeVideo({ buffered: [[6, 44]] }))).toBe(44);
+    expect(liveEdge(fakeVideo({ buffered: [[6, 44], [45, SENTINEL]] }))).toBe(44);
     expect(liveEdge(fakeVideo({ buffered: [] }))).toBeNull();
     expect(liveEdge(fakeVideo({ buffered: [[6, SENTINEL]] }))).toBeNull();
     expect(liveEdge(fakeVideo({ buffered: [[6, Infinity]] }))).toBeNull();
@@ -19,6 +20,7 @@ describe('rewind-controls media boundaries', () => {
     });
 
     expect(seekFloor(video)).toBe(6);
+    expect(seekFloor(fakeVideo({ buffered: [[0, SENTINEL], [20, 44]], seekable: [[0, SENTINEL]] }))).toBe(20);
   });
 
   it('falls back to seekable start and then zero for seek floor', () => {
@@ -35,6 +37,18 @@ describe('rewind-controls media boundaries', () => {
 
     expect(clampSeekTarget(video, -30)).toBe(6);
     expect(clampSeekTarget(video, 100)).toBe(44);
+  });
+
+  it('snaps directional seeks out of gaps between buffered ranges', () => {
+    expect(clampSeekTarget(fakeVideo({
+      buffered: [[0, 10], [20, 30]],
+      currentTime: 21,
+    }), -10)).toBe(10);
+
+    expect(clampSeekTarget(fakeVideo({
+      buffered: [[0, 10], [20, 30]],
+      currentTime: 9,
+    }), 10)).toBe(20);
   });
 
   it('guards against inverted floor/live-edge bounds', () => {

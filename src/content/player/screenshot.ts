@@ -5,10 +5,24 @@ import type { Lifecycle } from '../shared/lifecycle';
 
 const CONTROLS_ID = 'kickflow-screenshot-controls';
 
-// Stroke camera glyph (styled via CSS: fill:none; stroke:currentColor), matching the rewind
-// chevrons. Static, trusted markup — no interpolation, so innerHTML is safe here.
-const ICON_CAMERA =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a2 2 0 0 1 2-2h2l1.2-1.7a1 1 0 0 1 .8-.4h6a1 1 0 0 1 .8.4L17 7h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.2"/></svg>';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function createCameraIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+
+  const body = document.createElementNS(SVG_NS, 'path');
+  body.setAttribute('d', 'M3 9a2 2 0 0 1 2-2h2l1.2-1.7a1 1 0 0 1 .8-.4h6a1 1 0 0 1 .8.4L17 7h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
+
+  const lens = document.createElementNS(SVG_NS, 'circle');
+  lens.setAttribute('cx', '12');
+  lens.setAttribute('cy', '13');
+  lens.setAttribute('r', '3.2');
+
+  svg.append(body, lens);
+  return svg;
+}
 
 /** channel slug from the URL, sanitised for a filename (kick.com/<slug>). */
 function channelSlug(): string {
@@ -73,7 +87,7 @@ export function initScreenshot(lifecycle: Lifecycle): void {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'kickflow-player-btn';
-    button.innerHTML = ICON_CAMERA;
+    button.append(createCameraIcon());
     button.title = 'Ekran görüntüsü al (kareyi PNG indir)';
     button.setAttribute('aria-label', 'Ekran görüntüsü al');
 

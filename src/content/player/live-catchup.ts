@@ -2,6 +2,7 @@ import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
 import { bindVideoElementListener } from './video-element';
+import { liveEdge } from './rewind-controls';
 import {
   NORMAL_PLAYBACK_RATE,
   ensurePlayerStateLoaded,
@@ -22,7 +23,6 @@ const CAUGHT_UP_THRESHOLD_SECONDS = 1.5;
 // Behind-live sanity bound, not a product cap. Kick's HLS state can report bogus media
 // boundaries during rebuffering; never drive catch-up behavior from those readings.
 const MAX_PLAUSIBLE_BEHIND_SECONDS = 12 * 60 * 60;
-const MAX_REASONABLE_MEDIA_SECONDS = 24 * 60 * 60;
 
 export type CatchupAction =
   | { kind: 'none' }
@@ -57,14 +57,8 @@ export function decideCatchup(input: {
   return { kind: 'none' };
 }
 
-function saneBoundary(value: number): number | null {
-  return Number.isFinite(value) && value >= 0 && value <= MAX_REASONABLE_MEDIA_SECONDS ? value : null;
-}
-
 function getLiveEdgeSeconds(video: HTMLVideoElement): number | null {
-  const buffered = video.buffered;
-  if (buffered.length === 0) return null;
-  return saneBoundary(buffered.end(buffered.length - 1));
+  return liveEdge(video);
 }
 
 /** Event-driven off the init-time video element. The live edge is the furthest buffered
