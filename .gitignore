@@ -15,3 +15,7 @@ server/.env
 *.sqlite
 *.sqlite3
 *.db
+
+# Playwright test output — throwaway Chromium profiles (contain real Cookies/Login Data/Web
+# Data SQLite files), screenshots, harness bundles. Never commit browser profile state.
+output/
