@@ -202,6 +202,8 @@ function ensureStyles(): void {
     .kickflow-user-card__title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .kickflow-user-card__nameRow { display: flex; align-items: center; gap: 5px; min-width: 0; }
     .kickflow-user-card__nameRow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kickflow-user-card__name { cursor: pointer; }
+    .kickflow-user-card__name:hover { text-decoration: underline; }
     .kickflow-user-card__verified { color: #53fc18; font-size: 11px; flex: none; }
     .kickflow-user-card__role { color: #53fc18; font-size: 10px; font-weight: 800; text-transform: uppercase; }
     .kickflow-user-card__close {

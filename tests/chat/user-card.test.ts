@@ -64,6 +64,36 @@ describe('user-card', () => {
     expect(card?.textContent?.toLowerCase()).not.toContain('level');
   });
 
+  it('middle-clicking the card title opens the profile in a new tab (autoscroll-guarded)', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.href).toBe('https://kick.com/alice');
+      expect(this.target).toBe('_blank');
+      expect(this.isConnected).toBe(false);
+    });
+    const card = buildUserCardElement({
+      username: 'Alice', slug: 'alice', profilePic: null, role: null, verified: false, bio: null,
+      followers: null, createdAt: '-', followingSince: '-', subscribedFor: '-', badges: [],
+    });
+    const name = card.querySelector<HTMLElement>('.kickflow-user-card__name');
+    expect(name).not.toBeNull();
+
+    // Middle-press default (Chrome autoscroll) must be cancelled or auxclick never fires live.
+    const middleDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 1 });
+    name?.dispatchEvent(middleDown);
+    expect(middleDown.defaultPrevented).toBe(true);
+
+    name?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+    expect(click).toHaveBeenCalledOnce();
+
+    // Plain left-click must stay free (the header is the drag handle) — no tab, no card.
+    name?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+    expect(click).toHaveBeenCalledOnce();
+
+    // Ctrl-left-click is the other new-tab gesture.
+    name?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, ctrlKey: true }));
+    expect(click).toHaveBeenCalledTimes(2);
+  });
+
   it('opens the card channel link through a detached new-tab anchor, not a popup window', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       expect(this.href).toBe('https://kick.com/alice');

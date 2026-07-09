@@ -1,7 +1,7 @@
 import { appendBadges } from './message-view';
 import { mergeIdentityBadges } from './message-store';
 import { makeDraggable } from '../shared/draggable';
-import { openInNewTab } from '../shared/new-tab';
+import { openInNewTab, wireNewTabGestures } from '../shared/new-tab';
 import type { ChatBadge } from './message-store';
 
 const SAFE_SLUG_RE = /^[a-zA-Z0-9_-]+$/;
@@ -233,7 +233,14 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   const nameRow = document.createElement('div');
   nameRow.className = 'kickflow-user-card__nameRow';
   const name = document.createElement('strong');
+  name.className = 'kickflow-user-card__name';
   name.textContent = model.username;
+  // Middle/ctrl-click on the card's own title opens the profile in a new tab (owner ask,
+  // 2026-07-10). Plain left-click stays free: the header doubles as the drag handle.
+  if (SAFE_SLUG_RE.test(model.slug)) {
+    name.title = `kick.com/${model.slug} — orta tıkla yeni sekmede aç`;
+    wireNewTabGestures(name, `https://kick.com/${model.slug}`);
+  }
   nameRow.appendChild(name);
   if (model.verified) {
     const verified = document.createElement('span');
