@@ -1,7 +1,24 @@
 # KickFlow — CURRENT STATUS
 
 > Bu dosya = projenin anlık durumu. Owner "status oku" derse BU dosya okunur.
-> Son güncelleme: 2026-07-09
+> Son güncelleme: 2026-07-10
+
+## 🟢 2026-07-10 (13) — PLAYER BUTONLARI YENİDEN YERLEŞİM: "tek kapsül" (Claude implement, Opus audit SHIP + MINOR fixlendi, HENÜZ COMMIT YOK — owner onayı bekleniyor)
+Owner "butonlar daha güzel yerleşsin" dedi; 3 seçenek sunuldu (tek kapsül / sol-sağ ayrımı / hover-⋯), owner **A: tek kapsül**'ü seçti. Sorunlar: karışık yükseklikler (32px vs 26px), "OTO" 3 yerde (toggle + hız butonu + hız menüsü), 3 ayrı "canlıya dön" yüzeyi (Kick LIVE + CANLI + tıklanabilir YETİŞİLİYOR), gösterge belirince sağdaki butonların kayması, ~420px genişlik.
+- **Değişiklik:** (1) `rewind-controls.ts`: CANLI+goLive kaldırıldı, grup sadece ⏪10|10⏩ pill + `--lead` separator sınıfı. (2) `live-catchup.ts`: YETİŞİLİYOR göstergesi + OTO toggle SİLİNDİ → tek dinamik **CANLI** butonu (canlıdayken kırmızı-nokta sakin pill; geride `CANLI -Xsn` + amber `--behind`; tık=canlıya). OTO artık sadece hız menüsünden (menüde '⚡ OTO' zaten vardı). Behind-göstergesi artık MANUEL modda da görünür (bilinçli — "ne kadar gerideyim" catch-up'tan bağımsız bilgi). (3) `bootstrap.ts` CSS: hepsi 32px/999px-radius/aynı bg; `--live` sabit `min-width:112px` → state değişiminde komşu butonlar KAYMAZ; indicator/toggle CSS'i silindi. (4) `speed-controls.ts`: ölü grup sınıfı temizliği.
+- **Test:** `npx vitest run` 148/148 (3 yeni birleşik-buton regresyon testi: tek buton mount + amber/-Xsn in-place geçiş + tık→buffered.end), `tsc --noEmit` temiz, `npm run build` temiz.
+- **Görsel doğrulama (memory kuralı):** CSS'i bootstrap.ts'ten CANLI çekilen statik harness + Playwright screenshot, 3 durum (canlı/geride/manuel+geride) GÖZLE bakıldı — yükseklikler uniform, amber okunaklı, kayma yok: `output/playwright/player-cluster-redesign.png`. (Canlı kick.com testi WAF yüzünden yine yapılamıyor — owner reload+canlı teyit edecek.)
+- **Review:** cx dispatch DENENDİ ama tüm profiller kota-bloklu çıktı (`FAILOVER: no further usable profile`) → hard-rule fallback'i: **auditor-opus** (read-only, aynı brief) koştu. **Verdict: SHIP** — brief'in 6 checklist maddesinin 6'sı da adversarially doğrulandı (catch-up davranış paritesi, closure lifecycle, CSS specificity, test kalitesi). 1 MINOR: 100sn+ geride `-100sn` etiketi 112px sabit genişliği taşırıp komşu butonları itebilir → **fixlendi**: >99sn gerilik dakikaya çevrilir (`CANLI -5dk`), regresyon testi eklendi. 2 INFO (aksiyonsuz): VOD'da CANLI mount'u eski davranışla parite; import temizliği doğru.
+- **Final test:** `npx vitest run` 149/149, `tsc` + `npm run build` temiz. (Bir tam-suite koşusunda bilinen ms-sınırı flake'i — message-store TTL, round 11'de belgeli — bir kez kırıldı, yeniden koşuda tüm suite yeşil.)
+- **Sıradaki:** owner canlıda görsel/fonksiyonel teyit (reload → Kick F5) + commit onayı.
+
+## 🟢 2026-07-09 (12) — REWIND LİMİTİ ÇÖZÜMLENDİ: FİZİKSEL LİMİT (gerçek Kick DVR verisi tarayıcısız ölçüldü — KOD DEĞİŞMEDİ, owner kararı bekleyen seçenekler var)
+Owner: "yayına girdiğimde maksimum 1 dakika geriye alabiliyorum." Round 8'in beklediği canlı DVR verisi **tarayıcısız** elde edildi: curl WAF'tan geçiyor (round 7 kanıtı) + IVS playlist CDN'i (`live-video.net`) zaten Kick WAF'ının arkasında DEĞİL. `kick.com/api/v2/channels/{slug}` → `playback_url` → IVS master+media m3u8 doğrudan çekildi (canlı kanal: amouranth).
+- **Ölçülen gerçek (ground truth):** Kick/IVS media playlist = **~28 saniyelik KAYAN pencere** (14 segment × 2sn; `EXT-X-MEDIA-SEQUENCE` 15sn'de 8 ilerliyor, pencere uzunluğu sabit) — **TÜM kalitelerde aynı** (1080p→160p, 5 varyantın 5'i de 14 segment/28.0sn). DVR tag'i yok, daha geniş pencere hiçbir yerde yok. Sunucu sadece son ~28sn'yi servis ediyor; daha eskisi HİÇBİR player tarafından çekilemez.
+- **Owner'ın "max 1 dakika"sının açıklaması:** geri sarılabilir alan = client'ın MSE back-buffer'ında fiilen tuttuğu veri. Girişte ≈0 (player canlı kenardan başlar; geriye fetch etse bile sunucuda en fazla ~28sn var). İzledikçe büyür; IVS player/tarayıcı eski back-buffer'ı ~60sn civarında evict edince tavan yapar → owner'ın gördüğü ~1dk. **Yani `seekFloor()` = `buffered.start(0)` zaten alınabilecek en geniş güvenli taban — mevcut mimaride hiçbir kod değişikliği rewind'i uzatamaz.** Kick'te izleyici-DVR'ı yok; "VOD gibi geri sar" fiziksel olarak imkânsız. Bu, round 8'deki açık maddeyi KAPATIR (bug değil, limit).
+- **Rewind'i GERÇEKTEN uzatmanın yolları (owner kararı, hiçbiri uygulanmadı):** (a) limiti kabul et; istenirse UI'da "geri sarılabilir: Xsn" göstergesi eklenebilir; (b) **kendi DVR'ımız:** MAIN-world'de `SourceBuffer.prototype.remove` patch'i ile player'ın back-buffer eviction'ını N dakikaya kadar bastır (bilinen live-rewind-extension tekniği; risk: bellek büyümesi + `QuotaExceededError` playback'i kırabilir — dikkatli guard ister, orta boy iş); (c) segment-recorder tam DVR (ağır, kapsam dışı).
+- **WAF yan-bulgusu (memory'ye işlendi):** Node'un kendi `fetch()`'i de aynı 403/`9e4db7e3` ile bloklu (TLS/JA3 seviyesi, UA spoof işe yaramıyor) — bu makineden scriptli Kick HTTP işi **curl'e shell-out** etmeli. Probe script: `output/dvr-probe.mjs` (gitignore'lu dizin, tekrar koşulabilir: `node output/dvr-probe.mjs <slug...>`).
+- **Memory güncellendi:** [[kickflow-player-controls]] açık maddesi ✅ kapatıldı, [[kickflow-kick-automation-waf-block]] Node-fetch + IVS-CDN bulgularıyla genişletildi. Kod/test değişikliği YOK, `git status` bu round'dan etkilenmedi.
 
 ## 🟢 2026-07-09 (11) — 2 CANLI BUG FIXLENDİ (← yayın başına atma + orta-tık yeni sekme) + MASQUERADE KALDIRILDI (cx gpt-5.6-terra implement, Claude review SHIP, COMMIT EDİLDİ)
 Owner canlıda 2 bug bildirdi, ikisi de cx'e (gpt-5.6-terra) tek brief'te dispatch edildi; Claude diff'i satır satır review etti + doğrulamayı bağımsız tekrar koştu.
@@ -41,7 +58,7 @@ Owner "yeni gpt-5.6-terra modeli geldi, cx dispatch'ini ona ver bug hunt yapsın
 - **Claude/Sonnet review:** her iki fix'in mantığı kod-seviyesinde adım adım doğrulandı (özellikle referans-eşitliği yaklaşımının in-place mutate eden `preserveMessage` ile çakışmadığı teyit edildi). **SHIP.**
 - **Test:** `npm test` 123/123, `npm run build` temiz, safe-render grep temiz. `git status`: bootstrap.ts, pusher-client.ts, render-queue.ts (M) + yeni render-queue.test.ts, pusher-client.test.ts güncellemesi — HENÜZ COMMIT YOK.
 
-## 🟡 2026-07-09 (8) — YENİ BUG RAPORU: kanala yeni girince rewind neredeyse hiç geriye gitmiyor + ok tuşları aynı sorunu paylaşıyor (KOD DEĞİŞMEDİ — owner'dan canlı veri bekleniyor)
+## 🟡→✅ 2026-07-09 (8) — YENİ BUG RAPORU: kanala yeni girince rewind neredeyse hiç geriye gitmiyor + ok tuşları aynı sorunu paylaşıyor (**ÇÖZÜMLENDİ round 12'de: fiziksel limit, yukarı bak** — beklenen canlı veri tarayıcısız ölçüldü)
 Owner: "kanala yeni girdiğimde geriye saramıyorum, 10'ar saniye geriye sarmak istiyorum ama anca girdiğim yere kadar sardırıyor, ok tuşları da tam çalışmıyor gibi."
 - **Kök-sebep adayı (kod incelemesiyle bulundu, henüz canlı doğrulanmadı):** `seekFloor()`/`clampSeekTarget()` (`rewind-controls.ts`) geri sarma tabanını `video.buffered.start(0)`'a (tarayıcının fiilen indirdiği veri) göre hesaplıyor. Kanala yeni girildiğinde geriye doğru buffer neredeyse hiç birikmemiş olur → taban ≈ giriş anı → her -10sn istek hemen oraya clamp'leniyor. `rewind-hotkeys.ts` (ok tuşları) AYNI `clampSeekTarget`'ı paylaşıyor → muhtemelen ayrı bir klavye bug'ı değil, aynı kök sebebin ikinci görünümü.
 - **Bu YENİ bir regresyon DEĞİL** — `buffered.start(0)` tabanlı clamp mantığı 2026-07-04'ten beri var (bkz. memory [[kickflow-player-controls]] BUG 1: "Kick buffers only ~30s → can't rewind further, physical limit"). Bugünkü round 6 (gap-clamp) fix'i bu davranışı DEĞİŞTİRMEDİ, sadece çoklu-parça buffered aralıklarını ele aldı.
@@ -194,23 +211,18 @@ Owner "fixleri cx'e dispatch et" dedi → cx yazdı, Claude/Opus cross-family re
 4. **Kalite:** ✅ ÇÖZÜLDÜ (IVS menü tıklama) — logged-out izole Chromium'da 720p60 seçimi doğrulandı. Owner login'li makinede 1080p60'a kilitleniyor mu + menü flash'ı rahatsız edici mi teyit edecek.
 5. **Stutter MPO fix ile geçti mi:** `OverlayTestMode=5` zaten yazılı AMA reboot bekliyor (memory `multimonitor-mpo-stutter`). Reboot sonrası test.
 
-## SIRADAKİ ADIMLAR
-- [ ] **(YENİ, 2026-07-09) Reply-context görsel fix'leri — cx round 3:** (a) `.kickflow-message__reply-snippet`'e hover `title` ekle (tam metni göster, badge pattern'i reuse), (b) reply-context satırı ile alttaki mesaj satırı arasına görsel ayrım ekle (margin-bottom 1px → ~4px ve/veya border/bg farkı) — detay + kanıt yukarıdaki 🟡 2026-07-09 bölümünde. **Owner talimatı: cx sadece bu 2 bilinen bulguyu fixlemekle kalmasın, aynı zamanda reply-context+middle-click alanında HENÜZ TESPİT EDİLMEMİŞ başka hataları da kendi otomasyonuyla (Playwright — component-harness veya canlı-extension) arasın** (ör. farklı badge/emote kombinasyonlu satırlarda taşma, çok kısa/çok uzun kullanıcı adlı reply'ler, RTL/özel karakter, dar viewport/mobil genişlik, hızlı ardışık reply'lerde satır yüksekliği hesapları, kalıcı user-card ile reply-satırlı mesajın gerçek-extension'da çakışması — bu son madde zaten önceki turda "canlı test gerekli" diye işaretlenmişti). Bulduklarını rapor etsin, sonra fixlesin. Sonra tekrar cross-family review, sonra commit (henüz commit YOK).
-- [ ] **CHAT REFACTOR: "Mode B" (Native Chat Augmentation) - CLAUDE İLE YAPILACAK PLAN:**
-  - **Mevcut Sorun (Mode A):** Şu anki overlay sistemi Kick'in yerel sohbetini (`#chatroom-messages`) CSS ile gizliyor ve kendi render listesini çiziyor. Ancak bu yüzden izleyicilerin isimlerine tıklayıp kanal profillerine gitmek, emote'ların detayını görmek gibi native Kick özellikleri devre dışı kalıyor.
-  - **Ulaşılmak İstenen Hedef (Mode B):** Özel render dosyalarımızı (`overlay-mount.ts`, `render-queue.ts`, `history.ts`, `dom-window.ts`) **tamamen silmek**. Kick'in orijinal sohbet akışını ekranda tutarak sadece silinen/banlanan mesajlara "DOM müdahalesi" yapmak.
-  - **Claude İçin Detaylı Uygulama Adımları:** 
-    1. **Dosya Temizliği:** `src/content/chat/` içindeki `overlay-mount.ts`, `render-queue.ts`, `history.ts` dosyalarını projeden tamamen kaldır ve bunlara referans veren `bootstrap.ts` gibi yerleri temizle.
-    2. **Pusher İskeleti Korunacak:** `pusher-client.ts` arka planda salt-okunur şekilde çalışmaya ve public ban/delete mesajlarını toplamaya devam edecek.
-    3. **MutationObserver (Yeni Entegrasyon):** Kick'in kendi DOM'u olan `#chatroom-messages` konteynerine bir `MutationObserver` bağlanacak. Gelen mesajların data id'leri ve textleri hafızada (MessageStore) tutulacak.
-    4. **Ban/Delete Eşleşmesi ve Etiketleme:** `ban-guard.ts` bir ban/silme eventi aldığında, bu observer aracılığıyla React DOM'daki orijinal mesaj satırını bulacak. DOM elementine `.kickflow-preserved` class'ını ekleyecek (metnin üstü çizilmesi için) ve yanına küçük bir "BANLANDI" / "SİLİNDİ" kırmızı etiket dom'u enjekte edecek.
-    5. **React Silme Koruması:** Normalde bir kullanıcı banlandığında React o mesaj div'ini DOM'dan söker. Observer'ımız bu Node silme (removedNodes) işlemini fark edip, silinmesi istenen mesaj eğer "preserved" ise bu işlemi override edecek (örn. `node.cloneNode(true)` ile geri ekleyerek veya React'in state'ine etki edemediğimiz için DOM üzerinde zorla tutarak) React'in mesajı yok etmesine engel olacak.
-    6. Sonuç olarak kullanıcı Kick'in tüm orijinal özelliklerini kullanmaya devam edecek, ban atıldığında sadece o mesajların yok olması engellenecek.
-- [ ] Owner reboot (MPO fix aktifleşsin) → Kick takılma testi.
-- [ ] Owner: `chrome://extensions` → KickFlow reload → Kick F5 → player+chat test.
-- [ ] Owner geri bildirim: takılma? rewind/adaptif/kalite? chat?
-- [ ] Kalite kilitlenmiyorsa → DevTools ile gerçek kalite selector'ı.
-- [ ] Debug ile gerçek delete/ban event yakala → event ismini doğrula → silinen-mesaj özelliğini aç.
+## SIRADAKİ ADIMLAR (2026-07-10 temizlendi — biten maddeler dated bölümlerde duruyor)
+- [ ] **Round 13 (player "tek kapsül" yerleşimi) commit'i:** diff hazır, Opus audit SHIP, 149/149 — owner reload → canlıda görünüme bakar → onay verirse commit.
+- [ ] **Owner canlı teyit (genel):** `chrome://extensions` → KickFlow reload → Kick F5 → yeni buton kümesi + round 11 fix'leri (← stale-preload, yeni-sekme) günlük kullanımda.
+- [ ] **native-bar 4-observer verimlilik nit'i** (round 10'dan açık): `mountIntoControlBar`'ın 4 çağrısının her biri ayrı doküman-geneli MutationObserver bağlıyor — istenirse küçük bir birleştirme round'u.
+- [ ] **Flaky test kalıcı çözümü** (round 11'den açık): `message-store.test.ts` preserved-TTL ms-sınırı yarışı — sweep sınırına birkaç saniye pay bırak.
+- [ ] **Test-coverage boşluğu** (round 9'dan açık): bootstrap/overlay-mount/draggable/lifecycle/logger/selectors/quality-lock/rewind-hotkeys/screenshot/speed-controls/status/popup testsiz.
+- [ ] (Eski, hâlâ owner'da) Kalite kilidi login'li makinede 1080p60'a kilitleniyor mu + menü flash'ı rahatsız mı; MPO reboot sonrası takılma gözlemi.
+
+### Tamamlananlar (eski listeden, referans)
+- ✅ Reply-context görsel fix'leri + bug-hunt → round 3 (2026-07-09), commit'lendi (round 11 batch'i).
+- ✅ CHAT REFACTOR Mode B → 2026-07-07'de shipped (`7299736`), sonra iki-mod (A+B) mimarisine evrildi (2026-07-08) — eski plan metni artık tarihî.
+- ✅ Delete/ban event adları + canlı silme E2E kanıtı → 2026-07-07 (`App\Events\MessageDeletedEvent`, gerçek silme yakalandı).
 
 ## Yükleme / dev döngüsü
 - Yükle: `chrome://extensions` → Developer mode → Load unpacked → `F:\GitHub\kickflow`.
