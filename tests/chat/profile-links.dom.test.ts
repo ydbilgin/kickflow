@@ -55,6 +55,22 @@ describe('profile new-tab gestures', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it('prevents the middle-press default so autoscroll cannot swallow the auxclick', () => {
+    // Chrome's middle-click autoscroll is the mousedown default action; inside a scrollable
+    // ancestor it eats the whole gesture (auxclick never fires — live-repro'd 2026-07-10).
+    // The wiring must cancel the middle-button mousedown ONLY — left stays native (drag-select).
+    const row = buildMessageElement(message());
+    const username = row.querySelector<HTMLElement>('.kickflow-message__username');
+
+    const middleDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 1 });
+    username?.dispatchEvent(middleDown);
+    expect(middleDown.defaultPrevented).toBe(true);
+
+    const leftDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+    username?.dispatchEvent(leftDown);
+    expect(leftDown.defaultPrevented).toBe(false);
+  });
+
   it('uses the same detached-anchor new-tab gesture for a Mode B preserved username', () => {
     Object.defineProperty(globalThis, 'CSS', {
       configurable: true,

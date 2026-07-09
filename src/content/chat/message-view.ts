@@ -107,6 +107,15 @@ export function wireProfileSlugLink(
   };
   element.addEventListener('click', (event) => { if (event.button === 0) act(event); });
   element.addEventListener('auxclick', (event) => { if (event.button === 1) act(event); });
+  // Middle-press default action is Chrome's autoscroll pan. Unlike a real <a href> (where the
+  // browser suppresses autoscroll and opens a tab), this is a role=link span, and inside a
+  // scrollable ancestor (our chat list, Kick's page) autoscroll SWALLOWS the whole gesture —
+  // `auxclick` never fires and middle-click can't open the profile (live-repro'd 2026-07-10 in
+  // headed Chromium with the popup blocker on). Preventing the default only for button 1 keeps
+  // left-click, drag-select and real scrolling untouched.
+  element.addEventListener('mousedown', (event) => {
+    if (event.button === 1) event.preventDefault();
+  });
   element.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
