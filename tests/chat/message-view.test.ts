@@ -51,6 +51,7 @@ describe('message-view safe rendering', () => {
   });
 
   it('opens a mention slug in a new tab on middle-click without adding a same-origin anchor', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const parent = document.createElement('span');
     appendParsedContent(parent, 'selam @Bob_123!');
@@ -58,7 +59,8 @@ describe('message-view safe rendering', () => {
 
     mention?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
 
-    expect(open).toHaveBeenCalledWith('https://kick.com/bob_123', '_blank', 'noopener,noreferrer');
+    expect(click).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
     expect(parent.querySelector('a[href*="kick.com"]')).toBeNull();
   });
 
@@ -135,13 +137,15 @@ describe('message-view safe rendering', () => {
   });
 
   it('opens a safe username in a new tab on middle-click without adding a same-origin anchor', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const row = buildMessageElement(message('alice_123'));
     const username = row.querySelector<HTMLElement>('.kickflow-message__username');
 
     username?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
 
-    expect(open).toHaveBeenCalledWith('https://kick.com/alice_123', '_blank', 'noopener,noreferrer');
+    expect(click).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
     expect(row.querySelector('a[href*="kick.com"]')).toBeNull();
   });
 

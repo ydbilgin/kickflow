@@ -1,8 +1,7 @@
-import { featureFlags } from './feature-flags';
 import { appendBadges } from './message-view';
 import { mergeIdentityBadges } from './message-store';
 import { makeDraggable } from '../shared/draggable';
-import type { FeatureFlags } from './feature-flags';
+import { openInNewTab } from '../shared/new-tab';
 import type { ChatBadge } from './message-store';
 
 const SAFE_SLUG_RE = /^[a-zA-Z0-9_-]+$/;
@@ -70,15 +69,6 @@ export function configureUserCardSession(slug: string | null): void {
 
 export function isSafeKickSlug(slug: string): boolean {
   return SAFE_SLUG_RE.test(slug);
-}
-
-export function isMasqueradeEnabled(): boolean {
-  const flags = featureFlags as FeatureFlags & {
-    masquerade?: boolean;
-    masqueradeEnabled?: boolean;
-    privacyMode?: boolean;
-  };
-  return flags.masquerade === true || flags.masqueradeEnabled === true || flags.privacyMode === true;
 }
 
 function normalizeBadge(raw: UserCardRawBadge): ChatBadge {
@@ -294,16 +284,16 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    window.open(link.href, '_blank', 'noopener,noreferrer');
+    openInNewTab(link.href);
   });
   card.appendChild(link);
   return card;
 }
 
-function buildMinimalCard(displayName: string, slug: string | null): HTMLElement {
+function buildMinimalCard(displayName: string, slug: string): HTMLElement {
   const card = buildUserCardElement({
     username: displayName,
-    slug: slug && SAFE_SLUG_RE.test(slug) ? slug : displayName,
+    slug: SAFE_SLUG_RE.test(slug) ? slug : displayName,
     profilePic: null,
     role: null,
     verified: false,
@@ -314,7 +304,6 @@ function buildMinimalCard(displayName: string, slug: string | null): HTMLElement
     subscribedFor: 'abone değil',
     badges: [],
   });
-  if (!slug) card.querySelector('.kickflow-user-card__link')?.remove();
   return card;
 }
 
@@ -346,15 +335,6 @@ export function dismissUserCard(): void {
 
 export async function openUserCard(username: string, displayName: string, clientX: number, clientY: number): Promise<void> {
   dismissUserCard();
-  if (isMasqueradeEnabled()) {
-    const card = buildMinimalCard(displayName, null);
-    document.body.appendChild(card);
-    positionCard(card, clientX, clientY);
-    installDismissHandlers(card);
-    activeCard = card;
-    return;
-  }
-
   const loading = buildMinimalCard(displayName, username);
   document.body.appendChild(loading);
   positionCard(loading, clientX, clientY);

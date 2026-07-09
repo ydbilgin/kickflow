@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { configureUserCardSession, mapUserCardResponse, openUserCard } from '../../src/content/chat/user-card';
+import { buildUserCardElement, configureUserCardSession, mapUserCardResponse, openUserCard } from '../../src/content/chat/user-card';
 
 describe('user-card', () => {
   afterEach(() => {
@@ -62,5 +62,25 @@ describe('user-card', () => {
     expect(card?.textContent).toContain('abonelik');
     expect(card?.textContent).toContain('18 ay abone');
     expect(card?.textContent?.toLowerCase()).not.toContain('level');
+  });
+
+  it('opens the card channel link through a detached new-tab anchor, not a popup window', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.href).toBe('https://kick.com/alice');
+      expect(this.target).toBe('_blank');
+      expect(this.rel).toBe('noopener noreferrer');
+      expect(this.isConnected).toBe(false);
+    });
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const card = buildUserCardElement({
+      username: 'alice', slug: 'alice', profilePic: null, role: null, verified: false, bio: null,
+      followers: null, createdAt: '-', followingSince: '-', subscribedFor: '-', badges: [],
+    });
+
+    card.querySelector<HTMLAnchorElement>('.kickflow-user-card__link')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+
+    expect(click).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
   });
 });

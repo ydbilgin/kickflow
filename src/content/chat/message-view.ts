@@ -1,6 +1,7 @@
 import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
-import { isMasqueradeEnabled, isSafeKickSlug, openUserCard } from './user-card';
+import { isSafeKickSlug, openUserCard } from './user-card';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
+import { openInNewTab } from '../shared/new-tab';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -79,7 +80,7 @@ function appendLink(parent: HTMLElement, rawUrl: string): void {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    window.open(url.href, '_blank', 'noopener,noreferrer');
+    openInNewTab(url.href);
   });
   parent.appendChild(anchor);
 }
@@ -98,8 +99,8 @@ export function wireProfileSlugLink(
   const act = (event: MouseEvent): void => {
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (!isMasqueradeEnabled() && (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey)) {
-      window.open(profileUrl, '_blank', 'noopener,noreferrer');
+    if (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey) {
+      openInNewTab(profileUrl);
     } else {
       void openUserCard(slug, displayName, event.clientX, event.clientY);
     }
@@ -130,10 +131,6 @@ export function wireUsernameProfileLink(
   displayName: string,
   linkClass: string,
 ): void {
-  const privacyMasked = isMasqueradeEnabled() || (
-    sender.displayName != null && sender.displayName !== sender.username
-  );
-  if (privacyMasked) return;
   wireProfileSlugLink(username, sender.slug, displayName, linkClass);
 }
 
