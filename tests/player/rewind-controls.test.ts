@@ -51,6 +51,24 @@ describe('rewind-controls media boundaries', () => {
     }), 10)).toBe(20);
   });
 
+  it('keeps a short rewind in the current playable range when an early preload range is stale', () => {
+    const video = fakeVideo({
+      buffered: [[0, 2], [100, 160]],
+      currentTime: 105,
+    });
+
+    expect(clampSeekTarget(video, -10)).toBe(100);
+  });
+
+  it('keeps a short forward seek in the current playable range across a stale future gap', () => {
+    const video = fakeVideo({
+      buffered: [[100, 160], [300, 360]],
+      currentTime: 155,
+    });
+
+    expect(clampSeekTarget(video, 10)).toBe(160);
+  });
+
   it('guards against inverted floor/live-edge bounds', () => {
     const video = fakeVideo({
       buffered: [[10, 8]],

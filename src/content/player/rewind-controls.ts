@@ -5,6 +5,7 @@ import type { Lifecycle } from '../shared/lifecycle';
 
 const CONTROLS_ID = 'kickflow-rewind-controls';
 const STEP_SECONDS = 10;
+const MAX_CROSS_RANGE_GAP_SECONDS = 30;
 
 // A media-time boundary (from `seekable`/`buffered`) is only trustworthy if finite and within
 // a sane range. Kick's HLS `seekable.end` can report a sentinel (~2^30 ≈ 34 years) or Infinity
@@ -82,10 +83,20 @@ export function clampSeekTarget(video: HTMLVideoElement, delta: number): number 
     if (target < first.start) return first.start;
     if (target > last.end) return last.end;
 
+    const currentRange = bufferedRanges.find(
+      (range) => video.currentTime >= range.start && video.currentTime <= range.end,
+    );
     for (let index = 1; index < bufferedRanges.length; index++) {
       const previous = bufferedRanges[index - 1];
       const next = bufferedRanges[index];
       if (target <= previous.end || target >= next.start) continue;
+      // Joining a live stream can briefly leave a tiny preload range near zero alongside the
+      // actual DVR range. A short seek into that large discontinuity must stay at the edge of
+      // the range being played, never jump across the stale range to the broadcast start.
+      if (next.start - previous.end > MAX_CROSS_RANGE_GAP_SECONDS) {
+        if (delta < 0 && currentRange === next) return next.start;
+        if (delta > 0 && currentRange === previous) return previous.end;
+      }
       if (delta < 0) return previous.end;
       if (delta > 0) return next.start;
       return target - previous.end <= next.start - target ? previous.end : next.start;
