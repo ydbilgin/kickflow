@@ -125,3 +125,99 @@ describe('decideCatchup', () => {
     expect(source).not.toContain('15');
   });
 });
+
+describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
+  function mountLivePlayer(currentTime: number): { video: HTMLVideoElement; lifecycle: Lifecycle } {
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    Object.defineProperties(video, {
+      duration: { configurable: true, value: Infinity },
+      currentTime: { configurable: true, value: currentTime, writable: true },
+      buffered: { configurable: true, value: fakeTimeRanges([[0, 20]]) },
+      playbackRate: { configurable: true, value: 1, writable: true },
+    });
+    const bar = document.createElement('div');
+    bar.className = 'z-controls bottom-0';
+    const live = document.createElement('button');
+    live.textContent = 'LIVE';
+    bar.append(live);
+    wrapper.append(video, bar);
+    document.body.append(wrapper);
+
+    const lifecycle = new Lifecycle();
+    initLiveCatchup(lifecycle);
+    return { video, lifecycle };
+  }
+
+  function findCanliButton(): HTMLButtonElement {
+    const button = document.querySelector<HTMLButtonElement>(
+      '#kickflow-catchup-controls .kickflow-player-btn--live',
+    );
+    expect(button).not.toBeNull();
+    return button as HTMLButtonElement;
+  }
+
+  it('mounts a single CANLI button with no separate indicator or OTO toggle', () => {
+    const { lifecycle } = mountLivePlayer(19.5);
+    const group = document.getElementById('kickflow-catchup-controls');
+    expect(group).not.toBeNull();
+    expect(group?.querySelectorAll('button')).toHaveLength(1);
+    expect(document.querySelector('.kickflow-catchup-indicator')).toBeNull();
+    expect(document.querySelector('.kickflow-player-toggle')).toBeNull();
+    expect(findCanliButton().textContent).toBe('CANLI');
+    lifecycle.dispose();
+  });
+
+  it('turns amber with a -Xsn suffix in place when behind, and back at the edge', () => {
+    const { video, lifecycle } = mountLivePlayer(0);
+    video.dispatchEvent(new Event('timeupdate'));
+
+    const button = findCanliButton();
+    expect(button.textContent).toBe('CANLI -20sn');
+    expect(button.classList.contains('kickflow-player-btn--behind')).toBe(true);
+    expect(video.playbackRate).toBe(1.5); // auto catch-up still engages alongside the label
+
+    video.currentTime = 19.5;
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(button.textContent).toBe('CANLI');
+    expect(button.classList.contains('kickflow-player-btn--behind')).toBe(false);
+    expect(video.playbackRate).toBe(1);
+    lifecycle.dispose();
+  });
+
+  it('switches the behind label to minutes past 99s so it cannot overflow the fixed width', () => {
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    Object.defineProperties(video, {
+      duration: { configurable: true, value: Infinity },
+      currentTime: { configurable: true, value: 0, writable: true },
+      buffered: { configurable: true, value: fakeTimeRanges([[0, 300]]) },
+      playbackRate: { configurable: true, value: 1, writable: true },
+    });
+    const bar = document.createElement('div');
+    bar.className = 'z-controls bottom-0';
+    const live = document.createElement('button');
+    live.textContent = 'LIVE';
+    bar.append(live);
+    wrapper.append(video, bar);
+    document.body.append(wrapper);
+
+    const lifecycle = new Lifecycle();
+    initLiveCatchup(lifecycle);
+    video.dispatchEvent(new Event('timeupdate'));
+
+    expect(findCanliButton().textContent).toBe('CANLI -5dk');
+    lifecycle.dispose();
+  });
+
+  it('clicking the button seeks to the buffered live edge', () => {
+    const { video, lifecycle } = mountLivePlayer(0);
+    video.dispatchEvent(new Event('timeupdate'));
+
+    findCanliButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(video.currentTime).toBe(20);
+    lifecycle.dispose();
+  });
+});

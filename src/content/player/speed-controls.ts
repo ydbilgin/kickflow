@@ -258,7 +258,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
 
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
-    group.className = 'kickflow-player-group kickflow-speed-group';
+    group.className = 'kickflow-player-group';
 
     const button = document.createElement('button');
     button.type = 'button';

@@ -354,17 +354,14 @@ function ensureStyles(): void {
        flush with the native buttons while keeping fixed dimensions across re-renders. --- */
     .kickflow-player-group {
       display: inline-flex; align-items: center; gap: 5px;
-      height: 32px; margin-left: 6px; padding-left: 8px;
-      border-left: 1px solid rgba(255,255,255,0.18);
+      height: 32px; margin-left: 5px;
       font-family: 'Inter','Segoe UI',system-ui,sans-serif;
     }
-    .kickflow-catchup-group,
-    .kickflow-speed-group {
-      margin-left: 4px; padding-left: 0; border-left: 0;
+    .kickflow-player-group--lead {
+      margin-left: 6px; padding-left: 8px;
+      border-left: 1px solid rgba(255,255,255,0.18);
     }
     .kickflow-player-btn,
-    .kickflow-catchup-indicator,
-    .kickflow-player-toggle,
     .kickflow-speed-btn {
       appearance: none;
       display: inline-flex; align-items: center; justify-content: center;
@@ -373,24 +370,18 @@ function ensureStyles(): void {
       transition: background .14s ease, opacity .14s ease, transform .09s ease, color .14s ease;
     }
     .kickflow-player-btn {
-      gap: 3px; height: 32px; min-width: 32px; padding: 0 9px; border-radius: 6px;
-      background: transparent; opacity: 0.82; font-size: 12px; font-weight: 600;
+      gap: 3px; height: 32px; min-width: 32px; padding: 0 10px; border-radius: 999px;
+      background: rgba(255,255,255,0.07); opacity: 0.82; font-size: 12px; font-weight: 600;
     }
     .kickflow-player-btn:hover,
-    .kickflow-catchup-indicator:hover,
-    .kickflow-player-toggle:hover,
     .kickflow-speed-btn:hover {
       background: rgba(255,255,255,0.16); opacity: 1;
     }
     .kickflow-player-btn:active,
-    .kickflow-catchup-indicator:active,
-    .kickflow-player-toggle:active,
     .kickflow-speed-btn:active {
       background: rgba(255,255,255,0.24); transform: scale(0.94);
     }
     .kickflow-player-btn:focus-visible,
-    .kickflow-catchup-indicator:focus-visible,
-    .kickflow-player-toggle:focus-visible,
     .kickflow-speed-btn:focus-visible {
       outline: 2px solid #53fc18; outline-offset: 1px;
     }
@@ -405,31 +396,30 @@ function ensureStyles(): void {
     }
     .kickflow-seek-pill__btn {
       height: 32px; min-width: 49px; border-radius: 0; padding: 0 8px;
+      background: transparent;
     }
     .kickflow-seek-pill__btn + .kickflow-seek-pill__btn {
       border-left: 1px solid rgba(255,255,255,0.18);
     }
     .kickflow-seek-pill__btn:active { transform: none; }
     .kickflow-player-btn--live {
-      min-width: 68px; font-weight: 700; padding: 0 10px;
+      min-width: 112px; font-weight: 700; padding: 0 12px;
+      font-variant-numeric: tabular-nums;
     }
     .kickflow-player-btn--live::before {
-      content: ''; width: 7px; height: 7px; margin-right: 1px; border-radius: 50%;
+      content: ''; width: 7px; height: 7px; margin-right: 2px; border-radius: 50%;
       background: #e9113c; box-shadow: 0 0 5px rgba(233,17,60,0.7);
+      transition: background .14s ease, box-shadow .14s ease;
     }
-    .kickflow-catchup-indicator {
-      height: 26px; min-width: 102px; padding: 0 8px; border-radius: 5px;
+    .kickflow-player-btn--behind {
       background: rgba(255,176,32,0.14); color: #ffb020; opacity: 0.95;
-      font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
     }
-    .kickflow-player-toggle {
-      height: 26px; min-width: 42px; padding: 0 8px; border-radius: 5px;
-      background: transparent; opacity: 0.55;
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
+    .kickflow-player-btn--behind:hover { background: rgba(255,176,32,0.26); }
+    .kickflow-player-btn--behind::before {
+      background: #ffb020; box-shadow: 0 0 5px rgba(255,176,32,0.7);
     }
-    .kickflow-player-toggle--on { color: #53fc18; opacity: 0.95; }
     .kickflow-speed-btn {
-      height: 26px; min-width: 58px; padding: 0 8px; border-radius: 5px;
+      height: 32px; min-width: 64px; padding: 0 12px; border-radius: 999px;
       background: rgba(255,255,255,0.07); opacity: 0.9;
       font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
     }

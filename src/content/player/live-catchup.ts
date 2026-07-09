@@ -7,7 +7,6 @@ import {
   NORMAL_PLAYBACK_RATE,
   ensurePlayerStateLoaded,
   getPlayerState,
-  setAutoMode,
   setManualRate,
   setPlayerPlaybackRate,
   subscribePlayerState,
@@ -79,26 +78,30 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   }
 
   let catchingUp = false;
-  let lastDisplayedSeconds = -1;
-  let indicatorEl: HTMLButtonElement | null = null;
-  let toggleEl: HTMLButtonElement | null = null;
+  let liveButtonEl: HTMLButtonElement | null = null;
+  let lastLiveLabel = '';
 
-  const hideIndicator = (): void => {
-    if (!indicatorEl) return;
-    indicatorEl.style.display = 'none';
-    lastDisplayedSeconds = -1;
-  };
+  /** ≥100s the seconds form ("-3600sn") would overflow the button's fixed min-width and
+   * shove the controls to its right — switch to minutes, which stays within 2-3 chars. */
+  const formatBehind = (roundedSeconds: number): string =>
+    roundedSeconds > 99 ? `-${Math.round(roundedSeconds / 60)}dk` : `-${roundedSeconds}sn`;
 
-  const setIndicatorBehindBy = (behindBy: number): void => {
-    if (!indicatorEl) return;
-    const rounded = Math.max(0, Math.round(behindBy));
-    indicatorEl.style.display = '';
-    if (rounded !== lastDisplayedSeconds) {
-      lastDisplayedSeconds = rounded;
-      indicatorEl.textContent = `YETİŞİLİYOR -${rounded}sn`;
-      indicatorEl.title = 'Canlı yayına dön';
-      indicatorEl.setAttribute('aria-label', `Canlı yayına dön, ${rounded} saniye geridesin`);
-    }
+  /** The single "CANLI" button doubles as the behind-live indicator: at the edge it is a
+   * quiet red-dot pill, when behind it turns amber and appends "-Xsn" in place (no extra
+   * indicator element appearing/disappearing, so nothing to its right ever shifts). */
+  const setLiveButtonState = (behindSeconds: number | null): void => {
+    if (!liveButtonEl) return;
+    const behind = behindSeconds !== null;
+    const rounded = behind ? Math.max(0, Math.round(behindSeconds)) : 0;
+    liveButtonEl.classList.toggle('kickflow-player-btn--behind', behind);
+    const label = behind ? `CANLI ${formatBehind(rounded)}` : 'CANLI';
+    if (label === lastLiveLabel) return;
+    lastLiveLabel = label;
+    liveButtonEl.textContent = label;
+    liveButtonEl.setAttribute(
+      'aria-label',
+      behind ? `Canlı yayına dön, ${rounded} saniye geridesin` : 'Canlı yayına dön',
+    );
   };
 
   const resetAutoPlaybackRate = (current = getVideoElement()): void => {
@@ -106,16 +109,6 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     if (current && getPlayerState().mode === 'auto') {
       setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
     }
-  };
-
-  const updateToggleVisual = (): void => {
-    if (!toggleEl) return;
-    const enabled = getPlayerState().mode === 'auto';
-    toggleEl.classList.toggle('kickflow-player-toggle--on', enabled);
-    toggleEl.setAttribute('aria-pressed', String(enabled));
-    toggleEl.title = enabled
-      ? 'Canlıya otomatik yetişme: AÇIK — kapatmak için tıkla'
-      : 'Canlıya otomatik yetişme: KAPALI — açmak için tıkla';
   };
 
   const goLive = (): void => {
@@ -141,17 +134,25 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
 
     if (!isLiveStream(current)) {
       if (catchingUp) resetAutoPlaybackRate(current);
-      hideIndicator();
+      setLiveButtonState(null);
       return;
     }
 
+    const liveEdge = getLiveEdgeSeconds(current);
+    if (liveEdge === null) {
+      if (catchingUp) resetAutoPlaybackRate(current);
+      setLiveButtonState(null);
+      return;
+    }
+
+    const behindBy = liveEdge - current.currentTime;
+    const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
+    // Behind-live is shown in BOTH modes (unlike the old catch-up-only indicator): "how far
+    // behind am I" is orthogonal to whether auto catch-up is doing anything about it.
+    setLiveButtonState(plausible && behindBy > BEHIND_THRESHOLD_SECONDS ? behindBy : null);
+
     if (playerState.mode === 'manual') {
       catchingUp = false;
-      hideIndicator();
-      const liveEdge = getLiveEdgeSeconds(current);
-      if (liveEdge === null) return;
-      const behindBy = liveEdge - current.currentTime;
-      const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
       const action = decideCatchup({
         mode: playerState.mode,
         manualRate: playerState.manualRate,
@@ -166,25 +167,9 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       return;
     }
 
-    const liveEdge = getLiveEdgeSeconds(current);
-    if (liveEdge === null) {
-      if (catchingUp) resetAutoPlaybackRate(current);
-      hideIndicator();
-      return;
-    }
-
-    const behindBy = liveEdge - current.currentTime;
-    const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
     if (!plausible) {
       if (catchingUp) resetAutoPlaybackRate(current);
-      hideIndicator();
       return;
-    }
-
-    if (behindBy > BEHIND_THRESHOLD_SECONDS) {
-      setIndicatorBehindBy(behindBy);
-    } else {
-      hideIndicator();
     }
 
     const action = decideCatchup({
@@ -208,50 +193,28 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   bindVideoElementListener(lifecycle, 'timeupdate', onTimeUpdate);
   lifecycle.add(resetAutoPlaybackRate);
   lifecycle.add(subscribePlayerState(() => {
-    updateToggleVisual();
-    if (getPlayerState().mode === 'manual') {
-      catchingUp = false;
-      hideIndicator();
-    }
+    if (getPlayerState().mode === 'manual') catchingUp = false;
   }));
 
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
-    group.className = 'kickflow-player-group kickflow-catchup-group';
+    group.className = 'kickflow-player-group';
 
-    const indicator = document.createElement('button');
-    indicator.type = 'button';
-    indicator.className = 'kickflow-catchup-indicator';
-    indicator.style.display = 'none';
-    indicatorEl = indicator;
+    const live = document.createElement('button');
+    live.type = 'button';
+    live.className = 'kickflow-player-btn kickflow-player-btn--live';
+    live.title = 'Canlı yayına dön';
+    liveButtonEl = live;
+    lastLiveLabel = '';
+    setLiveButtonState(null);
 
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'kickflow-player-toggle';
-    toggle.textContent = 'OTO';
-    toggleEl = toggle;
-    updateToggleVisual();
+    // Plain listener tied to the rebuilt button node; native-bar re-renders drop the
+    // node and its closure together, avoiding session-long listener accumulation.
+    live.addEventListener('click', goLive);
 
-    // Plain listeners are tied to these rebuilt button nodes; native-bar re-renders drop the
-    // nodes and their closures together, avoiding session-long listener accumulation.
-    indicator.addEventListener('click', goLive);
-    toggle.addEventListener('click', () => {
-      const current = getVideoElement();
-      if (getPlayerState().mode === 'auto') {
-        setManualRate(NORMAL_PLAYBACK_RATE);
-        if (current) setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
-        catchingUp = false;
-        hideIndicator();
-      } else {
-        setAutoMode();
-        if (current) setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
-      }
-      updateToggleVisual();
-    });
-
-    group.append(indicator, toggle);
+    group.append(live);
     return group;
   });
 
-  void ensurePlayerStateLoaded().then(updateToggleVisual);
+  void ensurePlayerStateLoaded();
 }

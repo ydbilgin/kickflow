@@ -119,17 +119,6 @@ function seekBy(video: HTMLVideoElement, delta: number): void {
   }
 }
 
-function goLive(video: HTMLVideoElement): void {
-  const edge = liveEdge(video);
-  if (edge === null) return;
-  try {
-    video.currentTime = edge;
-    if (video.paused) void video.play().catch(() => undefined);
-  } catch (error) {
-    logger.warn('rewind-controls: go-live failed', error);
-  }
-}
-
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const REWIND_PATHS = ['M13 6l-6 6 6 6', 'M19 6l-6 6 6 6'];
 const FORWARD_PATHS = ['M11 6l6 6-6 6', 'M5 6l6 6-6 6'];
@@ -161,10 +150,11 @@ function createStepLabel(): HTMLSpanElement {
  * "for free" since the buttons are genuine bar children.
  *
  * Seeks via #video-player's own currentTime, clamped to [seekFloor, liveEdge] — confirmed
- * live to work on Kick (seeking -30s kept the stream playing). The live-edge / go-live target
- * comes from buffered.end, NOT seekable.end: Kick's seekable.end can report a bogus sentinel
- * (~2^30) that would otherwise catapult the seek. No need to touch Kick's own (unconfirmed)
- * native seek-bar DOM at all. */
+ * live to work on Kick (seeking -30s kept the stream playing). Both clamp ends come from
+ * buffered, NOT seekable: Kick's seekable can report a bogus sentinel (~2^30) that would
+ * otherwise catapult the seek. No need to touch Kick's own (unconfirmed) native seek-bar
+ * DOM at all. The go-live button lives in live-catchup.ts (merged with the behind-live
+ * indicator); this group is only the ⏪10|10⏩ seek pill. */
 export function initRewindControls(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
@@ -174,7 +164,7 @@ export function initRewindControls(lifecycle: Lifecycle): void {
 
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
-    group.className = 'kickflow-player-group';
+    group.className = 'kickflow-player-group kickflow-player-group--lead';
 
     const seekPill = document.createElement('span');
     seekPill.className = 'kickflow-seek-pill';
@@ -185,13 +175,6 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     rewind.append(createChevronIcon(REWIND_PATHS), createStepLabel());
     rewind.title = `${STEP_SECONDS} sn geri (←)`;
     rewind.setAttribute('aria-label', `${STEP_SECONDS} saniye geri sar`);
-
-    const live = document.createElement('button');
-    live.type = 'button';
-    live.className = 'kickflow-player-btn kickflow-player-btn--live';
-    live.textContent = 'CANLI';
-    live.title = 'Canlı yayına dön';
-    live.setAttribute('aria-label', 'Canlı yayına dön');
 
     const forward = document.createElement('button');
     forward.type = 'button';
@@ -214,13 +197,9 @@ export function initRewindControls(lifecycle: Lifecycle): void {
       const current = getVideoElement();
       if (current) seekBy(current, STEP_SECONDS);
     });
-    live.addEventListener('click', () => {
-      const current = getVideoElement();
-      if (current) goLive(current);
-    });
 
     seekPill.append(rewind, forward);
-    group.append(seekPill, live);
+    group.append(seekPill);
     return group;
   });
 }
