@@ -1,8 +1,0 @@
-**KickFlow Council 4. Tur Özet Raporu (Gemini 3.1 Pro)**
-
-1. **Prior-Art (MoKick):** Butonları MutationObserver ile native bar'a enjekte ediyor. Canlı yayında `video.currentTime` seek HLS DVR buffer sayesinde sorunsuz çalışır. MoKick'teki donma/stutter şikayetleri ise video kontrollerinden değil, ağır chat/oyun bloat'unun yarattığı GC (Garbage Collection) duraksamalarından kaynaklanır ([MoKick Mağaza](https://chromewebstore.google.com/detail/mokick/...)).
-2. **(a) Native Bar Enjeksiyonu:** SPA/Vue re-render'a karşı sağ alt buton grubunun (`aria-label="Settings"` taşıyıcısı) başına 150ms debounced MutationObserver ve `insertBefore` ile ⏪10s / CANLI / 10s⏩ butonları enjekte edilmelidir.
-3. **(b) Video Stutter Analizi:** KickFlow mimarisi (`display: none` chat + 200 satırlık queue) masumdur. Asıl suçlu, 5-ekran karışık yenileme hızı ve **Windows MPO (Multi-Plane Overlay)** DWM V-Sync çakışmasıdır; Kayıt Defteri'nden `OverlayTestMode = 5` yapılarak MPO kapatılmalıdır.
-4. **(c) Kalite Kilidi:** Dişliye tıkla/bekle akışı SPA'da kırılgandır. `localStorage.setItem('kick_video_quality', 'source')` veya doğrudan `videojs.players[0].qualityLevels()` HLS API'si üzerinden en yüksek çözünürlük senkron kilitlenmelidir.
-5. **(d) Ban Koruması vs. Hafiflik:** 9800X3D/5080 sisteminde bizim Vanilla JS listemiz native Vue chat'ten çok daha hafiftir. A1 mimarisi (200 satır limit + 250ms batch) korunarak banlar yerinde çizili gösterilmeye devam edilmelidir.
-6. **Detaylı Rapor:** Tüm gerekçe, kanıt ve cerrahi kod örnekleri [council_mokick-lite/_council4_ax_pro_kickflow.md](file:///C:/Users/ydbil/.gemini/antigravity-cli/scratch/council_mokick-lite/_council4_ax_pro_kickflow.md) dosyasına yazılmıştır.
