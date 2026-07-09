@@ -147,6 +147,23 @@ describe('NativeChatAugmenter ghost blocks', () => {
     expect(deletedRow.querySelector('.kickflow-original-content')?.textContent).toContain('deleted text');
   });
 
+  it('makes ghost-row usernames clickable like Mode A/removed-panel usernames', async () => {
+    installChat(['m1', 'ban1', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'before'));
+    store.addMessage(message('ban1', 2, 'banned text'));
+    store.addMessage(message('m3', 3, 'after'));
+    store.markUserBanned(2, { permanent: true, bannedBy: 'mod1' });
+    new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    await flushObserver();
+
+    const username = document.querySelector<HTMLElement>('.kickflow-ghost-row__username');
+    expect(username?.getAttribute('role')).toBe('link');
+    expect(username?.classList.contains('kickflow-ghost-row__username--link')).toBe(true);
+  });
+
   it('removes ghost state when preserved banned messages are evicted', async () => {
     const list = installChat(['m1', 'ban1']);
     let augmenter: NativeChatAugmenter | null = null;

@@ -112,6 +112,20 @@ describe('NativeChatAugmenter', () => {
     expect(timeout?.querySelector('.kickflow-status-label')?.textContent).toBe('timeout 1sa 30dk');
   });
 
+  it('makes the preserved-inline username clickable like Mode A/removed-panel usernames', () => {
+    installChat(['m1']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 7, 'deleted text'));
+    store.markMessageDeleted('m1');
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    augmenter.markById('m1');
+
+    const username = document.querySelector<HTMLElement>('.kickflow-preserved-username');
+    expect(username?.getAttribute('role')).toBe('link');
+    expect(username?.classList.contains('kickflow-preserved-username--link')).toBe(true);
+  });
+
   it('re-marks remounted rows from the store without another explicit markById call', async () => {
     const list = installChat(['m1']);
     const store = new ChatIntegrityStore();

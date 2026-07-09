@@ -9,6 +9,7 @@ import {
   appendBadges,
   appendParsedContent,
   applyPreservedMarking,
+  wireUsernameProfileLink,
 } from './message-view';
 
 const CHAT_ROOT_SELECTOR = '#chatroom-messages';
@@ -286,7 +287,9 @@ export class NativeChatAugmenter {
     wrap.className = ORIGINAL_CONTENT_CLASS;
     const username = document.createElement('span');
     username.className = 'kickflow-preserved-username';
-    username.textContent = message.sender.displayName || message.sender.username;
+    const displayName = message.sender.displayName || message.sender.username;
+    username.textContent = displayName;
+    wireUsernameProfileLink(username, message.sender, displayName, 'kickflow-preserved-username--link');
     username.style.color = message.sender.identity.color || 'inherit';
     const separator = document.createElement('span');
     separator.textContent = ': ';
@@ -475,7 +478,9 @@ export class NativeChatAugmenter {
 
     const username = document.createElement('span');
     username.className = 'kickflow-ghost-row__username';
-    username.textContent = message.sender.displayName || message.sender.username;
+    const displayName = message.sender.displayName || message.sender.username;
+    username.textContent = displayName;
+    wireUsernameProfileLink(username, message.sender, displayName, 'kickflow-ghost-row__username--link');
     username.style.color = message.sender.identity.color || 'inherit';
 
     const separator = document.createElement('span');

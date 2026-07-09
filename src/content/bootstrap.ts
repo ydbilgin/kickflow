@@ -264,6 +264,8 @@ function ensureStyles(): void {
        original text OR swap in a "Deleted by a moderator" placeholder — and show our stored copy. */
     .kickflow-native-content-dimmed { display: none !important; }
     .kickflow-preserved-username { font-weight: 600; }
+    .kickflow-preserved-username--link { cursor: pointer; }
+    .kickflow-preserved-username--link:hover { text-decoration: underline; }
     .kickflow-ghost-block {
       display: block; margin: 3px 0 0 18px; padding-left: 8px;
       border-left: 2px solid rgba(233,17,60,0.55);
