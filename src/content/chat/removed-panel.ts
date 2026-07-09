@@ -107,7 +107,19 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     const body = section.querySelector<HTMLElement>(`.${PANEL_BODY_CLASS}`);
     if (!body) return;
     const shown = removed.slice(-MAX_PANEL_ROWS);
-    const sig = `${removed.length}:${shown[shown.length - 1]?.id ?? ''}`;
+    // The panel can change without its count or final id changing: a metadata enrichment (e.g.
+    // deletedBy arriving in a later event) alters an existing row, as can an expiry+preserve that
+    // keeps the same shape. Sign every field buildRow reads, not merely the list shape.
+    const sig = `${removed.length}\u001e${shown.map((message) => JSON.stringify({
+      id: message.id,
+      seq: message.seq,
+      content: message.content,
+      createdAt: message.createdAt,
+      sender: message.sender,
+      preserved: message.preserved,
+      preservedReason: message.preservedReason,
+      preservedMeta: message.preservedMeta,
+    })).join('\u001f')}`;
     if (sig === this.lastSig) return; // unchanged since last render — don't churn/scroll-jump
     this.lastSig = sig;
     if (shown.length === 0) {

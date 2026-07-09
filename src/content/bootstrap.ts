@@ -13,7 +13,7 @@ import { RemovedMessagesPanel } from './chat/removed-panel';
 import { FooterToggleButton } from './chat/footer-toggle';
 import { RenderQueue } from './chat/render-queue';
 import { trimMessageWindow, isNearBottom, decideScrollFollow } from './chat/dom-window';
-import { fetchChatHistory } from './chat/history';
+import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
 import { setSubscriberBadges } from './chat/message-view';
@@ -559,6 +559,10 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   const renderQueue = new RenderQueue({
     getContainer: () => ownList,
     registry,
+    // A delete can arrive while its ChatMessageEvent is waiting in RenderQueue's 250ms batch.
+    // Only render objects that this session's store still owns: this drops those removed-before-
+    // flush rows and also prevents a replayed Pusher/history id from creating a duplicate row.
+    shouldRender: (message) => store.getMessageById(message.id) === message,
     onFlush: (appended /*, wasAtBottom */) => {
       if (!activated && appended.length > 0) {
         activated = true;
@@ -590,20 +594,24 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     }
     setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId, channelId } = resolved;
-    setStatus({ chatroomId, reason: 'geçmiş yükleniyor…' });
-
-    const history = await fetchChatHistory(channelId);
-    if (lifecycle.isDisposed) return;
-    for (const message of history) {
-      store.addMessage(message);
-      renderQueue.enqueue(message);
-    }
-
-    setStatus({ reason: 'Pusher bağlanıyor…' });
+    setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
+    const historyBackfill = new ChatHistoryBackfill(channelId, {
+      isDisposed: () => lifecycle.isDisposed,
+      onMessages: (history) => {
+        for (const message of history) {
+          store.addMessage(message);
+          renderQueue.enqueue(message);
+        }
+      },
+    });
     const client = new PusherClient(chatroomId, {
       onConnected: () => {
         setStatus({ pusherConnected: true });
-        if (!getStatus().active) setStatus({ reason: 'Pusher bağlı — ilk mesaj bekleniyor' });
+        if (!getStatus().active) setStatus({ reason: 'Pusher bağlı — geçmiş yükleniyor…' });
+        // Subscribe before history: messages emitted while the fetch retries are live-rendered,
+        // then this backfill closes the initial/reconnect gap. Store id de-duping makes overlap
+        // harmless, and ChatHistoryBackfill queues one fresh request for every reconnect.
+        historyBackfill.request();
       },
       onDisconnected: () => {
         setStatus({ pusherConnected: false });

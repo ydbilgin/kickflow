@@ -83,6 +83,8 @@ export interface ChatMessage {
   preserved: boolean;
   preservedReason?: PreservedReason;
   preservedMeta?: PreservedMeta;
+  /** Local wall-clock timestamp of the moderation event that made this message preserved. */
+  preservedAt?: number;
 }
 
 // Invariant: every message currently rendered in Mode A's DOM must still be retrievable from
@@ -116,6 +118,10 @@ export class LimitedQueue<T> {
 
   toArray(): readonly T[] {
     return this.items.slice();
+  }
+
+  includes(item: T): boolean {
+    return this.items.includes(item);
   }
 
   get size(): number {
@@ -297,10 +303,22 @@ export class ChatIntegrityStore {
   }
 
   private preserveMessage(message: ChatMessage, reason: PreservedReason, meta: PreservedMeta = {}): void {
-    if (message.preserved) return;
+    if (message.preserved) {
+      message.preservedMeta = this.mergePreservedMeta(message.preservedMeta, meta);
+      // A ban carries stronger preservation semantics than a prior single-message delete. Do not
+      // let a later delete downgrade a ban, but do retain both events' useful metadata.
+      if (reason === 'banned' && message.preservedReason !== 'banned') {
+        message.preservedReason = 'banned';
+        message.preservedAt = Date.now();
+      }
+      return;
+    }
     message.preserved = true;
     message.preservedReason = reason;
-    message.preservedMeta = meta;
+    message.preservedMeta = this.mergePreservedMeta(undefined, meta);
+    // Retention is about how long the extension promised to preserve a moderation event, not
+    // how long ago the original chatter sent the message.
+    message.preservedAt = Date.now();
 
     const evicted = this.preserved.push(message);
     if (evicted) {
@@ -314,8 +332,33 @@ export class ChatIntegrityStore {
   private unpreserve(message: ChatMessage): void {
     message.preserved = false;
     message.preservedReason = undefined;
-    this.forget(message);
+    message.preservedMeta = undefined;
+    message.preservedAt = undefined;
+    // A preserved message may still be inside both ordinary retention rings. Keep it indexed so
+    // another ban/delete can preserve the same row again; only messages already evicted from a
+    // normal ring need to leave the indexes now.
+    if (!this.isRetainedInNormalRings(message)) this.forget(message);
     this.options.onPreservedEvicted?.(message);
+  }
+
+  private isRetainedInNormalRings(message: ChatMessage): boolean {
+    return this.global.includes(message)
+      && this.perUserQueues.get(message.sender.id)?.includes(message) === true;
+  }
+
+  /** Keeps richer moderation details that arrive in a later event, without replacing known
+   * details with null/empty placeholders from a thinner payload. */
+  private mergePreservedMeta(existing: PreservedMeta | undefined, incoming: PreservedMeta): PreservedMeta {
+    const merged: PreservedMeta = { ...existing };
+    if (incoming.permanent != null) merged.permanent = incoming.permanent;
+    if (incoming.durationMin != null) merged.durationMin = incoming.durationMin;
+    if (incoming.bannedBy != null) merged.bannedBy = incoming.bannedBy;
+    if (incoming.aiModerated != null) merged.aiModerated = incoming.aiModerated;
+    if (incoming.deletedBy != null) merged.deletedBy = incoming.deletedBy;
+    if (incoming.violatedRules && incoming.violatedRules.length > 0) {
+      merged.violatedRules = incoming.violatedRules;
+    }
+    return merged;
   }
 
   /** Cheap TTL sweep (O(<=50); meant to run on a slow interval from bootstrap.ts) so a
@@ -326,8 +369,10 @@ export class ChatIntegrityStore {
     let expiredCount = 0;
 
     for (const message of this.preserved.toArray()) {
-      const createdAtMs = Date.parse(message.createdAt);
-      const age = Number.isNaN(createdAtMs) ? 0 : now - createdAtMs;
+      // `preservedAt` is set on every new preservation. The createdAt fallback only supports
+      // objects that predate this field during a running extension upgrade.
+      const preservedAt = message.preservedAt ?? Date.parse(message.createdAt);
+      const age = Number.isNaN(preservedAt) ? 0 : now - preservedAt;
       if (age > PRESERVED_TTL_MS) {
         expiredCount++;
         this.unpreserve(message);

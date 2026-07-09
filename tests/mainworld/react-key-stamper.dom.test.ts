@@ -47,10 +47,10 @@ describe('initReactKeyStamper', () => {
 
     expect(row.getAttribute('data-kickflow-mid')).toBeNull();
 
-    setReactFiberKey(row, 'late-id');
+    setReactFiberKey(row, '72faefda-d095-4a8f-a146-7e9b7c491908');
     await vi.advanceTimersByTimeAsync(1000);
 
-    expect(row.getAttribute('data-kickflow-mid')).toBe('late-id');
+    expect(row.getAttribute('data-kickflow-mid')).toBe('72faefda-d095-4a8f-a146-7e9b7c491908');
     stamper.teardown();
   });
 
@@ -58,19 +58,34 @@ describe('initReactKeyStamper', () => {
     const list = document.querySelector<HTMLElement>('.no-scrollbar');
     if (!list) throw new Error('missing chat list');
     const row = makeRow();
-    setReactFiberKey(row, 'first-id');
+    setReactFiberKey(row, '72faefda-d095-4a8f-a146-7e9b7c491908');
     list.appendChild(row);
 
     const { initReactKeyStamper } = await import('../../src/mainworld/react-key-stamper');
     window.dispatchEvent(new Event('pagehide'));
     const stamper = initReactKeyStamper();
 
-    expect(row.getAttribute('data-kickflow-mid')).toBe('first-id');
+    expect(row.getAttribute('data-kickflow-mid')).toBe('72faefda-d095-4a8f-a146-7e9b7c491908');
 
-    setReactFiberKey(row, 'second-id');
+    setReactFiberKey(row, '8957918e-cbad-48b2-a196-44a18740317a');
     await vi.advanceTimersByTimeAsync(1000);
 
-    expect(row.getAttribute('data-kickflow-mid')).toBe('second-id');
+    expect(row.getAttribute('data-kickflow-mid')).toBe('8957918e-cbad-48b2-a196-44a18740317a');
+    stamper.teardown();
+  });
+
+  it('does not stamp a row when its fiber key has an unexpected shape', async () => {
+    const list = document.querySelector<HTMLElement>('.no-scrollbar');
+    if (!list) throw new Error('missing chat list');
+    const row = makeRow();
+    setReactFiberKey(row, 'not-a-message-id');
+    list.appendChild(row);
+
+    const { initReactKeyStamper } = await import('../../src/mainworld/react-key-stamper');
+    window.dispatchEvent(new Event('pagehide'));
+    const stamper = initReactKeyStamper();
+
+    expect(row.getAttribute('data-kickflow-mid')).toBeNull();
     stamper.teardown();
   });
 });

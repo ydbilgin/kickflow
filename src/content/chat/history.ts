@@ -6,6 +6,44 @@ const historyUrl = (channelId: number): string => `https://web.kick.com/api/v1/c
 const HISTORY_MAX_ATTEMPTS = 3;
 const HISTORY_RETRY_BASE_MS = 800;
 
+export interface ChatHistoryBackfillCallbacks {
+  isDisposed(): boolean;
+  onMessages(messages: readonly ChatMessage[]): void;
+}
+
+/** Serializes history requests triggered by initial connection and later reconnects. A reconnect
+ * that happens while a fetch is in flight queues exactly one follow-up request, so it cannot
+ * create a permanent socket-outage gap or an unbounded fetch fan-out. */
+export class ChatHistoryBackfill {
+  private running = false;
+  private requested = false;
+
+  constructor(
+    private readonly channelId: number,
+    private readonly callbacks: ChatHistoryBackfillCallbacks,
+    private readonly fetchHistory: (channelId: number) => Promise<ChatMessage[]> = fetchChatHistory,
+  ) {}
+
+  request(): void {
+    this.requested = true;
+    if (!this.running) void this.run();
+  }
+
+  private async run(): Promise<void> {
+    this.running = true;
+    try {
+      while (this.requested && !this.callbacks.isDisposed()) {
+        this.requested = false;
+        const messages = await this.fetchHistory(this.channelId);
+        if (!this.callbacks.isDisposed()) this.callbacks.onMessages(messages);
+      }
+    } finally {
+      this.running = false;
+      if (this.requested && !this.callbacks.isDisposed()) void this.run();
+    }
+  }
+}
+
 export async function fetchChatHistory(channelId: number): Promise<ChatMessage[]> {
   for (let attempt = 0; attempt < HISTORY_MAX_ATTEMPTS; attempt++) {
     try {

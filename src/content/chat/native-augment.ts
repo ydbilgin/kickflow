@@ -20,6 +20,7 @@ const ORIGINAL_CONTENT_CLASS = 'kickflow-original-content';
 const DIMMED_NATIVE_CONTENT_CLASS = 'kickflow-native-content-dimmed';
 const GHOST_BLOCK_CLASS = 'kickflow-ghost-block';
 const GHOST_ROW_CLASS = 'kickflow-ghost-row';
+const NATIVE_CONTENT_SELECTOR = '.break-words, [class*="break-words"]';
 
 // Bounds so a high-moderation channel (mass bans) can't pile ghosts onto the few visible
 // rows. A banned message only anchors INLINE if its chronological context is still near the
@@ -75,7 +76,7 @@ export class NativeChatAugmenter {
   private ghostEvicted = 0;
 
   constructor(
-    lifecycle: Lifecycle,
+    private readonly lifecycle: Lifecycle,
     private readonly store: ChatIntegrityStore,
   ) {
     const attach = (): void => this.attachToCurrentChat();
@@ -152,8 +153,8 @@ export class NativeChatAugmenter {
   }
 
   private dispose(): void {
-    this.disconnectObserver();
     this.clearGhosts();
+    this.disconnectObserver();
   }
 
   private reconcileVisibleRows(): void {
@@ -180,6 +181,15 @@ export class NativeChatAugmenter {
         const rows = this.collectRows(node);
         if (rows.length > 0) mountedSetChanged = true;
         rows.forEach((row) => this.reconcileRow(row));
+      }
+
+      // Kick normally mutates the current .break-words holder in place, but a React remount can
+      // replace it entirely. Observe that narrow replacement shape so the new native deletion
+      // placeholder is hidden and our store-backed copy remains the sole visible content. Do not
+      // reconcile arbitrary child changes: our own injected markup would otherwise loop here.
+      if (this.mutationTouchesNativeContent(mutation)) {
+        const row = this.closestRow(mutation.target);
+        if (row) this.reconcileRow(row);
       }
 
       if (featureFlags.preserveBansInline) {
@@ -218,6 +228,20 @@ export class NativeChatAugmenter {
     return target instanceof HTMLElement && target.matches(ROW_SELECTOR) ? target : null;
   }
 
+  private closestRow(target: EventTarget | Node): HTMLElement | null {
+    if (!(target instanceof Node)) return null;
+    const element = target instanceof HTMLElement ? target : target.parentElement;
+    return element?.closest<HTMLElement>(ROW_SELECTOR) ?? null;
+  }
+
+  private mutationTouchesNativeContent(mutation: MutationRecord): boolean {
+    const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    return nodes.some((node) => node instanceof HTMLElement && (
+      node.matches(NATIVE_CONTENT_SELECTOR)
+      || node.querySelector(NATIVE_CONTENT_SELECTOR) !== null
+    ));
+  }
+
   private collectMessageIds(node: Node): string[] {
     if (!(node instanceof HTMLElement)) return [];
     const ids: string[] = [];
@@ -231,12 +255,15 @@ export class NativeChatAugmenter {
   }
 
   private reconcileRow(row: HTMLElement, retryIfUnstamped = true): void {
+    if (this.lifecycle.isDisposed) return;
     this.cleanRow(row);
 
     const id = row.dataset.kickflowMid;
     if (!id) {
       if (retryIfUnstamped) {
-        window.setTimeout(() => this.reconcileRow(row, false), 0);
+        // React can stamp the row's id one microtask after it mounts. Route that retry through
+        // the session lifecycle so it cannot inject stale markup after a channel switch.
+        this.lifecycle.setTimeout(() => this.reconcileRow(row, false), 0);
       }
       return;
     }
@@ -271,8 +298,7 @@ export class NativeChatAugmenter {
   /** Hides the native message content (whatever it currently is — the original text or a
    * "Deleted by a moderator" placeholder) so our own stored copy is the only one shown. */
   private hideNativeContent(row: HTMLElement): void {
-    const holder = row.querySelector<HTMLElement>('.break-words')
-      ?? row.querySelector<HTMLElement>('[class*="break-words"]');
+    const holder = row.querySelector<HTMLElement>(NATIVE_CONTENT_SELECTOR);
     if (holder && !holder.classList.contains(ORIGINAL_CONTENT_CLASS)) {
       holder.classList.add(DIMMED_NATIVE_CONTENT_CLASS);
     }
@@ -330,15 +356,20 @@ export class NativeChatAugmenter {
    * attached to a DOM row Kick has since reassigned to another message; and a message Kick later
    * re-renders natively should lose its ghost. Runs at the top of every anchor pass. */
   private pruneStrayGhosts(): void {
+    // Inline ghosts belong only to the currently observed native chat subtree. The removed
+    // messages panel deliberately reuses the row styling/data attribute, so document-wide scans
+    // would otherwise erase its rows during every anchor pass.
+    const root = this.observedRoot;
+    if (!root) return;
     // 1. Ghost-blocks stranded on recycled rows (host row's mid no longer matches the block anchor).
-    document.querySelectorAll<HTMLElement>(`.${GHOST_BLOCK_CLASS}`).forEach((block) => {
+    root.querySelectorAll<HTMLElement>(`.${GHOST_BLOCK_CLASS}`).forEach((block) => {
       const anchorMid = block.dataset.kickflowGhostAnchor;
       const row = block.closest<HTMLElement>(ROW_SELECTOR);
       if (!anchorMid || !row || row.dataset.kickflowMid !== anchorMid) block.remove();
     });
     // 2. Dedupe ghost rows; drop any whose message is now mounted natively or no longer a banned-preserve.
     const seen = new Set<string>();
-    document.querySelectorAll<HTMLElement>(`.${GHOST_ROW_CLASS}[data-kickflow-ghost-mid]`).forEach((el) => {
+    root.querySelectorAll<HTMLElement>(`.${GHOST_ROW_CLASS}[data-kickflow-ghost-mid]`).forEach((el) => {
       const mid = el.dataset.kickflowGhostMid ?? '';
       const message = this.store.getMessageById(mid);
       const valid = message?.preserved === true
@@ -351,7 +382,7 @@ export class NativeChatAugmenter {
       seen.add(mid);
     });
     // 3. Drop blocks emptied by the sweep.
-    document.querySelectorAll<HTMLElement>(`.${GHOST_BLOCK_CLASS}`).forEach((block) => {
+    root.querySelectorAll<HTMLElement>(`.${GHOST_BLOCK_CLASS}`).forEach((block) => {
       if (!block.querySelector(`.${GHOST_ROW_CLASS}`)) block.remove();
     });
   }
@@ -532,7 +563,7 @@ export class NativeChatAugmenter {
       window.clearTimeout(this.reanchorTimer);
       this.reanchorTimer = null;
     }
-    document.querySelectorAll(`.${GHOST_BLOCK_CLASS}`).forEach((node) => node.remove());
+    this.observedRoot?.querySelectorAll(`.${GHOST_BLOCK_CLASS}`).forEach((node) => node.remove());
     this.ghostsNeeded.clear();
     this.ghostAnchorById.clear();
     this.ghostsByAnchor.clear();

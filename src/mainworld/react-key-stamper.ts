@@ -28,9 +28,12 @@ function rawReactKey(el: Element): string | null {
   }
 }
 
-export function parseMessageId(key: string): string {
-  const parts = key.split('-');
-  return parts.length > 1 ? parts.slice(1).join('-') : key;
+const REACT_MESSAGE_KEY = /^(\d+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/** React currently keys virtualized rows as `numeric-index-UUID`. Reject unexpected shapes
+ * instead of slicing arbitrary text into a plausible-but-wrong message id. */
+export function parseMessageId(key: string): string | null {
+  return REACT_MESSAGE_KEY.exec(key)?.[2] ?? null;
 }
 
 function readMessageId(row: HTMLElement): string | null {
@@ -52,7 +55,11 @@ export function stampRow(row: HTMLElement): void {
 
   if (debugEnabled() && debugSamples < DEBUG_SAMPLE_LIMIT) {
     debugSamples++;
-    console.debug('[kickflow-mainworld] key', rawKey, '-> mid', messageId);
+    if (rawKey && !messageId) {
+      console.debug('[kickflow-mainworld] unexpected React row key shape; skipped stamping', rawKey);
+    } else {
+      console.debug('[kickflow-mainworld] key', rawKey, '-> mid', messageId);
+    }
   }
 }
 

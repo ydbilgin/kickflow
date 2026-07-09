@@ -1,9 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  PusherClient,
   normalizeBanPayload,
   normalizeDeletePayload,
   normalizeMessage,
 } from '../../src/content/chat/pusher-client';
+
+class FakeWebSocket extends EventTarget {
+  static readonly OPEN = 1;
+  static instances: FakeWebSocket[] = [];
+  readonly readyState = FakeWebSocket.OPEN;
+  readonly sent: string[] = [];
+
+  constructor(_url: string) {
+    super();
+    FakeWebSocket.instances.push(this);
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {}
+}
+
+afterEach(() => {
+  FakeWebSocket.instances = [];
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('pusher-client normalizers', () => {
   it('normalizes valid messages and rejects missing required fields', () => {
@@ -253,5 +278,78 @@ describe('pusher-client normalizers', () => {
     });
 
     expect(normalizeDeletePayload({ aiModerated: true })).toBeNull();
+  });
+});
+
+describe('PusherClient lifecycle', () => {
+  it('ignores a queued socket message after disposal', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onMessage = vi.fn();
+    const client = new PusherClient(1, {
+      onMessage,
+      onUserBanned: vi.fn(),
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error('missing fake socket');
+
+    client.dispose();
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\ChatMessageEvent',
+        data: JSON.stringify({
+          id: 'late-message',
+          content: 'late',
+          sender: { id: 1, username: 'user', slug: 'user' },
+        }),
+      }),
+    }));
+
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('probes an idle connection and stays connected when any frame arrives in reply', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onDisconnected = vi.fn();
+    const client = new PusherClient(1, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onDisconnected,
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error('missing fake socket');
+
+    vi.advanceTimersByTime(2 * 60 * 1000);
+    expect(socket.sent).toContain(JSON.stringify({ event: 'pusher:ping', data: {} }));
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:pong', data: {} }),
+    }));
+    vi.advanceTimersByTime(30_000);
+
+    expect(onDisconnected).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    client.dispose();
+  });
+
+  it('reconnects when an idle probe receives no reply', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onDisconnected = vi.fn();
+    const client = new PusherClient(1, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onDisconnected,
+    });
+    client.connect();
+
+    vi.advanceTimersByTime(2 * 60 * 1000 + 30_000);
+    expect(onDisconnected).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1000);
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    client.dispose();
   });
 });

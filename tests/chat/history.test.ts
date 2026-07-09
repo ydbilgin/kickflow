@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchChatHistory } from '../../src/content/chat/history';
+import { ChatHistoryBackfill, fetchChatHistory } from '../../src/content/chat/history';
+import { normalizeMessage } from '../../src/content/chat/pusher-client';
 
 function response(status: number, body?: unknown): Response {
   return {
@@ -53,5 +54,34 @@ describe('fetchChatHistory', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://web.kick.com/api/v1/chat/123/history');
     expect(messages.map((message) => message.id)).toEqual(['earlier', 'later']);
+  });
+});
+
+describe('ChatHistoryBackfill', () => {
+  it('queues another fetch when a reconnect occurs during an in-flight backfill', async () => {
+    let releaseFirst: ((messages: NonNullable<ReturnType<typeof normalizeMessage>>[]) => void) | null = null;
+    const fetchHistory = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<NonNullable<ReturnType<typeof normalizeMessage>>[]>((resolve) => {
+        releaseFirst = resolve;
+      }))
+      .mockResolvedValueOnce([normalizeMessage(rawMessage('reconnect', '2026-01-01T00:00:02Z'))!]);
+    const received: string[][] = [];
+    const backfill = new ChatHistoryBackfill(123, {
+      isDisposed: () => false,
+      onMessages: (messages) => received.push(messages.map((message) => message.id)),
+    }, fetchHistory);
+
+    backfill.request();
+    backfill.request(); // a reconnect before the first history response arrives
+    expect(fetchHistory).toHaveBeenCalledTimes(1);
+    releaseFirst?.([normalizeMessage(rawMessage('initial', '2026-01-01T00:00:01Z'))!]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchHistory).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(received).toEqual([['initial'], ['reconnect']]);
   });
 });

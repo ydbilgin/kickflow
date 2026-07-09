@@ -102,6 +102,7 @@ describe('RemovedMessagesPanel', () => {
   });
 
   it('opens a removed-panel username in a new tab on middle-click without adding a same-origin anchor', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
@@ -121,7 +122,8 @@ describe('RemovedMessagesPanel', () => {
 
     username?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
 
-    expect(open).toHaveBeenCalledWith('https://kick.com/user1', '_blank', 'noopener,noreferrer');
+    expect(click).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
     expect(row?.querySelector('a[href*="kick.com"]')).toBeNull();
     open.mockRestore();
     lifecycle.dispose();
@@ -140,6 +142,24 @@ describe('RemovedMessagesPanel', () => {
     const row = document.querySelector<HTMLElement>('.kickflow-ghost-row');
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('silindi');
     expect(row?.querySelector('.kickflow-mod-label')?.textContent).toBe('· modname');
+    lifecycle.dispose();
+  });
+
+  it('rebuilds an existing row when later moderation metadata adds the deleting moderator', () => {
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'deleted text'));
+    store.markMessageDeleted('m1', { aiModerated: false });
+
+    const panel = new RemovedMessagesPanel(lifecycle, store);
+    panel.render();
+    panel.toggle();
+    expect(document.querySelector('.kickflow-mod-label')?.textContent).toBe('· mod');
+
+    store.markMessageDeleted('m1', { deletedBy: 'modname' });
+    panel.render();
+
+    expect(document.querySelector('.kickflow-mod-label')?.textContent).toBe('· modname');
     lifecycle.dispose();
   });
 
@@ -399,9 +419,8 @@ describe('RemovedMessagesPanel', () => {
       section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
       expect(section.querySelector('.kickflow-panel__settings')).not.toBeNull();
 
-      // Past the 10-min preserved TTL, relative to the fixed createdAt the `message()` helper uses
-      // (not real wall-clock time, which the test run's clock may sit either side of).
-      store.sweepExpiredPreserved(new Date('2026-07-08T19:00:00Z').getTime() + 11 * 60 * 1000);
+      // Past the 10-min preservation TTL, measured from preservation rather than send time.
+      store.sweepExpiredPreserved((store.getMessageById('m1')?.preservedAt ?? Date.now()) + 11 * 60 * 1000);
       panel.render();
 
       const still = document.querySelector<HTMLElement>('.kickflow-panel');

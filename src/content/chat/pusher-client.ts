@@ -18,6 +18,9 @@ const MESSAGE_DELETED_EVENT = 'App\\Events\\MessageDeletedEvent';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
+const LIVENESS_IDLE_MS = 2 * 60 * 1000;
+const LIVENESS_PROBE_TIMEOUT_MS = 30 * 1000;
+const LIVENESS_CHECK_INTERVAL_MS = 30 * 1000;
 
 export interface BanEventPayload {
   userId: number;
@@ -257,6 +260,10 @@ export class PusherClient {
   private disposed = false;
   private reconnectAttempt = 0;
   private reconnectTimer: number | null = null;
+  private livenessTimer: number | null = null;
+  private livenessProbeTimer: number | null = null;
+  private lastFrameAt = 0;
+  private awaitingLivenessReply = false;
 
   constructor(
     private readonly chatroomId: number,
@@ -269,18 +276,26 @@ export class PusherClient {
 
     const socket = new WebSocket(PUSHER_URL);
     this.socket = socket;
+    this.startLivenessWatchdog();
+    const isCurrentSocket = (): boolean => !this.disposed && this.socket === socket;
 
     socket.addEventListener('message', (event) => {
+      if (!isCurrentSocket()) return;
+      this.noteFrameActivity();
       this.handleRawMessage(event.data);
     });
 
     socket.addEventListener('close', () => {
-      if (this.disposed) return;
+      // A close/message task from a replaced or disposed socket can run after a SPA session
+      // changes. It must not mutate the new session's status or schedule a stray reconnect.
+      if (!isCurrentSocket()) return;
+      this.stopLivenessWatchdog();
       this.callbacks.onDisconnected?.();
       this.scheduleReconnect();
     });
 
     socket.addEventListener('error', (event) => {
+      if (!isCurrentSocket()) return;
       logger.debug('pusher-client: socket error', event);
     });
   }
@@ -292,10 +307,72 @@ export class PusherClient {
     });
   }
 
-  private send(payload: unknown): void {
+  private send(payload: unknown): boolean {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(payload));
+      return true;
     }
+    return false;
+  }
+
+  private startLivenessWatchdog(): void {
+    this.stopLivenessWatchdog();
+    this.lastFrameAt = Date.now();
+    this.livenessTimer = window.setInterval(() => this.checkConnectionLiveness(), LIVENESS_CHECK_INTERVAL_MS);
+  }
+
+  private stopLivenessWatchdog(): void {
+    if (this.livenessTimer !== null) {
+      window.clearInterval(this.livenessTimer);
+      this.livenessTimer = null;
+    }
+    if (this.livenessProbeTimer !== null) {
+      window.clearTimeout(this.livenessProbeTimer);
+      this.livenessProbeTimer = null;
+    }
+    this.awaitingLivenessReply = false;
+  }
+
+  private noteFrameActivity(): void {
+    this.lastFrameAt = Date.now();
+    if (this.awaitingLivenessReply) {
+      this.awaitingLivenessReply = false;
+      if (this.livenessProbeTimer !== null) {
+        window.clearTimeout(this.livenessProbeTimer);
+        this.livenessProbeTimer = null;
+      }
+    }
+  }
+
+  private checkConnectionLiveness(): void {
+    if (this.disposed || !this.socket || this.awaitingLivenessReply) return;
+    if (Date.now() - this.lastFrameAt < LIVENESS_IDLE_MS) return;
+    if (this.socket.readyState !== WebSocket.OPEN || !this.send({ event: 'pusher:ping', data: {} })) {
+      this.reconnectAfterLivenessFailure();
+      return;
+    }
+    this.awaitingLivenessReply = true;
+    this.livenessProbeTimer = window.setTimeout(() => {
+      this.livenessProbeTimer = null;
+      if (!this.awaitingLivenessReply) return;
+      logger.warn('pusher-client: liveness probe timed out; reconnecting');
+      this.reconnectAfterLivenessFailure();
+    }, LIVENESS_PROBE_TIMEOUT_MS);
+  }
+
+  private reconnectAfterLivenessFailure(): void {
+    if (this.disposed || !this.socket) return;
+    const socket = this.socket;
+    this.stopLivenessWatchdog();
+    // Detach before close so its eventual close event cannot schedule a second reconnect.
+    this.socket = null;
+    try {
+      socket.close();
+    } catch {
+      // already closing/closed — the scheduled reconnect below is still the recovery path
+    }
+    this.callbacks.onDisconnected?.();
+    this.scheduleReconnect();
   }
 
   private handleRawMessage(raw: string): void {
@@ -393,13 +470,14 @@ export class PusherClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed) return;
+    if (this.disposed || this.reconnectTimer !== null) return;
     const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempt, RECONNECT_MAX_DELAY_MS);
     this.reconnectAttempt++;
     this.reconnectTimer = window.setTimeout(() => this.connect(), delay);
   }
 
   private teardownSocket(): void {
+    this.stopLivenessWatchdog();
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

@@ -44,7 +44,7 @@ describe('ChatIntegrityStore', () => {
     expect(store.getMessageById('keep')?.preserved).toBe(true);
   });
 
-  it('caps preserved messages at 50 and evicts the oldest preservation', () => {
+  it('caps preserved messages at 50 and returns the oldest preservation to normal retention', () => {
     const onPreservedEvicted = vi.fn();
     const store = new ChatIntegrityStore({ onPreservedEvicted });
 
@@ -54,11 +54,11 @@ describe('ChatIntegrityStore', () => {
     }
 
     expect(store.getPreserved()).toHaveLength(50);
-    expect(store.getMessageById('p-0')).toBeUndefined();
+    expect(store.getMessageById('p-0')).toMatchObject({ preserved: false });
     expect(onPreservedEvicted).toHaveBeenCalledWith(expect.objectContaining({ id: 'p-0' }));
   });
 
-  it('sweeps expired preserved messages and keeps fresh ones', () => {
+  it('starts the preservation TTL when moderation happens, not when the message was sent', () => {
     const onPreservedEvicted = vi.fn();
     const store = new ChatIntegrityStore({ onPreservedEvicted });
     const now = Date.now();
@@ -69,9 +69,51 @@ describe('ChatIntegrityStore', () => {
 
     store.sweepExpiredPreserved(now);
 
-    expect(store.getMessageById('old')).toBeUndefined();
+    expect(store.getMessageById('old')?.preserved).toBe(true);
     expect(store.getMessageById('fresh')?.preserved).toBe(true);
+    expect(onPreservedEvicted).not.toHaveBeenCalled();
+
+    store.sweepExpiredPreserved(now + 10 * 60 * 1000 + 1);
+
+    expect(store.getMessageById('old')).toMatchObject({ preserved: false });
+    expect(store.getMessageById('fresh')).toMatchObject({ preserved: false });
     expect(onPreservedEvicted).toHaveBeenCalledWith(expect.objectContaining({ id: 'old' }));
+  });
+
+  it('can re-preserve a message whose preservation expired while it remains in normal retention', () => {
+    const store = new ChatIntegrityStore();
+    const now = Date.now();
+    store.addMessage(message('retain', 1, new Date(now - 20 * 60 * 1000).toISOString()));
+    store.markMessageDeleted('retain');
+
+    store.sweepExpiredPreserved(now + 10 * 60 * 1000 + 1);
+
+    expect(store.getMessageById('retain')).toMatchObject({ preserved: false });
+    store.markUserBanned(1, { permanent: true, bannedBy: 'mod' });
+    expect(store.getMessageById('retain')).toMatchObject({
+      preserved: true,
+      preservedReason: 'banned',
+      preservedMeta: expect.objectContaining({ permanent: true, bannedBy: 'mod' }),
+    });
+  });
+
+  it('upgrades a deleted preservation when a later ban arrives without losing deletion metadata', () => {
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('upgraded', 1));
+    store.markMessageDeleted('upgraded', { deletedBy: 'delete-mod', aiModerated: false });
+    store.markUserBanned(1, { permanent: true, bannedBy: 'ban-mod' });
+
+    expect(store.getPreserved()).toHaveLength(1);
+    expect(store.getMessageById('upgraded')).toMatchObject({
+      preserved: true,
+      preservedReason: 'banned',
+      preservedMeta: {
+        deletedBy: 'delete-mod',
+        aiModerated: false,
+        permanent: true,
+        bannedBy: 'ban-mod',
+      },
+    });
   });
 
   it('marks tracked user messages as banned with preservation metadata', () => {

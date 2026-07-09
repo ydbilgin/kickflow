@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { NativeChatAugmenter } from '../../src/content/chat/native-augment';
-import type { Lifecycle } from '../../src/content/shared/lifecycle';
+import { Lifecycle } from '../../src/content/shared/lifecycle';
 
 class FakeLifecycle implements Pick<Lifecycle, 'add' | 'setInterval' | 'isDisposed'> {
   readonly disposers: Array<() => void> = [];
@@ -226,5 +226,53 @@ describe('NativeChatAugmenter', () => {
 
     const row = document.querySelector<HTMLElement>('[data-kickflow-mid="m1"]');
     expect(row?.querySelectorAll('.kickflow-original-content')).toHaveLength(1);
+  });
+
+  it('re-hides a replacement native content holder after Kick changes a deleted row in place', async () => {
+    installChat(['m1']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 7, 'stored deleted text'));
+    store.markMessageDeleted('m1');
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+    augmenter.markById('m1');
+
+    const row = document.querySelector<HTMLElement>('[data-kickflow-mid="m1"]');
+    const oldHolder = row?.querySelector('.break-words');
+    const replacement = document.createElement('span');
+    replacement.className = 'break-words';
+    replacement.textContent = 'Deleted by a moderator';
+    oldHolder?.replaceWith(replacement);
+    await flushObserver();
+
+    expect(replacement.classList.contains('kickflow-native-content-dimmed')).toBe(true);
+    expect(row?.querySelectorAll('.kickflow-original-content')).toHaveLength(1);
+    expect(row?.querySelector('.kickflow-original-content')?.textContent).toContain('stored deleted text');
+  });
+
+  it('cancels an unstamped-row retry when its session lifecycle is disposed', () => {
+    vi.useFakeTimers();
+    try {
+      const list = installChat([]);
+      const row = document.createElement('div');
+      row.dataset.index = '0';
+      const holder = document.createElement('span');
+      holder.className = 'break-words';
+      row.append(holder);
+      list.append(row);
+
+      const store = new ChatIntegrityStore();
+      store.addMessage(message('m1'));
+      store.markUserBanned(7);
+      const lifecycle = new Lifecycle();
+      new NativeChatAugmenter(lifecycle, store);
+
+      lifecycle.dispose();
+      row.dataset.kickflowMid = 'm1';
+      vi.runAllTimers();
+
+      expect(row.querySelector('.kickflow-original-content')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

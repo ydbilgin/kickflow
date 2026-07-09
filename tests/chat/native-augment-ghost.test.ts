@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { NativeChatAugmenter } from '../../src/content/chat/native-augment';
+import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
+import { Lifecycle as RealLifecycle } from '../../src/content/shared/lifecycle';
 import type { Lifecycle } from '../../src/content/shared/lifecycle';
 
 class FakeLifecycle implements Pick<Lifecycle, 'add' | 'setInterval' | 'isDisposed'> {
@@ -187,5 +189,30 @@ describe('NativeChatAugmenter ghost blocks', () => {
 
     expect(list.querySelector('[data-kickflow-ghost-mid="ban1"]')).toBeNull();
     expect(augmenter.getGhostStats().ghostEvicted).toBe(1);
+  });
+
+  it('never prunes removed-panel rows while re-anchoring inline ghosts', async () => {
+    installChat(['m1', 'ban1', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'before'));
+    store.addMessage(message('ban1', 2, 'banned text'));
+    store.addMessage(message('m3', 3, 'after'));
+    store.addMessage(message('deleted1', 4, 'deleted text'));
+    store.markUserBanned(2, { permanent: true });
+    store.markMessageDeleted('deleted1');
+    const panelLifecycle = new RealLifecycle();
+    const panel = new RemovedMessagesPanel(panelLifecycle, store);
+    panel.render();
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    await flushObserver();
+    augmenter.reconcileAll();
+    await flushObserver();
+
+    const panelRows = document.querySelector('.kickflow-panel');
+    expect(panelRows?.querySelector('[data-kickflow-ghost-mid="ban1"]')).not.toBeNull();
+    expect(panelRows?.querySelector('[data-kickflow-ghost-mid="deleted1"]')).not.toBeNull();
+    panelLifecycle.dispose();
   });
 });
