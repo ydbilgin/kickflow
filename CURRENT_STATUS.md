@@ -3,7 +3,13 @@
 > Bu dosya = projenin anlık durumu. Owner "status oku" derse BU dosya okunur.
 > Son güncelleme: 2026-07-10
 
-## 🟢 2026-07-10 (14) — ORTA-TIK BUG'ININ GERÇEK KÖK SEBEBİ: Chrome AUTOSCROLL auxclick'i yutuyordu (Claude repro+fix+E2E kanıt, HENÜZ COMMIT YOK)
+## 🟢 2026-07-10 (15) — USER-CARD BAŞLIĞINA ORTA-TIK → YENİ SEKME (owner isteği, Claude implement, HENÜZ COMMIT YOK)
+Owner: "kart açıldığında ismine orta tuşla tıklayınca oradan da açılsın." Kartın üstteki kullanıcı adı (`<strong>`) artık tıklanabilir:
+- **Yeni ortak helper `shared/new-tab.ts` `wireNewTabGestures(element, url)`:** SADECE yeni-sekme jestleri (orta tık + ctrl/meta/shift+sol tık) — düz sol tık'a DOKUNMAZ (kart başlığı aynı zamanda drag-handle; drag sol-mousedown'a bağlı, çakışma yok). Round 14'ün autoscroll guard'ı (button-1 mousedown preventDefault) helper'ın içinde — gotcha 4 her kullanımda otomatik kapsanır.
+- `user-card.ts`: isme `kickflow-user-card__name` sınıfı + SAFE_SLUG guard'ıyla wiring + hover tooltip ("orta tıkla yeni sekmede aç"); CSS: pointer + hover-underline.
+- **Test:** 151/151 (yeni test: middle-mousedown defaultPrevented + auxclick→detached-anchor + düz sol tık serbest + ctrl-sol açar), `tsc`+build temiz.
+
+## 🟢 2026-07-10 (14) — ORTA-TIK BUG'ININ GERÇEK KÖK SEBEBİ: Chrome AUTOSCROLL auxclick'i yutuyordu (Claude repro+fix+E2E kanıt, commit `7e22481`+`988f2c2`)
 Owner: "orta tuşa basınca kick sayfası açılmıyor yazanlara." Round 11'in Bug B fix'i (`openInNewTab` detached-anchor) sadece jsdom'da test edilebilmişti; gerçek Chromium'da deterministik repro kuruldu (kick.com'a dokunmadan, lokal sayfa — WAF riski YOK):
 - **Repro zinciri (headed Chromium, popup blocker AÇIK — Playwright'ın default `--disable-popup-blocking`'i `ignoreDefaultArgs` ile kaldırıldı):** (1) düz sayfada detached-anchor/attached-anchor/window.open ÜÇÜ DE orta tıkla sekme açıyor → mekanizma sağlam. (2) **Kaydırılabilir konteyner İÇİNDE aynı span → `auxclick` HİÇ ateşlenmiyor, sekme yok** — Chrome'un orta-tık AUTOSCROLL'u (mousedown default action'ı) jesti bütünüyle yutuyor. Bizim chat listemiz de Kick sayfası da kaydırılabilir → owner'ın gördüğü tam bu. jsdom'da autoscroll olmadığı için round 11 testleri geçiyordu.
 - **Fix (`message-view.ts` `wireProfileSlugLink`):** orta tuş `mousedown`'ında `event.preventDefault()` (SADECE button 1 — sol tık/drag-select/scroll dokunulmadı). `<span role=link>` kullanan HER yüzeyi kapsar: own-chat username, mention, Kaldırılanlar paneli, Mode B preserved satırları. Gerçek `<a href>`'ler (mesaj içi linkler, user-card linki) zaten native orta-tık alır, autoscroll gerçek linkte devreye girmez — dokunulmadı.
