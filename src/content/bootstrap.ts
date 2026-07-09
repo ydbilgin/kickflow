@@ -148,6 +148,31 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message__username--link:hover { text-decoration: underline; }
     #${OWN_LIST_ID} .kickflow-message__separator { color: #adadb8; }
     #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; }
+    #${OWN_LIST_ID} .kickflow-message__reply-context {
+      display: flex; align-items: center; width: 100%; min-width: 0; margin-bottom: 4px;
+      color: rgba(255,255,255,0.42); font-size: 11px; font-weight: 500;
+      white-space: nowrap; overflow: hidden;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-icon {
+      display: inline-block; flex: none; width: 13px; margin-right: 4px; font-size: 11px;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-text {
+      display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-separator,
+    #${OWN_LIST_ID} .kickflow-message__reply-label {
+      flex: none;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-user {
+      flex: 0 1 auto; min-width: 0; max-width: 38%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-separator { white-space: pre; }
+    #${OWN_LIST_ID} .kickflow-message__reply-snippet {
+      display: inline-block; min-width: 0; flex: 1 1 auto;
+      overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-user { font-weight: 700; color: rgba(255,255,255,0.58); }
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
@@ -218,6 +243,8 @@ function ensureStyles(): void {
       vertical-align: middle; margin: 0 2px;
     }
     .kickflow-mention { color: #53fc18; font-weight: 600; }
+    .kickflow-mention--link { cursor: pointer; }
+    .kickflow-mention--link:hover { text-decoration: underline; }
     .kickflow-link { color: #66bfff; text-decoration: underline; }
     .kickflow-status-label {
       display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
@@ -248,6 +275,8 @@ function ensureStyles(): void {
     .kickflow-ghost-row__time { margin-right: 4px; color: #8b8b93; font-size: 10px; }
     .kickflow-ghost-row__badges { margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle; }
     .kickflow-ghost-row__username { font-weight: 700; }
+    .kickflow-ghost-row__username--link { cursor: pointer; }
+    .kickflow-ghost-row__username--link:hover { text-decoration: underline; }
     .kickflow-ghost-row__separator { font-weight: 700; }
     .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.7; }
     .kickflow-ghost-empty { color: #8b8b93; font-size: 11px; text-align: center; padding: 22px 10px; opacity: 0.9; }

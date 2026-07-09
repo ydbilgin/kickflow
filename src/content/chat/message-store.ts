@@ -46,6 +46,14 @@ export interface ChatMessageSender {
 
 export type PreservedReason = 'banned' | 'deleted';
 
+export interface ReplyContext {
+  replyToUser: string | null;
+  replyToText: string | null;
+  replyToMessageId?: string | null;
+  replyToUserId?: number | null;
+  threadParentId?: string | null;
+}
+
 /** Moderation detail attached to a preserved message so the row can distinguish a permanent
  * BANLANDI from a TIMEOUT (with its duration) and name the moderator. */
 export interface PreservedMeta {
@@ -57,6 +65,8 @@ export interface PreservedMeta {
   bannedBy?: string | null;
   /** Deletes: true = AI moderation, false = human mod, null/undefined = unknown. */
   aiModerated?: boolean | null;
+  /** Deletes: moderator who deleted the message, if Kick's payload carries one. */
+  deletedBy?: string | null;
   /** Deletes: AI-flagged rules (e.g. ["hate"]). */
   violatedRules?: string[];
 }
@@ -69,6 +79,7 @@ export interface ChatMessage {
   type: string;
   createdAt: string;
   sender: ChatMessageSender;
+  replyContext?: ReplyContext;
   preserved: boolean;
   preservedReason?: PreservedReason;
   preservedMeta?: PreservedMeta;

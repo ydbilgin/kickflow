@@ -61,6 +61,7 @@ describe('ban-guard', () => {
     const payload: DeleteEventPayload = {
       messageId: 'm1',
       aiModerated: true,
+      deletedBy: 'modname',
       violatedRules: ['hate'],
     };
     const store = { markMessageDeleted: vi.fn(() => chatMessage('m1')) };
@@ -70,6 +71,7 @@ describe('ban-guard', () => {
     handleMessageDeleted(payload, { store, augmenter } as never);
     expect(store.markMessageDeleted).toHaveBeenCalledWith('m1', {
       aiModerated: true,
+      deletedBy: 'modname',
       violatedRules: ['hate'],
     });
     expect(augmenter.markById).toHaveBeenCalledWith('m1');

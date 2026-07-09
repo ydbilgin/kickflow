@@ -47,6 +47,7 @@ export function handleMessageDeleted(payload: DeleteEventPayload, deps: BanGuard
   if (featureFlags.showDeletedMessages) {
     const message = deps.store.markMessageDeleted(messageId, {
       aiModerated: payload.aiModerated,
+      deletedBy: payload.deletedBy,
       violatedRules: payload.violatedRules,
     });
     if (!message) return;

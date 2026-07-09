@@ -3,7 +3,7 @@ import { makeDraggable } from '../shared/draggable';
 import type { FooterTogglePanel } from './footer-toggle';
 import { featureFlags } from './feature-flags';
 import { mergeIdentityBadges, type ChatIntegrityStore, type ChatMessage } from './message-store';
-import { appendBadges, appendParsedContent, applyPreservedMarking } from './message-view';
+import { appendBadges, appendParsedContent, applyPreservedMarking, wireUsernameProfileLink } from './message-view';
 
 const PANEL_CLASS = 'kickflow-panel';
 const PANEL_HEADER_CLASS = 'kickflow-panel__header';
@@ -282,7 +282,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const username = document.createElement('span');
     username.className = 'kickflow-ghost-row__username';
-    username.textContent = message.sender.displayName || message.sender.username;
+    const displayName = message.sender.displayName || message.sender.username;
+    username.textContent = displayName;
+    wireUsernameProfileLink(username, message.sender, displayName, 'kickflow-ghost-row__username--link');
     username.style.color = message.sender.identity.color || 'inherit';
 
     const separator = document.createElement('span');

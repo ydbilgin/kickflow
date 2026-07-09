@@ -86,6 +86,104 @@ describe('pusher-client normalizers', () => {
     ]);
   });
 
+  it('extracts real Kick reply context from metadata.original_sender and metadata.original_message', () => {
+    const message = normalizeMessage({
+      id: '72faefda-d095-4a8f-a146-7e9b7c491908',
+      chatroom_id: 19769178,
+      content: 'harbi yaaaa',
+      type: 'reply',
+      created_at: '2026-07-09T12:30:35+00:00',
+      sender: {
+        id: 26305632,
+        username: '4Umbra1',
+        slug: '4umbra1',
+        identity: { color: '#E9113C', badges: [], badges_v2: [] },
+      },
+      metadata: {
+        original_sender: { id: 50668393, username: 'ZehoG' },
+        original_message: {
+          id: '8957918e-cbad-48b2-a196-44a18740317a',
+          content: 'yav korusanızağğğğ',
+        },
+        message_ref: '1783600235812',
+      },
+      thread_parent_id: '8957918e-cbad-48b2-a196-44a18740317a',
+    });
+
+    expect(message?.replyContext).toEqual({
+      replyToUser: 'ZehoG',
+      replyToText: 'yav korusanızağğğğ',
+      replyToMessageId: '8957918e-cbad-48b2-a196-44a18740317a',
+      replyToUserId: 50668393,
+      threadParentId: '8957918e-cbad-48b2-a196-44a18740317a',
+    });
+  });
+
+  it('does not treat metadata.message_ref alone as reply context', () => {
+    const message = normalizeMessage({
+      id: 'cb79a89e-745a-4dfc-8e42-bf26ec8dca8b',
+      chatroom_id: 19769178,
+      content: '[emote:4148074:HYPERCLAP]',
+      type: 'message',
+      created_at: '2026-07-09T12:29:14+00:00',
+      sender: {
+        id: 7291201,
+        username: 'Estelihan',
+        slug: 'estelihan',
+        identity: { color: '#55FFC7', badges: [], badges_v2: [] },
+      },
+      metadata: { message_ref: '1783600154188' },
+    });
+
+    expect(message?.replyContext).toBeUndefined();
+  });
+
+  it('does not extract empty object original_message.content as reply text', () => {
+    const message = normalizeMessage({
+      id: 'reply-empty-content',
+      chatroom_id: 19769178,
+      content: 'reply body',
+      type: 'reply',
+      created_at: '2026-07-09T12:30:35+00:00',
+      sender: {
+        id: 26305632,
+        username: '4Umbra1',
+        slug: '4umbra1',
+        identity: { color: '#E9113C', badges: [], badges_v2: [] },
+      },
+      metadata: {
+        original_sender: { id: 50668393, username: 'ZehoG' },
+        original_message: { id: 'orig-empty', content: '' },
+      },
+      thread_parent_id: 'orig-empty',
+    });
+
+    expect(message?.replyContext).toMatchObject({
+      replyToUser: 'ZehoG',
+      replyToText: null,
+      replyToMessageId: 'orig-empty',
+    });
+  });
+
+  it('drops reply context when original_message is only an empty string', () => {
+    const message = normalizeMessage({
+      id: 'reply-empty-string',
+      chatroom_id: 19769178,
+      content: 'reply body',
+      type: 'reply',
+      created_at: '2026-07-09T12:30:35+00:00',
+      sender: {
+        id: 26305632,
+        username: '4Umbra1',
+        slug: '4umbra1',
+        identity: { color: '#E9113C', badges: [], badges_v2: [] },
+      },
+      metadata: { original_message: '' },
+    });
+
+    expect(message?.replyContext).toBeUndefined();
+  });
+
   it('normalizes flat and nested ban payloads', () => {
     expect(normalizeBanPayload({
       user_id: 7,
@@ -129,6 +227,7 @@ describe('pusher-client normalizers', () => {
     })).toEqual({
       messageId: 'message-id',
       aiModerated: true,
+      deletedBy: null,
       violatedRules: ['spam', 'hate'],
     });
 
@@ -138,6 +237,18 @@ describe('pusher-client normalizers', () => {
     })).toEqual({
       messageId: 'top-level-id',
       aiModerated: false,
+      deletedBy: null,
+      violatedRules: [],
+    });
+
+    expect(normalizeDeletePayload({
+      message: { id: 'message-id-with-mod' },
+      aiModerated: false,
+      deleted_by: { username: 'modname' },
+    })).toEqual({
+      messageId: 'message-id-with-mod',
+      aiModerated: false,
+      deletedBy: 'modname',
       violatedRules: [],
     });
 

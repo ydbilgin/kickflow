@@ -1,4 +1,4 @@
-import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type PreservedMeta, type SubscriberBadge } from './message-store';
+import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
 import { isMasqueradeEnabled, isSafeKickSlug, openUserCard } from './user-card';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 
@@ -84,11 +84,57 @@ function appendLink(parent: HTMLElement, rawUrl: string): void {
   parent.appendChild(anchor);
 }
 
+export function wireProfileSlugLink(
+  element: HTMLElement,
+  slug: string,
+  displayName: string,
+  linkClass: string,
+): void {
+  if (!isSafeKickSlug(slug)) return;
+  const profileUrl = `https://kick.com/${slug}`;
+  element.classList.add(linkClass);
+  element.setAttribute('role', 'link');
+  element.tabIndex = 0;
+  const act = (event: MouseEvent): void => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!isMasqueradeEnabled() && (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey)) {
+      window.open(profileUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      void openUserCard(slug, displayName, event.clientX, event.clientY);
+    }
+  };
+  element.addEventListener('click', (event) => { if (event.button === 0) act(event); });
+  element.addEventListener('auxclick', (event) => { if (event.button === 1) act(event); });
+  element.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const rect = element.getBoundingClientRect();
+    void openUserCard(slug, displayName, rect.left, rect.bottom);
+  });
+}
+
 function appendMention(parent: HTMLElement, rawMention: string): void {
   const span = document.createElement('span');
   span.className = 'kickflow-mention';
   span.textContent = rawMention;
+  const displayName = rawMention.slice(1);
+  wireProfileSlugLink(span, displayName.toLowerCase(), displayName, 'kickflow-mention--link');
   parent.appendChild(span);
+}
+
+export function wireUsernameProfileLink(
+  username: HTMLElement,
+  sender: ChatMessageSender,
+  displayName: string,
+  linkClass: string,
+): void {
+  const privacyMasked = isMasqueradeEnabled() || (
+    sender.displayName != null && sender.displayName !== sender.username
+  );
+  if (privacyMasked) return;
+  wireProfileSlugLink(username, sender.slug, displayName, linkClass);
 }
 
 /** Safe-render only: message text is fully attacker-controlled. Every branch below
@@ -273,10 +319,10 @@ export function appendModLabel(row: HTMLElement, mod: string | null | undefined)
   row.appendChild(span);
 }
 
-/** Who/what removed a deleted message. MessageDeletedEvent carries aiModerated + the flagged
- * rules but NO human-mod username (only bans carry banned_by) → "AI mod (hate)" or "mod";
- * null when the payload didn't say. */
+/** Who/what removed a deleted message. Public MessageDeletedEvent usually carries only
+ * aiModerated + flagged rules; if Kick ever includes a human actor, prefer that name. */
 export function deleteAttribution(meta: PreservedMeta): string | null {
+  if (meta.deletedBy) return meta.deletedBy;
   if (meta.aiModerated === true) {
     const rules = (meta.violatedRules ?? []).filter(Boolean);
     return rules.length ? `AI mod (${rules.join(', ')})` : 'AI mod';
@@ -318,10 +364,53 @@ export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): v
   }
 }
 
+function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
+  const context = message.replyContext;
+  if (!context || (!context.replyToUser && !context.replyToText)) return;
+
+  const reply = document.createElement('span');
+  reply.className = 'kickflow-message__reply-context';
+
+  const icon = document.createElement('span');
+  icon.className = 'kickflow-message__reply-icon';
+  icon.textContent = '↩';
+  reply.appendChild(icon);
+
+  const text = document.createElement('span');
+  text.className = 'kickflow-message__reply-text';
+  if (context.replyToUser) {
+    const user = document.createElement('span');
+    user.className = 'kickflow-message__reply-user';
+    user.textContent = context.replyToUser;
+    user.title = context.replyToUser;
+    text.appendChild(user);
+    if (context.replyToText) {
+      const separator = document.createElement('span');
+      separator.className = 'kickflow-message__reply-separator';
+      separator.textContent = ': ';
+      text.appendChild(separator);
+    }
+  }
+  if (context.replyToText) {
+    const snippet = document.createElement('span');
+    snippet.className = 'kickflow-message__reply-snippet';
+    snippet.textContent = context.replyToText;
+    snippet.title = context.replyToText;
+    text.appendChild(snippet);
+  }
+  const label = document.createElement('span');
+  label.className = 'kickflow-message__reply-label';
+  label.textContent = ' isimli kullanıcıya yanıt veriyor';
+  text.appendChild(label);
+  reply.appendChild(text);
+  row.appendChild(reply);
+}
+
 export function buildMessageElement(message: ChatMessage): HTMLElement {
   const row = document.createElement('div');
   row.className = MESSAGE_CLASS;
   row.dataset.messageId = message.id;
+  appendReplyContext(row, message);
 
   const time = document.createElement('span');
   time.className = 'kickflow-message__time';
@@ -335,10 +424,6 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
   appendBadges(badges, mergeIdentityBadges(message.sender.identity));
 
   const displayName = message.sender.displayName || message.sender.username;
-  const slug = message.sender.slug;
-  const privacyMasked = isMasqueradeEnabled() || (
-    message.sender.displayName != null && message.sender.displayName !== message.sender.username
-  );
   // Deliberately NOT an <a href="kick.com/{slug}">: our list is a body-level overlay inside Kick's
   // React SPA, whose document/window click router would classify a same-origin anchor and navigate
   // the page (the "refresh at top" bug) — and a capture-phase router fires before any handler we
@@ -347,29 +432,7 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
   const username = document.createElement('span');
   username.className = 'kickflow-message__username';
   username.textContent = displayName;
-  if (isSafeKickSlug(slug) && !privacyMasked) {
-    const profileUrl = `https://kick.com/${slug}`;
-    username.classList.add('kickflow-message__username--link');
-    username.setAttribute('role', 'link');
-    username.tabIndex = 0;
-    const act = (event: MouseEvent): void => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey) {
-        window.open(profileUrl, '_blank', 'noopener,noreferrer');
-      } else {
-        void openUserCard(slug, displayName, event.clientX, event.clientY);
-      }
-    };
-    username.addEventListener('click', (event) => { if (event.button === 0) act(event); });
-    username.addEventListener('auxclick', (event) => { if (event.button === 1) act(event); });
-    username.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      const rect = username.getBoundingClientRect();
-      void openUserCard(slug, displayName, rect.left, rect.bottom);
-    });
-  }
+  wireUsernameProfileLink(username, message.sender, displayName, 'kickflow-message__username--link');
   // Property assignment only — the setter rejects invalid values. Never
   // setAttribute('style', ...) / .cssText, which would accept arbitrary CSS text.
   username.style.color = message.sender.identity.color || 'inherit';

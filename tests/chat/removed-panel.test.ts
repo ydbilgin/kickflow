@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
@@ -31,6 +31,7 @@ function message(id: string, userId: number, content = id): ChatMessage {
 
 describe('RemovedMessagesPanel', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
 
@@ -100,11 +101,37 @@ describe('RemovedMessagesPanel', () => {
     lifecycle.dispose();
   });
 
+  it('opens a removed-panel username in a new tab on middle-click without adding a same-origin anchor', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'banned text'));
+    store.markUserBanned(1, { permanent: true, bannedBy: 'mod1' });
+
+    const panel = new RemovedMessagesPanel(lifecycle, store);
+    panel.render();
+    panel.toggle();
+
+    const row = document.querySelector<HTMLElement>('.kickflow-ghost-row');
+    const username = row?.querySelector<HTMLElement>('.kickflow-ghost-row__username');
+    expect(username?.tagName).toBe('SPAN');
+    expect(username?.getAttribute('role')).toBe('link');
+    expect(username?.tabIndex).toBe(0);
+    expect(username?.classList.contains('kickflow-ghost-row__username--link')).toBe(true);
+
+    username?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+
+    expect(open).toHaveBeenCalledWith('https://kick.com/user1', '_blank', 'noopener,noreferrer');
+    expect(row?.querySelector('a[href*="kick.com"]')).toBeNull();
+    open.mockRestore();
+    lifecycle.dispose();
+  });
+
   it('renders a SİLİNDİ status label for a preserved deleted message', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
     store.addMessage(message('m1', 1, 'deleted text'));
-    store.markMessageDeleted('m1');
+    store.markMessageDeleted('m1', { deletedBy: 'modname' });
 
     const panel = new RemovedMessagesPanel(lifecycle, store);
     panel.render();
@@ -112,6 +139,7 @@ describe('RemovedMessagesPanel', () => {
 
     const row = document.querySelector<HTMLElement>('.kickflow-ghost-row');
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('silindi');
+    expect(row?.querySelector('.kickflow-mod-label')?.textContent).toBe('· modname');
     lifecycle.dispose();
   });
 

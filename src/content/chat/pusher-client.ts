@@ -1,6 +1,6 @@
 import { logger } from '../shared/logger';
 import { featureFlags } from './feature-flags';
-import type { ChatBadge, ChatMessage } from './message-store';
+import type { ChatBadge, ChatMessage, ReplyContext } from './message-store';
 
 // Confirmed live 2026-07-04 (Playwright capture on kick.com, channel "allissag"):
 // pusher:subscribe frames carried "auth":"" (empty) — the channel is genuinely public,
@@ -35,8 +35,11 @@ export interface BanEventPayload {
 export interface DeleteEventPayload {
   messageId: string;
   /** true = removed by Kick's AI moderation, false = by a human mod, null = payload didn't say.
-   * (MessageDeletedEvent carries no human-mod username — only bans carry banned_by.) */
+   * Live-captured public payloads have not carried a human-mod username so far; keep deletedBy
+   * nullable and best-effort in case Kick adds one. */
   aiModerated: boolean | null;
+  /** Human moderator who deleted the message, if present. */
+  deletedBy: string | null;
   /** Rules the AI flagged (e.g. ["hate"]); empty for human-mod deletes. */
   violatedRules: string[];
 }
@@ -78,6 +81,48 @@ function normalizeBadges(raw: unknown): ChatBadge[] {
   return raw.map(normalizeBadge);
 }
 
+function extractReplyContext(raw: Record<string, unknown>): ReplyContext | undefined {
+  const metadata = raw.metadata;
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  const md = metadata as Record<string, unknown>;
+
+  const originalSender = md.original_sender;
+  const originalMessage = md.original_message;
+  if (!originalSender && !originalMessage) return undefined;
+
+  let replyToUser: string | null = null;
+  let replyToUserId: number | null = null;
+  if (typeof originalSender === 'string' && originalSender) {
+    replyToUser = originalSender;
+  } else if (originalSender && typeof originalSender === 'object') {
+    const sender = originalSender as Record<string, unknown>;
+    replyToUser = typeof sender.username === 'string' && sender.username ? sender.username : null;
+    replyToUserId = typeof sender.id === 'number' ? sender.id : null;
+  }
+
+  let replyToText: string | null = null;
+  let replyToMessageId: string | null = null;
+  if (typeof originalMessage === 'string' && originalMessage) {
+    replyToText = originalMessage;
+  } else if (originalMessage && typeof originalMessage === 'object') {
+    const message = originalMessage as Record<string, unknown>;
+    replyToText =
+      typeof message.content === 'string' && message.content ? message.content :
+      typeof message.message === 'string' && message.message ? message.message :
+      null;
+    replyToMessageId = typeof message.id === 'string' ? message.id : null;
+  }
+
+  if (!replyToUser && !replyToText) return undefined;
+  return {
+    replyToUser,
+    replyToText,
+    replyToMessageId,
+    replyToUserId,
+    threadParentId: typeof raw.thread_parent_id === 'string' ? raw.thread_parent_id : null,
+  };
+}
+
 // Defensive: `ChatMessageEvent` is only the empirically-captured "regular message" shape.
 // Kick may emit other payloads under the same event name (e.g. a system message with
 // sender: null, or a reshaped field). Since native chat is already hidden by the time
@@ -93,6 +138,7 @@ export function normalizeMessage(raw: unknown): ChatMessage | null {
   if (typeof s.id !== 'number' || typeof s.username !== 'string') return null;
 
   const identity = (s.identity ?? null) as Record<string, unknown> | null;
+  const replyContext = extractReplyContext(r);
   return {
     id: r.id,
     chatroomId: typeof r.chatroom_id === 'number' ? r.chatroom_id : 0,
@@ -110,6 +156,7 @@ export function normalizeMessage(raw: unknown): ChatMessage | null {
         badgesV2: normalizeBadges(identity?.badges_v2),
       },
     },
+    ...(replyContext ? { replyContext } : {}),
     preserved: false,
   };
 }
@@ -133,6 +180,24 @@ function extractBannedBy(data: Record<string, unknown>): string | null {
     return (bb as Record<string, unknown>).username as string;
   }
   return null;
+}
+
+function extractActorName(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (!value || typeof value !== 'object') return null;
+  const data = value as Record<string, unknown>;
+  return firstString(data.username, data.slug, data.name);
+}
+
+function extractDeletedBy(data: Record<string, unknown>): string | null {
+  return (
+    extractActorName(data.deleted_by) ??
+    extractActorName(data.deletedBy) ??
+    extractActorName(data.moderator) ??
+    extractActorName(data.moderator_user) ??
+    extractActorName(data.deleted_by_user) ??
+    extractActorName(data.user_deleted_by)
+  );
 }
 
 /** UserBannedEvent — live-captured shape: {id, user:{id,username}, banned_by:{username}, permanent,
@@ -175,10 +240,11 @@ export function normalizeDeletePayload(raw: unknown): DeleteEventPayload | null 
   const messageId = typeof rawId === 'string' ? rawId : undefined;
   if (!messageId) return null;
   const aiModerated = typeof data?.aiModerated === 'boolean' ? data.aiModerated : null;
+  const deletedBy = data && typeof data === 'object' ? extractDeletedBy(data as Record<string, unknown>) : null;
   const violatedRules = Array.isArray(data?.violatedRules)
     ? data.violatedRules.filter((rule): rule is string => typeof rule === 'string')
     : [];
-  return { messageId, aiModerated, violatedRules };
+  return { messageId, aiModerated, deletedBy, violatedRules };
 }
 
 /** Opens KickFlow's own, independent, read-only Pusher connection — never the page's

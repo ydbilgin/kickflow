@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appendBadges, appendParsedContent, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { ROLE_BADGE_ASSETS } from '../../src/content/chat/badge-assets';
 import type { ChatMessage } from '../../src/content/chat/message-store';
 
-function message(slug: string, identity?: Partial<ChatMessage['sender']['identity']>): ChatMessage {
+function message(
+  slug: string,
+  identity?: Partial<ChatMessage['sender']['identity']>,
+  overrides: Partial<ChatMessage> = {},
+): ChatMessage {
   return {
     id: 'm1',
     chatroomId: 1,
@@ -17,25 +21,76 @@ function message(slug: string, identity?: Partial<ChatMessage['sender']['identit
       identity: { color: '', badges: [], badgesV2: [], ...identity },
     },
     preserved: false,
+    ...overrides,
   };
 }
 
 describe('message-view safe rendering', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     setSubscriberBadges([]);
+    document.body.innerHTML = '';
   });
 
   it('renders parsed emotes, mentions, links, and script-looking text safely', () => {
     const parent = document.createElement('span');
 
-    appendParsedContent(parent, 'hi [emote:123:kek] @bob http://x.y <script>alert(1)</script>');
+    appendParsedContent(parent, 'hi [emote:123:kek] @Bob, http://x.y <script>alert(1)</script>');
 
     const emote = parent.querySelector<HTMLImageElement>('img.kickflow-emote');
     expect(emote?.src).toBe('https://files.kick.com/emotes/123/fullsize');
-    expect(parent.querySelector('.kickflow-mention')?.textContent).toBe('@bob');
+    const mention = parent.querySelector<HTMLElement>('.kickflow-mention');
+    expect(mention?.textContent).toBe('@Bob');
+    expect(mention?.getAttribute('role')).toBe('link');
+    expect(mention?.tabIndex).toBe(0);
+    expect(mention?.classList.contains('kickflow-mention--link')).toBe(true);
+    expect(parent.textContent).toContain('@Bob, http://x.y');
     expect(parent.querySelector<HTMLAnchorElement>('a.kickflow-link')?.href).toBe('http://x.y/');
     expect(parent.textContent).toContain('<script>alert(1)</script>');
     expect(parent.querySelector('script')).toBeNull();
+  });
+
+  it('opens a mention slug in a new tab on middle-click without adding a same-origin anchor', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const parent = document.createElement('span');
+    appendParsedContent(parent, 'selam @Bob_123!');
+    const mention = parent.querySelector<HTMLElement>('.kickflow-mention');
+
+    mention?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+
+    expect(open).toHaveBeenCalledWith('https://kick.com/bob_123', '_blank', 'noopener,noreferrer');
+    expect(parent.querySelector('a[href*="kick.com"]')).toBeNull();
+  });
+
+  it('opens a mention user card on plain left-click', async () => {
+    const parent = document.createElement('span');
+    appendParsedContent(parent, 'selam @NoSuchUserProbably');
+    document.body.appendChild(parent);
+
+    parent.querySelector<HTMLElement>('.kickflow-mention')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, clientX: 20, clientY: 30 }));
+    await Promise.resolve();
+
+    expect(document.querySelector('.kickflow-user-card')?.textContent).toContain('NoSuchUserProbably');
+    expect(document.querySelector<HTMLAnchorElement>('.kickflow-user-card__link')?.href)
+      .toBe('https://kick.com/nosuchuserprobably');
+  });
+
+  it('keeps mention Space activation from bubbling into page-level hotkeys', async () => {
+    const parent = document.createElement('span');
+    appendParsedContent(parent, 'selam @NoSuchUserProbably');
+    document.body.appendChild(parent);
+    const mention = parent.querySelector<HTMLElement>('.kickflow-mention');
+    const bubbled = vi.fn();
+    document.addEventListener('keydown', bubbled);
+
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: ' ' });
+    mention?.dispatchEvent(event);
+    await Promise.resolve();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(bubbled).not.toHaveBeenCalled();
+    expect(document.querySelector('.kickflow-user-card')?.textContent).toContain('NoSuchUserProbably');
   });
 
   it('renders non-numeric emote ids as text', () => {
@@ -79,6 +134,33 @@ describe('message-view safe rendering', () => {
     expect(row.querySelector('a[href*="kick.com"]')).toBeNull();
   });
 
+  it('opens a safe username in a new tab on middle-click without adding a same-origin anchor', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const row = buildMessageElement(message('alice_123'));
+    const username = row.querySelector<HTMLElement>('.kickflow-message__username');
+
+    username?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+
+    expect(open).toHaveBeenCalledWith('https://kick.com/alice_123', '_blank', 'noopener,noreferrer');
+    expect(row.querySelector('a[href*="kick.com"]')).toBeNull();
+  });
+
+  it('keeps username keyboard activation from bubbling into page-level hotkeys', async () => {
+    const row = buildMessageElement(message('alice_123'));
+    document.body.appendChild(row);
+    const username = row.querySelector<HTMLElement>('.kickflow-message__username');
+    const bubbled = vi.fn();
+    document.addEventListener('keydown', bubbled);
+
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' });
+    username?.dispatchEvent(event);
+    await Promise.resolve();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(bubbled).not.toHaveBeenCalled();
+    expect(document.querySelector('.kickflow-user-card')?.textContent).toContain('Alice');
+  });
+
   it('does not link unsafe username slugs', () => {
     const row = buildMessageElement(message('../evil'));
 
@@ -86,6 +168,29 @@ describe('message-view safe rendering', () => {
     expect(username?.tagName).toBe('SPAN');
     expect(username?.textContent).toBe('Alice');
     expect(row.querySelector('a[href*="evil"]')).toBeNull();
+  });
+
+  it('renders reply context above the message using text nodes only', () => {
+    const row = buildMessageElement(message('alice_123', undefined, {
+      replyContext: {
+        replyToUser: 'ZehoG',
+        replyToText: '<script>alert(1)</script> hello',
+        replyToMessageId: 'orig-1',
+        replyToUserId: 2,
+        threadParentId: 'orig-1',
+      },
+    }));
+
+    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
+    expect(reply?.textContent).toContain('ZehoG: <script>alert(1)</script> hello isimli kullanıcıya yanıt veriyor');
+    expect(reply?.querySelector('.kickflow-message__reply-user')?.textContent).toBe('ZehoG');
+    expect(reply?.querySelector<HTMLElement>('.kickflow-message__reply-user')?.title).toBe('ZehoG');
+    expect(reply?.querySelector('.kickflow-message__reply-separator')?.textContent).toBe(': ');
+    expect(reply?.querySelector('.kickflow-message__reply-snippet')?.textContent).toBe('<script>alert(1)</script> hello');
+    expect(reply?.querySelector<HTMLElement>('.kickflow-message__reply-snippet')?.title).toBe('<script>alert(1)</script> hello');
+    expect(reply?.querySelector('.kickflow-message__reply-label')?.textContent).toBe(' isimli kullanıcıya yanıt veriyor');
+    expect(reply?.querySelector('script')).toBeNull();
+    expect(row.firstElementChild).toBe(reply);
   });
 
   it('renders an authentic Kick SVG for a moderator role badge, with a tooltip', () => {
