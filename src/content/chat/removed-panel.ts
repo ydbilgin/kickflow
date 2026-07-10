@@ -58,6 +58,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private chatModeSelect: HTMLSelectElement | null = null;
   private showDeletedCheckbox: HTMLInputElement | null = null;
   private banInlineCheckbox: HTMLInputElement | null = null;
+  private subscriptionsCheckbox: HTMLInputElement | null = null;
+  private giftedSubsCheckbox: HTMLInputElement | null = null;
+  private hostRaidCheckbox: HTMLInputElement | null = null;
+  private pinnedMessageCheckbox: HTMLInputElement | null = null;
+  private modeChangesCheckbox: HTMLInputElement | null = null;
 
   constructor(
     lifecycle: Lifecycle,
@@ -252,7 +257,66 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     banLabel.append(banText, banCheckbox);
     this.banInlineCheckbox = banCheckbox;
 
-    settings.append(modeLabel, deletedLabel, banLabel);
+    const subscriptionsLabel = document.createElement('label');
+    const subscriptionsText = document.createElement('span');
+    subscriptionsText.textContent = 'Abonelikler';
+    const subscriptionsCheckbox = document.createElement('input');
+    subscriptionsCheckbox.type = 'checkbox';
+    subscriptionsCheckbox.checked = featureFlags.showSubscriptions;
+    subscriptionsCheckbox.addEventListener('change', () => dispatchFlag('showSubscriptions', subscriptionsCheckbox.checked));
+    subscriptionsLabel.append(subscriptionsText, subscriptionsCheckbox);
+    this.subscriptionsCheckbox = subscriptionsCheckbox;
+
+    const giftedSubsLabel = document.createElement('label');
+    const giftedSubsText = document.createElement('span');
+    giftedSubsText.textContent = 'Hediye abonelikler';
+    const giftedSubsCheckbox = document.createElement('input');
+    giftedSubsCheckbox.type = 'checkbox';
+    giftedSubsCheckbox.checked = featureFlags.showGiftedSubs;
+    giftedSubsCheckbox.addEventListener('change', () => dispatchFlag('showGiftedSubs', giftedSubsCheckbox.checked));
+    giftedSubsLabel.append(giftedSubsText, giftedSubsCheckbox);
+    this.giftedSubsCheckbox = giftedSubsCheckbox;
+
+    const hostRaidLabel = document.createElement('label');
+    const hostRaidText = document.createElement('span');
+    hostRaidText.textContent = 'Host / Raid';
+    const hostRaidCheckbox = document.createElement('input');
+    hostRaidCheckbox.type = 'checkbox';
+    hostRaidCheckbox.checked = featureFlags.showHostRaid;
+    hostRaidCheckbox.addEventListener('change', () => dispatchFlag('showHostRaid', hostRaidCheckbox.checked));
+    hostRaidLabel.append(hostRaidText, hostRaidCheckbox);
+    this.hostRaidCheckbox = hostRaidCheckbox;
+
+    const pinnedMessageLabel = document.createElement('label');
+    const pinnedMessageText = document.createElement('span');
+    pinnedMessageText.textContent = 'Sabitlenmiş mesaj';
+    const pinnedMessageCheckbox = document.createElement('input');
+    pinnedMessageCheckbox.type = 'checkbox';
+    pinnedMessageCheckbox.checked = featureFlags.showPinnedMessage;
+    pinnedMessageCheckbox.addEventListener('change', () => dispatchFlag('showPinnedMessage', pinnedMessageCheckbox.checked));
+    pinnedMessageLabel.append(pinnedMessageText, pinnedMessageCheckbox);
+    this.pinnedMessageCheckbox = pinnedMessageCheckbox;
+
+    const modeChangesLabel = document.createElement('label');
+    const modeChangesText = document.createElement('span');
+    modeChangesText.textContent = 'Mod değişiklikleri';
+    const modeChangesCheckbox = document.createElement('input');
+    modeChangesCheckbox.type = 'checkbox';
+    modeChangesCheckbox.checked = featureFlags.showModeChanges;
+    modeChangesCheckbox.addEventListener('change', () => dispatchFlag('showModeChanges', modeChangesCheckbox.checked));
+    modeChangesLabel.append(modeChangesText, modeChangesCheckbox);
+    this.modeChangesCheckbox = modeChangesCheckbox;
+
+    settings.append(
+      modeLabel,
+      deletedLabel,
+      banLabel,
+      subscriptionsLabel,
+      giftedSubsLabel,
+      hostRaidLabel,
+      pinnedMessageLabel,
+      modeChangesLabel,
+    );
     return settings;
   }
 
@@ -271,6 +335,21 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     if (this.banInlineCheckbox && this.banInlineCheckbox.checked !== featureFlags.preserveBansInline) {
       this.banInlineCheckbox.checked = featureFlags.preserveBansInline;
+    }
+    if (this.subscriptionsCheckbox && this.subscriptionsCheckbox.checked !== featureFlags.showSubscriptions) {
+      this.subscriptionsCheckbox.checked = featureFlags.showSubscriptions;
+    }
+    if (this.giftedSubsCheckbox && this.giftedSubsCheckbox.checked !== featureFlags.showGiftedSubs) {
+      this.giftedSubsCheckbox.checked = featureFlags.showGiftedSubs;
+    }
+    if (this.hostRaidCheckbox && this.hostRaidCheckbox.checked !== featureFlags.showHostRaid) {
+      this.hostRaidCheckbox.checked = featureFlags.showHostRaid;
+    }
+    if (this.pinnedMessageCheckbox && this.pinnedMessageCheckbox.checked !== featureFlags.showPinnedMessage) {
+      this.pinnedMessageCheckbox.checked = featureFlags.showPinnedMessage;
+    }
+    if (this.modeChangesCheckbox && this.modeChangesCheckbox.checked !== featureFlags.showModeChanges) {
+      this.modeChangesCheckbox.checked = featureFlags.showModeChanges;
     }
   }
 
@@ -330,6 +409,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.chatModeSelect = null;
     this.showDeletedCheckbox = null;
     this.banInlineCheckbox = null;
+    this.subscriptionsCheckbox = null;
+    this.giftedSubsCheckbox = null;
+    this.hostRaidCheckbox = null;
+    this.pinnedMessageCheckbox = null;
+    this.modeChangesCheckbox = null;
   }
 
   private dispose(): void {

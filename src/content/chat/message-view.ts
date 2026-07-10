@@ -1,4 +1,4 @@
-import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
+import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessageSender, type PinnedMessage, type PreservedMeta, type SubscriberBadge } from './message-store';
 import { isSafeKickSlug, openUserCard } from './user-card';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
@@ -8,6 +8,8 @@ export const PRESERVED_CLASS = 'kickflow-preserved';
 export const BANNED_CLASS = 'kickflow-banned';
 export const TIMEOUT_CLASS = 'kickflow-timeout';
 export const DELETED_CLASS = 'kickflow-deleted';
+export const EVENT_ROW_CLASS = 'kickflow-event-row';
+export const PINNED_MESSAGE_CLASS = 'kickflow-pinned-message';
 
 // Kick official emotes only (confirmed scope — no 7TV/BTTV). Live-verified 2026-07-04:
 // `/fullsize` on this path returns 200 image/gif; the same URL without it returns 403.
@@ -412,7 +414,121 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
   row.appendChild(reply);
 }
 
+/** Sticky Mode A pin banner. Public payload values are rendered only through textContent or the
+ * same parsed-content/badge helpers as ordinary chat messages. */
+export function buildPinnedMessageElement(
+  pin: PinnedMessage,
+  onDismiss: (pinId: string) => void,
+): HTMLElement {
+  const banner = document.createElement('section');
+  banner.className = PINNED_MESSAGE_CLASS;
+  banner.dataset.pinId = pin.message.id;
+
+  const header = document.createElement('div');
+  header.className = `${PINNED_MESSAGE_CLASS}__header`;
+  const title = document.createElement('span');
+  title.className = `${PINNED_MESSAGE_CLASS}__title`;
+  title.textContent = '📌 Sabitlenmiş mesaj';
+  const actor = document.createElement('span');
+  actor.className = `${PINNED_MESSAGE_CLASS}__actor`;
+  actor.textContent = `${pin.pinnedBy.username} sabitledi`;
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = `${PINNED_MESSAGE_CLASS}__dismiss`;
+  dismiss.title = 'Bu sabitlenmiş mesajı kapat';
+  dismiss.setAttribute('aria-label', 'Bu sabitlenmiş mesajı kapat');
+  dismiss.textContent = '×';
+  dismiss.addEventListener('click', () => onDismiss(pin.message.id));
+  header.append(title, actor, dismiss);
+
+  const body = document.createElement('div');
+  body.className = `${PINNED_MESSAGE_CLASS}__body`;
+  const badges = document.createElement('span');
+  badges.className = `${PINNED_MESSAGE_CLASS}__badges`;
+  appendBadges(badges, mergeIdentityBadges(pin.message.sender.identity));
+  const displayName = pin.message.sender.displayName || pin.message.sender.username;
+  const username = document.createElement('span');
+  username.className = `${PINNED_MESSAGE_CLASS}__username`;
+  username.textContent = displayName;
+  wireUsernameProfileLink(username, pin.message.sender, displayName, `${PINNED_MESSAGE_CLASS}__username--link`);
+  username.style.color = pin.message.sender.identity.color || 'inherit';
+  const separator = document.createElement('span');
+  separator.className = `${PINNED_MESSAGE_CLASS}__separator`;
+  separator.textContent = ': ';
+  const content = document.createElement('span');
+  content.className = `${PINNED_MESSAGE_CLASS}__content`;
+  appendParsedContent(content, pin.message.content);
+  body.append(badges, username, separator, content);
+
+  banner.append(header, body);
+  return banner;
+}
+
+/** Safe-render only: username and counts originate in public Pusher payloads and are assigned via
+ * textContent. Fixed connecting words are separate text nodes; no event value becomes markup. */
+function buildSystemEventElement(message: ChatMessage): HTMLElement {
+  const event = message.systemEvent;
+  if (!event) throw new Error('buildSystemEventElement requires a system event');
+
+  const row = document.createElement('div');
+  row.className = `${MESSAGE_CLASS} ${EVENT_ROW_CLASS} ${EVENT_ROW_CLASS}--${event.kind}`;
+  row.dataset.messageId = message.id;
+
+  const icon = document.createElement('span');
+  icon.className = `${EVENT_ROW_CLASS}__icon`;
+  icon.textContent = event.kind === 'subscription'
+    ? '⭐'
+    : event.kind === 'gifted-subscription'
+      ? '🎁'
+      : event.kind === 'host'
+        ? '📡'
+        : '⚙';
+
+  if (event.kind === 'mode') {
+    const text = document.createElement('span');
+    text.className = `${EVENT_ROW_CLASS}__text`;
+    text.textContent = event.text;
+    row.append(icon, text);
+    return row;
+  }
+
+  const username = document.createElement('span');
+  username.className = `${EVENT_ROW_CLASS}__username`;
+  username.textContent = event.username;
+
+  row.append(icon, username);
+  if (event.kind === 'subscription') {
+    if (event.months === 1) {
+      row.appendChild(document.createTextNode(' abone oldu'));
+    } else {
+      row.appendChild(document.createTextNode(' '));
+      const count = document.createElement('span');
+      count.className = `${EVENT_ROW_CLASS}__count`;
+      count.textContent = String(event.months);
+      row.append(count, document.createTextNode(' ay abone oldu'));
+    }
+  } else if (event.kind === 'gifted-subscription') {
+    row.appendChild(document.createTextNode(' '));
+    const count = document.createElement('span');
+    count.className = `${EVENT_ROW_CLASS}__count`;
+    count.textContent = String(event.giftCount);
+    row.append(count, document.createTextNode(' kişiye abonelik hediye etti'));
+  } else if (event.numberViewers > 0) {
+    row.appendChild(document.createTextNode(' '));
+    const count = document.createElement('span');
+    count.className = `${EVENT_ROW_CLASS}__count`;
+    count.textContent = new Intl.NumberFormat('tr-TR').format(event.numberViewers);
+    row.append(count, document.createTextNode(' izleyiciyle host etti'));
+  } else {
+    row.appendChild(document.createTextNode(' host etti'));
+  }
+
+  return row;
+}
+
 export function buildMessageElement(message: ChatMessage): HTMLElement {
+  if (message.systemEvent) return buildSystemEventElement(message);
+
   const row = document.createElement('div');
   row.className = MESSAGE_CLASS;
   row.dataset.messageId = message.id;

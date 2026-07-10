@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appendBadges, appendParsedContent, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
+import { appendBadges, appendParsedContent, buildMessageElement, buildPinnedMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { ROLE_BADGE_ASSETS } from '../../src/content/chat/badge-assets';
-import type { ChatMessage } from '../../src/content/chat/message-store';
+import type { ChatMessage, PinnedMessage } from '../../src/content/chat/message-store';
 
 function message(
   slug: string,
@@ -48,6 +48,120 @@ describe('message-view safe rendering', () => {
     expect(parent.querySelector<HTMLAnchorElement>('a.kickflow-link')?.href).toBe('http://x.y/');
     expect(parent.textContent).toContain('<script>alert(1)</script>');
     expect(parent.querySelector('script')).toBeNull();
+  });
+
+  it('renders a subscription event row with singular/plural wording and safe user text', () => {
+    const unsafeUsername = '<img src=x onerror=alert(1)>';
+    const firstMonth = buildMessageElement(message('', undefined, {
+      id: 'sub:1:first:1',
+      type: 'subscription',
+      systemEvent: { kind: 'subscription', username: unsafeUsername, months: 1 },
+    }));
+    const renewal = buildMessageElement(message('', undefined, {
+      id: 'sub:1:renewal:2',
+      type: 'subscription',
+      systemEvent: { kind: 'subscription', username: '***REMOVED***', months: 5 },
+    }));
+
+    expect(firstMonth.classList.contains('kickflow-event-row')).toBe(true);
+    expect(firstMonth.querySelector('.kickflow-event-row__icon')?.textContent).toBe('⭐');
+    expect(firstMonth.querySelector('.kickflow-event-row__username')?.textContent).toBe(unsafeUsername);
+    expect(firstMonth.textContent).toBe(`⭐${unsafeUsername} abone oldu`);
+    expect(firstMonth.querySelector('img')).toBeNull();
+    expect(renewal.textContent).toBe('⭐***REMOVED*** 5 ay abone oldu');
+  });
+
+  it('renders a gifted-subscription event row with a safe username and count', () => {
+    const row = buildMessageElement(message('', undefined, {
+      id: 'gift:1:***REMOVED***:1',
+      type: 'gifted-subscription',
+      systemEvent: { kind: 'gifted-subscription', username: '***REMOVED***<script>', giftCount: 3 },
+    }));
+
+    expect(row.classList.contains('kickflow-event-row--gifted-subscription')).toBe(true);
+    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('🎁');
+    expect(row.querySelector('.kickflow-event-row__username')?.textContent).toBe('***REMOVED***<script>');
+    expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('3');
+    expect(row.textContent).toBe('🎁***REMOVED***<script> 3 kişiye abonelik hediye etti');
+    expect(row.querySelector('script')).toBeNull();
+  });
+
+  it('renders host rows with safe user text, Turkish viewer formatting, and a viewerless fallback', () => {
+    const unsafeUsername = '<img src=x onerror=alert(1)>';
+    const withViewers = buildMessageElement(message('', undefined, {
+      id: 'host:1:unsafe:1',
+      type: 'host',
+      systemEvent: {
+        kind: 'host',
+        username: unsafeUsername,
+        numberViewers: 12_345,
+        optionalMessage: '<script>alert(2)</script>',
+      },
+    }));
+    const withoutViewers = buildMessageElement(message('', undefined, {
+      id: 'host:1:viewerless:2',
+      type: 'host',
+      systemEvent: {
+        kind: 'host',
+        username: 'Mr_Jelal',
+        numberViewers: 0,
+        optionalMessage: null,
+      },
+    }));
+
+    expect(withViewers.classList.contains('kickflow-event-row--host')).toBe(true);
+    expect(withViewers.querySelector('.kickflow-event-row__icon')?.textContent).toBe('📡');
+    expect(withViewers.querySelector('.kickflow-event-row__username')?.textContent).toBe(unsafeUsername);
+    expect(withViewers.querySelector('.kickflow-event-row__count')?.textContent).toBe('12.345');
+    expect(withViewers.textContent).toBe(`📡${unsafeUsername} 12.345 izleyiciyle host etti`);
+    expect(withViewers.querySelector('img, script')).toBeNull();
+    expect(withoutViewers.textContent).toBe('📡Mr_Jelal host etti');
+    expect(withoutViewers.querySelector('.kickflow-event-row__count')).toBeNull();
+  });
+
+  it('renders a mode system row with its settings icon and safe text', () => {
+    const unsafeText = 'Yavaş mod açıldı (5sn)<script>alert(1)</script>';
+    const row = buildMessageElement(message('', undefined, {
+      id: 'mode:1:slow_mode:1',
+      type: 'mode',
+      systemEvent: { kind: 'mode', mode: 'slow_mode', text: unsafeText },
+    }));
+
+    expect(row.classList.contains('kickflow-event-row--mode')).toBe(true);
+    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('⚙');
+    expect(row.querySelector('.kickflow-event-row__text')?.textContent).toBe(unsafeText);
+    expect(row.querySelector('script')).toBeNull();
+  });
+
+  it('builds the sticky pin with normal badges/content parsing and ID-scoped dismiss', () => {
+    const onDismiss = vi.fn();
+    const pinned: PinnedMessage = {
+      message: message('botrix', { badges: [{ type: 'moderator', text: 'Moderator' }] }, {
+        id: 'pin-1',
+        content: 'bak [emote:123:kek] @Bob <script>alert(1)</script>',
+        sender: {
+          id: 1,
+          username: '<img src=x onerror=alert(1)>',
+          slug: 'botrix',
+          identity: { color: '#75FD46', badges: [{ type: 'moderator', text: 'Moderator' }], badgesV2: [] },
+        },
+      }),
+      durationSeconds: 1200,
+      pinnedBy: { id: 2, username: '<svg onload=alert(1)>', slug: 'moderator' },
+    };
+
+    const banner = buildPinnedMessageElement(pinned, onDismiss);
+    expect(banner.dataset.pinId).toBe('pin-1');
+    expect(banner.querySelector('.kickflow-pinned-message__username')?.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(banner.querySelector('.kickflow-pinned-message__actor')?.textContent).toBe('<svg onload=alert(1)> sabitledi');
+    expect(banner.querySelector('.kickflow-badge-icon')).not.toBeNull();
+    expect(banner.querySelector('.kickflow-emote')).not.toBeNull();
+    expect(banner.querySelector('.kickflow-mention')?.textContent).toBe('@Bob');
+    expect(banner.querySelector('.kickflow-pinned-message__content')?.textContent).toContain('<script>alert(1)</script>');
+    expect(banner.querySelector('script, svg')).toBeNull();
+
+    banner.querySelector<HTMLButtonElement>('.kickflow-pinned-message__dismiss')?.click();
+    expect(onDismiss).toHaveBeenCalledWith('pin-1');
   });
 
   it('opens a mention slug in a new tab on middle-click without adding a same-origin anchor', () => {

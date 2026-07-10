@@ -1,5 +1,5 @@
 // KickFlow popup: reports live status of the content script on the active Kick tab and exposes
-// two flag toggles. Talks to the content script over chrome.tabs.sendMessage (activeTab grants
+// owner-facing flag toggles. Talks to the content script over chrome.tabs.sendMessage (activeTab grants
 // access on popup open). No inline script (MV3 CSP) — this is built to dist/popup.js.
 
 interface StatusResponse {
@@ -22,6 +22,11 @@ interface StatusResponse {
     showDeletedMessages: boolean;
     preserveBansInline: boolean;
     debugLogging: boolean;
+    showSubscriptions: boolean;
+    showGiftedSubs: boolean;
+    showHostRaid: boolean;
+    showPinnedMessage: boolean;
+    showModeChanges: boolean;
   };
 }
 
@@ -73,6 +78,11 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-deleted') as HTMLInputElement)).checked = res.flags.showDeletedMessages;
   (($('t-bans-inline') as HTMLInputElement)).checked = res.flags.preserveBansInline;
   (($('t-debug') as HTMLInputElement)).checked = res.flags.debugLogging;
+  (($('t-subscriptions') as HTMLInputElement)).checked = res.flags.showSubscriptions;
+  (($('t-gifted-subs') as HTMLInputElement)).checked = res.flags.showGiftedSubs;
+  (($('t-host-raid') as HTMLInputElement)).checked = res.flags.showHostRaid;
+  (($('t-pinned-message') as HTMLInputElement)).checked = res.flags.showPinnedMessage;
+  (($('t-mode-changes') as HTMLInputElement)).checked = res.flags.showModeChanges;
   (($('t-chat-mode') as HTMLSelectElement)).value = res.flags.chatMode;
 }
 
@@ -88,10 +98,13 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function setFlag(key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging', value: boolean): Promise<void>;
+async function setFlag(
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showPinnedMessage' | 'showModeChanges',
+  value: boolean,
+): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'chatMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showPinnedMessage' | 'showModeChanges' | 'chatMode',
   value: boolean | 'native' | 'own'
 ): Promise<void> {
   const id = await activeTabId();
@@ -107,6 +120,11 @@ async function setFlag(
 $('t-deleted').addEventListener('change', (e) => setFlag('showDeletedMessages', (e.target as HTMLInputElement).checked));
 $('t-bans-inline').addEventListener('change', (e) => setFlag('preserveBansInline', (e.target as HTMLInputElement).checked));
 $('t-debug').addEventListener('change', (e) => setFlag('debugLogging', (e.target as HTMLInputElement).checked));
+$('t-subscriptions').addEventListener('change', (e) => setFlag('showSubscriptions', (e.target as HTMLInputElement).checked));
+$('t-gifted-subs').addEventListener('change', (e) => setFlag('showGiftedSubs', (e.target as HTMLInputElement).checked));
+$('t-host-raid').addEventListener('change', (e) => setFlag('showHostRaid', (e.target as HTMLInputElement).checked));
+$('t-pinned-message').addEventListener('change', (e) => setFlag('showPinnedMessage', (e.target as HTMLInputElement).checked));
+$('t-mode-changes').addEventListener('change', (e) => setFlag('showModeChanges', (e.target as HTMLInputElement).checked));
 $('t-chat-mode').addEventListener('change', (e) => setFlag('chatMode', (e.target as HTMLSelectElement).value as 'native' | 'own'));
 
 void refresh();

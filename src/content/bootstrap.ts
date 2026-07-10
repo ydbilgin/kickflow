@@ -5,9 +5,23 @@ import { whenElementPresent } from './shared/dom-observers';
 import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
 import { featureFlags, setFeatureFlag } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
-import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage, type SubscriberBadge } from './chat/message-store';
+import {
+  ActivePinnedMessageState,
+  ChatDomRegistry,
+  ChatIntegrityStore,
+  type ChatMessage,
+  type ChatroomModeKey,
+  type PinnedMessage,
+  type SubscriberBadge,
+} from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
-import { PusherClient } from './chat/pusher-client';
+import {
+  PusherClient,
+  type ChatroomUpdatedEventPayload,
+  type ChannelSubscriptionEventPayload,
+  type HostEventPayload,
+  type SubscriptionEventPayload,
+} from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
 import { RemovedMessagesPanel } from './chat/removed-panel';
 import { FooterToggleButton } from './chat/footer-toggle';
@@ -16,7 +30,7 @@ import { ScrollFollowController, trimMessageWindow, decideScrollFollow } from '.
 import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
-import { setSubscriberBadges } from './chat/message-view';
+import { buildPinnedMessageElement, setSubscriberBadges } from './chat/message-view';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -25,9 +39,191 @@ import { initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
 
 const STYLE_ID = 'kickflow-styles';
+const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
+const PINNED_MESSAGE_HOST_ID = 'kickflow-pinned-message-host';
 const OWN_LIST_ID = 'kickflow-message-list';
 const PRESERVED_SWEEP_INTERVAL_MS = 60_000;
 const NAVIGATION_POLL_INTERVAL_MS = 400;
+
+const BOOLEAN_FLAG_KEYS = [
+  'showDeletedMessages',
+  'preserveBansInline',
+  'debugLogging',
+  'showSubscriptions',
+  'showGiftedSubs',
+  'showHostRaid',
+  'showPinnedMessage',
+  'showModeChanges',
+] as const;
+
+type BooleanFlagKey = (typeof BOOLEAN_FLAG_KEYS)[number];
+
+function isBooleanFlagKey(key: string): key is BooleanFlagKey {
+  return (BOOLEAN_FLAG_KEYS as readonly string[]).includes(key);
+}
+
+interface SystemEventCallbacks {
+  onSubscription: (payload: SubscriptionEventPayload) => void;
+  onChannelSubscription: (payload: ChannelSubscriptionEventPayload) => void;
+  onHost: (payload: HostEventPayload) => void;
+  onChatroomUpdated: (payload: ChatroomUpdatedEventPayload) => void;
+}
+
+/** Builds Mode A's system-event callbacks. Display toggles gate ingestion, so turning one off
+ * only drops future events; rows already rendered remain until the normal message-window trim. */
+export function createSystemEventCallbacks(
+  enqueueOnce: (message: ChatMessage) => void,
+  chatroomId: number,
+): SystemEventCallbacks {
+  let systemEventSequence = 0;
+  let previousChatroomState: ChatroomUpdatedEventPayload | null = null;
+
+  const createSystemEventMessage = (
+    id: string,
+    eventChatroomId: number,
+    systemEvent: NonNullable<ChatMessage['systemEvent']>,
+  ): ChatMessage => ({
+    id,
+    chatroomId: eventChatroomId,
+    content: '',
+    type: systemEvent.kind,
+    createdAt: new Date().toISOString(),
+    sender: {
+      id: 0,
+      username: 'username' in systemEvent ? systemEvent.username : '',
+      slug: '',
+      identity: { color: '', badges: [], badgesV2: [] },
+    },
+    systemEvent,
+    preserved: false,
+  });
+
+  return {
+    onSubscription: (payload) => {
+      if (!featureFlags.showSubscriptions) return;
+      const sequence = ++systemEventSequence;
+      enqueueOnce(createSystemEventMessage(
+        `sub:${payload.chatroomId}:${encodeURIComponent(payload.username)}:${payload.months}:${sequence}`,
+        payload.chatroomId,
+        { kind: 'subscription', username: payload.username, months: payload.months },
+      ));
+    },
+    onChannelSubscription: (payload) => {
+      if (!featureFlags.showGiftedSubs) return;
+      const sequence = ++systemEventSequence;
+      enqueueOnce(createSystemEventMessage(
+        `gift:${payload.channelId}:${encodeURIComponent(payload.username)}:${payload.giftCount}:${sequence}`,
+        chatroomId,
+        { kind: 'gifted-subscription', username: payload.username, giftCount: payload.giftCount },
+      ));
+    },
+    onHost: (payload) => {
+      if (!featureFlags.showHostRaid) return;
+      const sequence = ++systemEventSequence;
+      enqueueOnce(createSystemEventMessage(
+        `host:${payload.chatroomId}:${encodeURIComponent(payload.hostUsername)}:${sequence}`,
+        payload.chatroomId,
+        {
+          kind: 'host',
+          username: payload.hostUsername,
+          numberViewers: payload.numberViewers,
+          optionalMessage: payload.optionalMessage,
+        },
+      ));
+    },
+    onChatroomUpdated: (payload) => {
+      const previous = previousChatroomState;
+      previousChatroomState = payload;
+      if (!previous || previous.chatroomId !== payload.chatroomId) return;
+
+      const changes: Array<{ mode: ChatroomModeKey; text: string }> = [];
+      if (
+        previous.slowMode.enabled !== payload.slowMode.enabled ||
+        (payload.slowMode.enabled && previous.slowMode.messageInterval !== payload.slowMode.messageInterval)
+      ) {
+        changes.push({
+          mode: 'slow_mode',
+          text: payload.slowMode.enabled
+            ? `Yavaş mod açıldı (${payload.slowMode.messageInterval}sn)`
+            : 'Yavaş mod kapandı',
+        });
+      }
+      if (
+        previous.followersMode.enabled !== payload.followersMode.enabled ||
+        (payload.followersMode.enabled && previous.followersMode.minDuration !== payload.followersMode.minDuration)
+      ) {
+        const duration = payload.followersMode.minDuration > 0 ? ` (${payload.followersMode.minDuration}dk)` : '';
+        changes.push({
+          mode: 'followers_mode',
+          text: payload.followersMode.enabled
+            ? `Sadece takipçi modu açıldı${duration}`
+            : 'Sadece takipçi modu kapandı',
+        });
+      }
+      if (previous.subscribersMode.enabled !== payload.subscribersMode.enabled) {
+        changes.push({
+          mode: 'subscribers_mode',
+          text: payload.subscribersMode.enabled ? 'Sadece abone modu açıldı' : 'Sadece abone modu kapandı',
+        });
+      }
+      if (previous.emotesMode.enabled !== payload.emotesMode.enabled) {
+        changes.push({
+          mode: 'emotes_mode',
+          text: payload.emotesMode.enabled ? 'Sadece emote modu açıldı' : 'Sadece emote modu kapandı',
+        });
+      }
+      if (!featureFlags.showModeChanges) return;
+
+      for (const change of changes) {
+        const sequence = ++systemEventSequence;
+        enqueueOnce(createSystemEventMessage(
+          `mode:${payload.chatroomId}:${change.mode}:${sequence}`,
+          payload.chatroomId,
+          { kind: 'mode', mode: change.mode, text: change.text },
+        ));
+      }
+    },
+  };
+}
+
+export interface PinnedMessageController {
+  onPinnedMessage: (pin: PinnedMessage) => void;
+  refresh: () => void;
+}
+
+/** Own-mode pin controller: Pusher ingestion is flag-gated, while refresh lets a live global
+ * toggle hide/show the current non-dismissed pin without changing its per-id dismiss state. */
+export function createPinnedMessageController(
+  host: HTMLElement,
+  onShow: () => void = () => undefined,
+): PinnedMessageController {
+  const state = new ActivePinnedMessageState();
+  const refresh = (): void => {
+    const pin = featureFlags.showPinnedMessage ? state.getVisible() : null;
+    if (!pin) {
+      host.replaceChildren();
+      host.style.display = 'none';
+      return;
+    }
+    const element = buildPinnedMessageElement(pin, (pinId) => {
+      if (!state.dismiss(pinId)) return;
+      refresh();
+    });
+    host.replaceChildren(element);
+    host.style.display = '';
+    onShow();
+  };
+
+  return {
+    onPinnedMessage: (pin) => {
+      if (!featureFlags.showPinnedMessage || !state.setActive(pin)) return;
+      refresh();
+    },
+    refresh,
+  };
+}
+
+let refreshActivePinnedMessage: (() => void) | null = null;
 
 const NON_CHANNEL_SLUGS = new Set([
   'video',
@@ -126,11 +322,38 @@ function ensureStyles(): void {
   // Images use `display: inline-block !important` + an explicit px height. Kick's page is built
   // with Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally.
   style.textContent = `
+    #${OVERLAY_ROOT_ID} { display: flex; flex-direction: column; overflow: hidden; }
+    #${PINNED_MESSAGE_HOST_ID} { flex: none; padding: 6px 10px 0; box-sizing: border-box; }
     #${OWN_LIST_ID} {
-      padding: 6px 10px; overflow-y: auto; height: 100%; box-sizing: border-box;
+      flex: 1 1 auto; min-height: 0; padding: 6px 10px; overflow-y: auto; height: auto; box-sizing: border-box;
       font-size: 13px; line-height: 1.45; color: #efeff1;
       font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
     }
+    .kickflow-pinned-message {
+      overflow: hidden; border: 1px solid rgba(255,176,32,0.55); border-radius: 7px;
+      background: rgba(24,24,27,0.97); color: #efeff1;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35); font-size: 13px; line-height: 1.4;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    }
+    .kickflow-pinned-message__header {
+      display: flex; align-items: center; gap: 7px; min-height: 28px; padding: 3px 5px 3px 8px;
+      background: rgba(255,176,32,0.12); color: #ffd27a;
+    }
+    .kickflow-pinned-message__title { font-weight: 800; }
+    .kickflow-pinned-message__actor { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8c8cf; font-size: 11px; }
+    .kickflow-pinned-message__dismiss {
+      flex: none; margin-left: auto; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px;
+      background: transparent; color: #c8c8cf; font: 700 18px/24px system-ui, sans-serif; cursor: pointer;
+    }
+    .kickflow-pinned-message__dismiss:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .kickflow-pinned-message__body { padding: 7px 9px 8px; word-break: break-word; overflow-wrap: anywhere; }
+    .kickflow-pinned-message__badges:empty { display: none; }
+    .kickflow-pinned-message__badges { margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle; }
+    .kickflow-pinned-message__username { font-weight: 700; }
+    .kickflow-pinned-message__username--link { cursor: pointer; }
+    .kickflow-pinned-message__username--link:hover { text-decoration: underline; }
+    .kickflow-pinned-message__separator { color: #adadb8; }
+    .kickflow-pinned-message__content { color: #efeff1; }
     #${OWN_LIST_ID} .kickflow-message {
       display: block; padding: 3px 5px; border-radius: 4px;
       word-break: break-word; overflow-wrap: anywhere;
@@ -148,6 +371,26 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message__username--link:hover { text-decoration: underline; }
     #${OWN_LIST_ID} .kickflow-message__separator { color: #adadb8; }
     #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; }
+    #${OWN_LIST_ID} .kickflow-event-row {
+      display: flex; align-items: baseline; gap: 0; margin: 2px 0;
+      border-left: 2px solid rgba(83,252,24,0.7);
+      background: rgba(83,252,24,0.07); color: #d8f7ce;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--gifted-subscription {
+      border-left-color: rgba(255,176,32,0.8);
+      background: rgba(255,176,32,0.08); color: #ffe0a3;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--host {
+      border-left-color: rgba(70,169,255,0.85);
+      background: rgba(70,169,255,0.09); color: #b9ddff;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--mode {
+      border-left-color: rgba(168,139,250,0.85);
+      background: rgba(168,139,250,0.09); color: #ddd0ff;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row__icon { flex: none; margin-right: 5px; }
+    #${OWN_LIST_ID} .kickflow-event-row__username,
+    #${OWN_LIST_ID} .kickflow-event-row__count { font-weight: 700; color: inherit; }
     #${OWN_LIST_ID} .kickflow-message__reply-context {
       display: flex; align-items: center; width: 100%; min-width: 0; margin-bottom: 4px;
       color: rgba(255,255,255,0.42); font-size: 11px; font-weight: 500;
@@ -480,9 +723,9 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       return;
     }
     setSubscriberBadges(resolved.subscriberBadges);
-    const { chatroomId } = resolved;
+    const { chatroomId, channelId } = resolved;
     setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
-    const client = new PusherClient(chatroomId, {
+    const client = new PusherClient(chatroomId, channelId, {
       onConnected: () => {
         setStatus({ pusherConnected: true, active: true, reason: 'aktif — native chat işaretleniyor' });
       },
@@ -525,6 +768,17 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   new FooterToggleButton(lifecycle, panel);
 
   const mount = new ChatOverlayMount(lifecycle);
+  let activated = false;
+  const pinnedMessageController = createPinnedMessageController(mount.pinnedMessageHost, () => {
+    if (activated) return;
+    activated = true;
+    mount.activate();
+    setStatus({ active: true, reason: 'aktif — sabitlenmiş mesaj gösteriliyor' });
+  });
+  refreshActivePinnedMessage = pinnedMessageController.refresh;
+  lifecycle.add(() => {
+    if (refreshActivePinnedMessage === pinnedMessageController.refresh) refreshActivePinnedMessage = null;
+  });
   const ownList = mount.ownList;
 
   const scrollPill = document.createElement('button');
@@ -545,7 +799,6 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   mount.root.appendChild(scrollPill);
   lifecycle.add(() => scrollPill.remove());
 
-  let activated = false;
   const renderQueue = new RenderQueue({
     getContainer: () => ownList,
     registry,
@@ -576,6 +829,10 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   lifecycle.add(() => renderQueue.dispose());
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
 
+  const enqueueOnce = (message: ChatMessage): void => {
+    if (store.addMessage(message)) renderQueue.enqueue(message);
+  };
+
   resolveChannel(slug).then(async (resolved) => {
     if (lifecycle.isDisposed) return;
     if (!resolved) {
@@ -590,12 +847,12 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       isDisposed: () => lifecycle.isDisposed,
       onMessages: (history) => {
         for (const message of history) {
-          store.addMessage(message);
-          renderQueue.enqueue(message);
+          enqueueOnce(message);
         }
       },
     });
-    const client = new PusherClient(chatroomId, {
+    const systemEventCallbacks = createSystemEventCallbacks(enqueueOnce, chatroomId);
+    const client = new PusherClient(chatroomId, channelId, {
       onConnected: () => {
         setStatus({ pusherConnected: true });
         if (!getStatus().active) setStatus({ reason: 'Pusher bağlı — geçmiş yükleniyor…' });
@@ -608,9 +865,13 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
         setStatus({ pusherConnected: false });
       },
       onMessage: (message) => {
-        store.addMessage(message);
-        renderQueue.enqueue(message);
+        enqueueOnce(message);
       },
+      onSubscription: systemEventCallbacks.onSubscription,
+      onChannelSubscription: systemEventCallbacks.onChannelSubscription,
+      onHost: systemEventCallbacks.onHost,
+      onPinnedMessage: pinnedMessageController.onPinnedMessage,
+      onChatroomUpdated: systemEventCallbacks.onChatroomUpdated,
       onUserBanned: (payload) => {
         setStatus({ lastBanAt: Date.now() });
         handleUserBanned(payload, { store, registry });
@@ -745,11 +1006,12 @@ function handlePotentialNavigation(): void {
 /** Single mutator for feature flags — used by BOTH the popup (chrome message) and the in-panel
  * gear (window event), so featureFlags stays the one source of truth and side effects (reconcile
  * / session restart / persist) happen exactly once per change. */
-function applyFlagChange(key: string, value: boolean | string): void {
-  if ((key === 'showDeletedMessages' || key === 'preserveBansInline' || key === 'debugLogging') && typeof value === 'boolean') {
+export function applyFlagChange(key: string, value: boolean | string): void {
+  if (isBooleanFlagKey(key) && typeof value === 'boolean') {
     setFeatureFlag(key, value);
     if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
     if (key === 'debugLogging') setDebugLogging(value);
+    if (key === 'showPinnedMessage') refreshActivePinnedMessage?.();
     void safeStorageSet({ ['kf_flag_' + key]: value });
   } else if (key === 'chatMode' && (value === 'native' || value === 'own')) {
     setFeatureFlag('chatMode', value);
@@ -760,6 +1022,30 @@ function applyFlagChange(key: string, value: boolean | string): void {
       void startSession(currentSlug);
     }
   }
+}
+
+export function getPopupFeatureFlags(): {
+  chatMode: 'native' | 'own';
+  showDeletedMessages: boolean;
+  preserveBansInline: boolean;
+  debugLogging: boolean;
+  showSubscriptions: boolean;
+  showGiftedSubs: boolean;
+  showHostRaid: boolean;
+  showPinnedMessage: boolean;
+  showModeChanges: boolean;
+} {
+  return {
+    chatMode: featureFlags.chatMode,
+    showDeletedMessages: featureFlags.showDeletedMessages,
+    preserveBansInline: featureFlags.preserveBansInline,
+    debugLogging: featureFlags.debugLogging,
+    showSubscriptions: featureFlags.showSubscriptions,
+    showGiftedSubs: featureFlags.showGiftedSubs,
+    showHostRaid: featureFlags.showHostRaid,
+    showPinnedMessage: featureFlags.showPinnedMessage,
+    showModeChanges: featureFlags.showModeChanges,
+  };
 }
 
 /** Popup ↔ content-script bridge: report status + apply flag toggles. activeTab grants the
@@ -778,18 +1064,13 @@ function installStatusBridge(): void {
         bannedCount: document.querySelectorAll('.kickflow-banned').length,
         deletedCount: document.querySelectorAll('.kickflow-deleted').length,
         ...getActiveNativeChatGhostStats(),
-        flags: {
-          chatMode: featureFlags.chatMode,
-          showDeletedMessages: featureFlags.showDeletedMessages,
-          preserveBansInline: featureFlags.preserveBansInline,
-          debugLogging: featureFlags.debugLogging,
-        },
+        flags: getPopupFeatureFlags(),
       });
       return;
     }
     if (
       msg.type === 'kickflow:setFlag' &&
-      (msg.key === 'showDeletedMessages' || msg.key === 'preserveBansInline' || msg.key === 'debugLogging') &&
+      isBooleanFlagKey(msg.key) &&
       typeof msg.value === 'boolean'
     ) {
       applyFlagChange(msg.key, msg.value);
@@ -818,17 +1099,27 @@ function installStatusBridge(): void {
 
 /** Load flag overrides the user set via the popup, applied before the first session starts so
  * they take effect immediately (not just after the next toggle). */
-async function applySavedFlags(): Promise<void> {
+export async function applySavedFlags(): Promise<void> {
   const saved = await safeStorageGet([
     'kf_flag_chatMode',
     'kf_flag_showDeletedMessages',
     'kf_flag_preserveBansInline',
     'kf_flag_debugLogging',
+    'kf_flag_showSubscriptions',
+    'kf_flag_showGiftedSubs',
+    'kf_flag_showHostRaid',
+    'kf_flag_showPinnedMessage',
+    'kf_flag_showModeChanges',
   ]);
   if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
   if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
   if (typeof saved.kf_flag_preserveBansInline === 'boolean') setFeatureFlag('preserveBansInline', saved.kf_flag_preserveBansInline);
   if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);
+  if (typeof saved.kf_flag_showSubscriptions === 'boolean') setFeatureFlag('showSubscriptions', saved.kf_flag_showSubscriptions);
+  if (typeof saved.kf_flag_showGiftedSubs === 'boolean') setFeatureFlag('showGiftedSubs', saved.kf_flag_showGiftedSubs);
+  if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
+  if (typeof saved.kf_flag_showPinnedMessage === 'boolean') setFeatureFlag('showPinnedMessage', saved.kf_flag_showPinnedMessage);
+  if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
 }
 
 function installNavigationHooks(): void {

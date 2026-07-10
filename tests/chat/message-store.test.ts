@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ChatIntegrityStore, GLOBAL_CAPACITY, mergeIdentityBadges, type ChatMessage } from '../../src/content/chat/message-store';
+import { ActivePinnedMessageState, ChatIntegrityStore, GLOBAL_CAPACITY, mergeIdentityBadges, type ChatMessage, type PinnedMessage } from '../../src/content/chat/message-store';
 import { MAX_NON_PRESERVED_NODES_PAUSED } from '../../src/content/chat/dom-window';
 
 function message(id: string, userId = 1, createdAt = new Date().toISOString()): ChatMessage {
@@ -22,8 +22,8 @@ function message(id: string, userId = 1, createdAt = new Date().toISOString()): 
 describe('ChatIntegrityStore', () => {
   it('dedupes by id and evicts non-preserved messages from per-user/global rings', () => {
     const store = new ChatIntegrityStore();
-    store.addMessage(message('same', 1));
-    store.addMessage(message('same', 1));
+    expect(store.addMessage(message('same', 1))).toBe(true);
+    expect(store.addMessage(message('same', 1))).toBe(false);
     expect(store.messageById.size).toBe(1);
 
     for (let i = 0; i < 31; i++) store.addMessage(message(`u-${i}`, 2));
@@ -32,6 +32,26 @@ describe('ChatIntegrityStore', () => {
 
     for (let i = 0; i < GLOBAL_CAPACITY + 1; i++) store.addMessage(message(`g-${i}`, 1000 + i));
     expect(store.getMessageById('same')).toBeUndefined();
+  });
+
+  it('stores host events for normal trimming but never indexes, bans, or preserves them as user messages', () => {
+    const store = new ChatIntegrityStore();
+    const event = message('host:1:user:1', 7);
+    event.systemEvent = {
+      kind: 'host',
+      username: 'user',
+      numberViewers: 16,
+      optionalMessage: null,
+    };
+    store.addMessage(event);
+    store.addMessage(message('regular', 7));
+
+    expect(store.getMessageById(event.id)).toBe(event);
+    expect(store.getMessagesByUserId(7).map(({ id }) => id)).toEqual(['regular']);
+    expect(store.markUserBanned(7).map(({ id }) => id)).toEqual(['regular']);
+    expect(store.markMessageDeleted(event.id)).toBeUndefined();
+    expect(event.preserved).toBe(false);
+    expect(store.getPreserved().map(({ id }) => id)).toEqual(['regular']);
   });
 
   it('exempts preserved messages from normal eviction', () => {
@@ -129,6 +149,29 @@ describe('ChatIntegrityStore', () => {
       preservedReason: 'banned',
       preservedMeta: { permanent: false, durationMin: 5, bannedBy: 'mod' },
     });
+  });
+});
+
+describe('ActivePinnedMessageState', () => {
+  it('dismisses only the active id, dedupes it, and exposes a different next pin', () => {
+    const state = new ActivePinnedMessageState();
+    const pin = (id: string): PinnedMessage => ({
+      message: message(id),
+      durationSeconds: 1200,
+      pinnedBy: { id: 9, username: 'mod', slug: 'mod' },
+    });
+
+    expect(state.setActive(pin('pin-1'))).toBe(true);
+    expect(state.setActive(pin('pin-1'))).toBe(false);
+    expect(state.getVisible()?.message.id).toBe('pin-1');
+    expect(state.dismiss('another-id')).toBe(false);
+    expect(state.dismiss('pin-1')).toBe(true);
+    expect(state.getVisible()).toBeNull();
+    expect(state.dismiss('pin-1')).toBe(false);
+
+    expect(state.setActive(pin('pin-2'))).toBe(true);
+    expect(state.getActive()?.message.id).toBe('pin-2');
+    expect(state.getVisible()?.message.id).toBe('pin-2');
   });
 });
 

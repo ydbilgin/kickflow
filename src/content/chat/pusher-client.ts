@@ -1,6 +1,6 @@
 import { logger } from '../shared/logger';
 import { featureFlags } from './feature-flags';
-import type { ChatBadge, ChatMessage, ReplyContext } from './message-store';
+import type { ChatBadge, ChatMessage, PinnedMessage, ReplyContext } from './message-store';
 
 // Confirmed live 2026-07-04 (Playwright capture on kick.com, channel "allissag"):
 // pusher:subscribe frames carried "auth":"" (empty) — the channel is genuinely public,
@@ -9,6 +9,11 @@ const PUSHER_URL = 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&
 
 const CHAT_MESSAGE_EVENT = 'App\\Events\\ChatMessageEvent';
 const USER_BANNED_EVENT = 'App\\Events\\UserBannedEvent';
+const SUBSCRIPTION_EVENT = 'App\\Events\\SubscriptionEvent';
+const CHANNEL_SUBSCRIPTION_EVENT = 'App\\Events\\ChannelSubscriptionEvent';
+const STREAM_HOST_EVENT = 'App\\Events\\StreamHostEvent';
+const PINNED_MESSAGE_CREATED_EVENT = 'App\\Events\\PinnedMessageCreatedEvent';
+const CHATROOM_UPDATED_EVENT = 'App\\Events\\ChatroomUpdatedEvent';
 // Event NAME confirmed from Mo'Kick's shipping source (chatroomCore binds
 // `MessageDeletedEvent`) — the earlier `ChatMessageDeletedEvent` guess was wrong, which is
 // why deleted-message preservation never fired. Kick nests the deleted message's id under
@@ -21,6 +26,7 @@ const RECONNECT_MAX_DELAY_MS = 15000;
 const LIVENESS_IDLE_MS = 2 * 60 * 1000;
 const LIVENESS_PROBE_TIMEOUT_MS = 30 * 1000;
 const LIVENESS_CHECK_INTERVAL_MS = 30 * 1000;
+const CHANNEL_SUBSCRIPTION_CONFIRM_TIMEOUT_MS = 10 * 1000;
 
 export interface BanEventPayload {
   userId: number;
@@ -47,10 +53,43 @@ export interface DeleteEventPayload {
   violatedRules: string[];
 }
 
+export interface SubscriptionEventPayload {
+  chatroomId: number;
+  username: string;
+  months: number;
+}
+
+export interface ChannelSubscriptionEventPayload {
+  userIds: number[];
+  username: string;
+  channelId: number;
+  giftCount: number;
+}
+
+export interface HostEventPayload {
+  chatroomId: number;
+  hostUsername: string;
+  numberViewers: number;
+  optionalMessage: string | null;
+}
+
+export interface ChatroomUpdatedEventPayload {
+  chatroomId: number;
+  slowMode: { enabled: boolean; messageInterval: number };
+  followersMode: { enabled: boolean; minDuration: number };
+  subscribersMode: { enabled: boolean };
+  emotesMode: { enabled: boolean };
+}
+
 export interface PusherClientCallbacks {
   onMessage: (message: ChatMessage) => void;
   onUserBanned: (payload: BanEventPayload) => void;
   onMessageDeleted?: (payload: DeleteEventPayload) => void;
+  onSubscription?: (payload: SubscriptionEventPayload) => void;
+  onChannelSubscription?: (payload: ChannelSubscriptionEventPayload) => void;
+  onHost?: (payload: HostEventPayload) => void;
+  onPinnedMessage?: (payload: PinnedMessage) => void;
+  onChatroomUpdated?: (payload: ChatroomUpdatedEventPayload) => void;
   onUnknownEvent?: (eventName: string, rawData: unknown) => void;
   /** Fired on pusher:connection_established (before subscribe completes) — used only for
    * status reporting; the socket may still fail to subscribe to a private/invalid channel. */
@@ -250,6 +289,112 @@ export function normalizeDeletePayload(raw: unknown): DeleteEventPayload | null 
   return { messageId, aiModerated, deletedBy, violatedRules };
 }
 
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+export function normalizeSubscriptionPayload(raw: unknown): SubscriptionEventPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  if (!isPositiveInteger(data.chatroom_id)) return null;
+  if (typeof data.username !== 'string' || !data.username.trim()) return null;
+  if (!isPositiveInteger(data.months)) return null;
+  return { chatroomId: data.chatroom_id, username: data.username, months: data.months };
+}
+
+export function normalizeChannelSubscriptionPayload(raw: unknown): ChannelSubscriptionEventPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  if (!isPositiveInteger(data.channel_id)) return null;
+  if (typeof data.username !== 'string' || !data.username.trim()) return null;
+  if (!Array.isArray(data.user_ids) || data.user_ids.length === 0 || !data.user_ids.every(isPositiveInteger)) return null;
+  return {
+    userIds: data.user_ids,
+    username: data.username,
+    channelId: data.channel_id,
+    giftCount: data.user_ids.length,
+  };
+}
+
+export function normalizeHostPayload(raw: unknown): HostEventPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  if (!isPositiveInteger(data.chatroom_id)) return null;
+  if (typeof data.host_username !== 'string' || !data.host_username.trim()) return null;
+
+  const numberViewers = data.number_viewers == null ? 0 : data.number_viewers;
+  if (typeof numberViewers !== 'number' || !Number.isSafeInteger(numberViewers) || numberViewers < 0) return null;
+
+  const optionalMessage = data.optional_message == null ? null : data.optional_message;
+  if (typeof optionalMessage !== 'string' && optionalMessage !== null) return null;
+
+  return {
+    chatroomId: data.chatroom_id,
+    hostUsername: data.host_username,
+    numberViewers,
+    optionalMessage,
+  };
+}
+
+export function normalizePinnedMessagePayload(raw: unknown): PinnedMessage | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  const message = normalizeMessage(data.message);
+  if (!message || !isPositiveInteger(message.chatroomId)) return null;
+
+  const durationSeconds = coerceNum(data.duration);
+  if (durationSeconds === null || !Number.isSafeInteger(durationSeconds) || durationSeconds <= 0) return null;
+
+  if (!data.pinnedBy || typeof data.pinnedBy !== 'object') return null;
+  const pinnedBy = data.pinnedBy as Record<string, unknown>;
+  if (!isPositiveInteger(pinnedBy.id)) return null;
+  if (typeof pinnedBy.username !== 'string' || !pinnedBy.username.trim()) return null;
+  if (typeof pinnedBy.slug !== 'string') return null;
+
+  return {
+    message,
+    durationSeconds,
+    pinnedBy: {
+      id: pinnedBy.id,
+      username: pinnedBy.username,
+      slug: pinnedBy.slug,
+    },
+  };
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function modeRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
+
+export function normalizeChatroomUpdatedPayload(raw: unknown): ChatroomUpdatedEventPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  if (!isPositiveInteger(data.id)) return null;
+
+  const slowMode = modeRecord(data.slow_mode);
+  const followersMode = modeRecord(data.followers_mode);
+  const subscribersMode = modeRecord(data.subscribers_mode);
+  const emotesMode = modeRecord(data.emotes_mode);
+  if (!slowMode || !followersMode || !subscribersMode || !emotesMode) return null;
+  if (typeof slowMode.enabled !== 'boolean' || !isNonNegativeInteger(slowMode.message_interval)) return null;
+  if (typeof followersMode.enabled !== 'boolean' || !isNonNegativeInteger(followersMode.min_duration)) return null;
+  if (typeof subscribersMode.enabled !== 'boolean' || typeof emotesMode.enabled !== 'boolean') return null;
+
+  return {
+    chatroomId: data.id,
+    slowMode: { enabled: slowMode.enabled, messageInterval: slowMode.message_interval },
+    followersMode: { enabled: followersMode.enabled, minDuration: followersMode.min_duration },
+    subscribersMode: { enabled: subscribersMode.enabled },
+    emotesMode: { enabled: emotesMode.enabled },
+  };
+}
+
+type ChannelSubscriptionState = 'idle' | 'pending' | 'active' | 'unavailable';
+
 /** Opens KickFlow's own, independent, read-only Pusher connection — never the page's
  * authenticated one. Reconnects on both socket drop and on being reconnect()-ed after a
  * SPA channel change (the content script's own WS dies on a real page refresh, but
@@ -264,9 +409,12 @@ export class PusherClient {
   private livenessProbeTimer: number | null = null;
   private lastFrameAt = 0;
   private awaitingLivenessReply = false;
+  private channelSubscriptionTimer: number | null = null;
+  private channelSubscriptionState: ChannelSubscriptionState = 'idle';
 
   constructor(
     private readonly chatroomId: number,
+    private readonly channelId: number,
     private readonly callbacks: PusherClientCallbacks
   ) {}
 
@@ -305,6 +453,47 @@ export class PusherClient {
       event: 'pusher:subscribe',
       data: { auth: '', channel: `chatrooms.${this.chatroomId}.v2` },
     });
+    if (this.send({
+      event: 'pusher:subscribe',
+      data: { auth: '', channel: this.channelName },
+    })) {
+      this.channelSubscriptionState = 'pending';
+      this.clearChannelSubscriptionTimer();
+      this.channelSubscriptionTimer = window.setTimeout(() => {
+        this.channelSubscriptionTimer = null;
+        if (this.channelSubscriptionState !== 'pending') return;
+        this.channelSubscriptionState = 'unavailable';
+        logger.warn(
+          'pusher-client: channel subscription was not confirmed; gifted subscriptions disabled',
+          this.channelName,
+        );
+      }, CHANNEL_SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
+    }
+  }
+
+  private get channelName(): string {
+    return `channel.${this.channelId}`;
+  }
+
+  private clearChannelSubscriptionTimer(): void {
+    if (this.channelSubscriptionTimer === null) return;
+    window.clearTimeout(this.channelSubscriptionTimer);
+    this.channelSubscriptionTimer = null;
+  }
+
+  private confirmChannelSubscription(): void {
+    this.clearChannelSubscriptionTimer();
+    this.channelSubscriptionState = 'active';
+  }
+
+  private rejectChannelSubscription(payload: unknown): void {
+    this.clearChannelSubscriptionTimer();
+    this.channelSubscriptionState = 'unavailable';
+    logger.warn(
+      'pusher-client: channel subscription failed; gifted subscriptions disabled',
+      this.channelName,
+      typeof payload === 'string' ? payload : JSON.stringify(payload),
+    );
   }
 
   private send(payload: unknown): boolean {
@@ -376,7 +565,7 @@ export class PusherClient {
   }
 
   private handleRawMessage(raw: string): void {
-    let frame: { event?: string; data?: unknown };
+    let frame: { event?: string; channel?: string; data?: unknown };
     try {
       frame = JSON.parse(raw);
     } catch (error) {
@@ -404,6 +593,14 @@ export class PusherClient {
       // reconnect/heartbeat logic recovers; a single normal connection does not see these.
       const data = this.parseInnerData(frame.data);
       logger.debug('pusher-client: server error frame', typeof data === 'string' ? data : JSON.stringify(data));
+      return;
+    }
+    if (eventName === 'pusher_internal:subscription_succeeded') {
+      if (frame.channel === this.channelName) this.confirmChannelSubscription();
+      return;
+    }
+    if (eventName === 'pusher:subscription_error') {
+      if (frame.channel === this.channelName) this.rejectChannelSubscription(this.parseInnerData(frame.data));
       return;
     }
     if (eventName.startsWith('pusher_internal:') || eventName.startsWith('pusher:')) {
@@ -448,6 +645,55 @@ export class PusherClient {
         this.callbacks.onMessageDeleted?.(normalized);
         return;
       }
+      case SUBSCRIPTION_EVENT: {
+        const normalized = normalizeSubscriptionPayload(payload);
+        if (!normalized) {
+          logger.warn('pusher-client: SubscriptionEvent payload did not match the captured shape', payload);
+          return;
+        }
+        this.callbacks.onSubscription?.(normalized);
+        return;
+      }
+      case CHANNEL_SUBSCRIPTION_EVENT: {
+        if (this.channelSubscriptionState === 'unavailable') return;
+        const normalized = normalizeChannelSubscriptionPayload(payload);
+        if (!normalized) {
+          logger.warn('pusher-client: ChannelSubscriptionEvent payload did not match the captured shape', payload);
+          return;
+        }
+        // Receiving the channel event itself proves the public subscription is live even if its
+        // internal success frame was delayed or omitted by an intermediary.
+        this.confirmChannelSubscription();
+        this.callbacks.onChannelSubscription?.(normalized);
+        return;
+      }
+      case STREAM_HOST_EVENT: {
+        const normalized = normalizeHostPayload(payload);
+        if (!normalized) {
+          logger.warn('pusher-client: StreamHostEvent payload did not match the captured shape', payload);
+          return;
+        }
+        this.callbacks.onHost?.(normalized);
+        return;
+      }
+      case PINNED_MESSAGE_CREATED_EVENT: {
+        const normalized = normalizePinnedMessagePayload(payload);
+        if (!normalized) {
+          logger.warn('pusher-client: PinnedMessageCreatedEvent payload did not match the captured shape', payload);
+          return;
+        }
+        this.callbacks.onPinnedMessage?.(normalized);
+        return;
+      }
+      case CHATROOM_UPDATED_EVENT: {
+        const normalized = normalizeChatroomUpdatedPayload(payload);
+        if (!normalized) {
+          logger.warn('pusher-client: ChatroomUpdatedEvent payload did not match the captured shape', payload);
+          return;
+        }
+        this.callbacks.onChatroomUpdated?.(normalized);
+        return;
+      }
       default: {
         if (featureFlags.debugLogging) {
           logger.debug('pusher-client: unknown event', eventName, JSON.stringify(payload)?.slice(0, 500));
@@ -478,6 +724,8 @@ export class PusherClient {
 
   private teardownSocket(): void {
     this.stopLivenessWatchdog();
+    this.clearChannelSubscriptionTimer();
+    this.channelSubscriptionState = 'idle';
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

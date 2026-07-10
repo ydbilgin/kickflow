@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ScrollFollowController, decideScrollFollow, trimMessageWindow } from '../../src/content/chat/dom-window';
 import { RenderQueue } from '../../src/content/chat/render-queue';
-import { ChatDomRegistry, type ChatMessage } from '../../src/content/chat/message-store';
+import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 
 function message(id: string): ChatMessage {
   return {
@@ -28,6 +28,35 @@ afterEach(() => {
 });
 
 describe('RenderQueue', () => {
+  it('renders a store-backed host event only once when the same synthetic id is received twice', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const store = new ChatIntegrityStore();
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry: new ChatDomRegistry(),
+    });
+    const event = message('host:1:user:1');
+    event.systemEvent = {
+      kind: 'host',
+      username: 'user',
+      numberViewers: 16,
+      optionalMessage: null,
+    };
+
+    if (store.addMessage(event)) queue.enqueue(event);
+    if (store.addMessage(event)) queue.enqueue(event);
+    vi.advanceTimersByTime(250);
+
+    expect(container.querySelectorAll('[data-message-id="host:1:user:1"]')).toHaveLength(1);
+    queue.dispose();
+  });
+
   it('does not render a message removed while it waits for the batch flush', () => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {

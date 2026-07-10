@@ -276,9 +276,19 @@ describe('RemovedMessagesPanel', () => {
       const originalChatMode = featureFlags.chatMode;
       const originalShowDeleted = featureFlags.showDeletedMessages;
       const originalBanInline = featureFlags.preserveBansInline;
+      const originalSubscriptions = featureFlags.showSubscriptions;
+      const originalGiftedSubs = featureFlags.showGiftedSubs;
+      const originalHostRaid = featureFlags.showHostRaid;
+      const originalPinnedMessage = featureFlags.showPinnedMessage;
+      const originalModeChanges = featureFlags.showModeChanges;
       featureFlags.chatMode = 'own';
       featureFlags.showDeletedMessages = false;
       featureFlags.preserveBansInline = false;
+      featureFlags.showSubscriptions = false;
+      featureFlags.showGiftedSubs = true;
+      featureFlags.showHostRaid = false;
+      featureFlags.showPinnedMessage = true;
+      featureFlags.showModeChanges = false;
 
       try {
         const lifecycle = new Lifecycle();
@@ -293,21 +303,36 @@ describe('RemovedMessagesPanel', () => {
         const modeSelect = settingsControl(section, 'Chat modu') as HTMLSelectElement;
         const deletedCheckbox = settingsControl(section, 'Silinenleri göster') as HTMLInputElement;
         const banCheckbox = settingsControl(section, 'Ban satır-içi') as HTMLInputElement;
+        const subscriptionsCheckbox = settingsControl(section, 'Abonelikler') as HTMLInputElement;
+        const giftedSubsCheckbox = settingsControl(section, 'Hediye abonelikler') as HTMLInputElement;
+        const hostRaidCheckbox = settingsControl(section, 'Host / Raid') as HTMLInputElement;
+        const pinnedMessageCheckbox = settingsControl(section, 'Sabitlenmiş mesaj') as HTMLInputElement;
+        const modeChangesCheckbox = settingsControl(section, 'Mod değişiklikleri') as HTMLInputElement;
         expect(modeSelect.value).toBe('own');
         expect(deletedCheckbox.checked).toBe(false);
         expect(banCheckbox.checked).toBe(false);
+        expect(subscriptionsCheckbox.checked).toBe(false);
+        expect(giftedSubsCheckbox.checked).toBe(true);
+        expect(hostRaidCheckbox.checked).toBe(false);
+        expect(pinnedMessageCheckbox.checked).toBe(true);
+        expect(modeChangesCheckbox.checked).toBe(false);
 
         lifecycle.dispose();
       } finally {
         featureFlags.chatMode = originalChatMode;
         featureFlags.showDeletedMessages = originalShowDeleted;
         featureFlags.preserveBansInline = originalBanInline;
+        featureFlags.showSubscriptions = originalSubscriptions;
+        featureFlags.showGiftedSubs = originalGiftedSubs;
+        featureFlags.showHostRaid = originalHostRaid;
+        featureFlags.showPinnedMessage = originalPinnedMessage;
+        featureFlags.showModeChanges = originalModeChanges;
       }
     });
 
     it('a flag changed elsewhere (e.g. via the popup) is reflected in an already-open settings section on the next render tick', () => {
-      const originalShowDeleted = featureFlags.showDeletedMessages;
-      featureFlags.showDeletedMessages = true;
+      const originalSubscriptions = featureFlags.showSubscriptions;
+      featureFlags.showSubscriptions = true;
 
       try {
         const lifecycle = new Lifecycle();
@@ -319,17 +344,17 @@ describe('RemovedMessagesPanel', () => {
         const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
         section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
 
-        const deletedCheckbox = settingsControl(section, 'Silinenleri göster') as HTMLInputElement;
-        expect(deletedCheckbox.checked).toBe(true);
+        const subscriptionsCheckbox = settingsControl(section, 'Abonelikler') as HTMLInputElement;
+        expect(subscriptionsCheckbox.checked).toBe(true);
 
-        featureFlags.showDeletedMessages = false; // simulate a change made through the popup path
+        featureFlags.showSubscriptions = false; // simulate a change made through the popup path
         panel.render(); // the 1s render tick
 
-        expect(deletedCheckbox.checked).toBe(false);
+        expect(subscriptionsCheckbox.checked).toBe(false);
 
         lifecycle.dispose();
       } finally {
-        featureFlags.showDeletedMessages = originalShowDeleted;
+        featureFlags.showSubscriptions = originalSubscriptions;
       }
     });
 
@@ -380,6 +405,34 @@ describe('RemovedMessagesPanel', () => {
 
       window.removeEventListener('kickflow:setFlag', listener);
       expect(received).toEqual({ key: 'preserveBansInline', value: false });
+      lifecycle.dispose();
+    });
+
+    it.each([
+      ['Abonelikler', 'showSubscriptions'],
+      ['Hediye abonelikler', 'showGiftedSubs'],
+      ['Host / Raid', 'showHostRaid'],
+      ['Sabitlenmiş mesaj', 'showPinnedMessage'],
+      ['Mod değişiklikleri', 'showModeChanges'],
+    ] as const)('toggling "%s" dispatches kickflow:setFlag with {key: %s, value}', (label, key) => {
+      const lifecycle = new Lifecycle();
+      const store = new ChatIntegrityStore();
+      new RemovedMessagesPanel(lifecycle, store);
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
+      const checkbox = settingsControl(section, label) as HTMLInputElement;
+
+      let received: { key: string; value: unknown } | null = null;
+      const listener = (event: Event) => {
+        received = (event as CustomEvent<{ key: string; value: unknown }>).detail;
+      };
+      window.addEventListener('kickflow:setFlag', listener);
+
+      checkbox.checked = false;
+      checkbox.dispatchEvent(new Event('change'));
+
+      window.removeEventListener('kickflow:setFlag', listener);
+      expect(received).toEqual({ key, value: false });
       lifecycle.dispose();
     });
 

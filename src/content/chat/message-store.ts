@@ -54,6 +54,57 @@ export interface ReplyContext {
   threadParentId?: string | null;
 }
 
+/** Non-moderatable rows emitted by Kick's chat event streams. They still travel through
+ * the normal store/render queue so ordering, trimming, scroll-follow, and id de-duping stay shared. */
+export type ChatSystemEvent =
+  | { kind: 'subscription'; username: string; months: number }
+  | { kind: 'gifted-subscription'; username: string; giftCount: number }
+  | { kind: 'host'; username: string; numberViewers: number; optionalMessage: string | null }
+  | { kind: 'mode'; mode: ChatroomModeKey; text: string };
+
+export type ChatroomModeKey = 'slow_mode' | 'followers_mode' | 'subscribers_mode' | 'emotes_mode';
+
+export interface PinnedBy {
+  id: number;
+  username: string;
+  slug: string;
+}
+
+/** A pin is independent from the scrolling chat ring: at most one is active, and dismissing it
+ * records only that message id. A different id always becomes visible again. */
+export interface PinnedMessage {
+  message: ChatMessage;
+  durationSeconds: number;
+  pinnedBy: PinnedBy;
+}
+
+export class ActivePinnedMessageState {
+  private activePin: PinnedMessage | null = null;
+  private dismissedPinId: string | null = null;
+
+  setActive(pin: PinnedMessage): boolean {
+    if (this.activePin?.message.id === pin.message.id) return false;
+    this.activePin = pin;
+    this.dismissedPinId = null;
+    return true;
+  }
+
+  dismiss(pinId: string): boolean {
+    if (this.activePin?.message.id !== pinId || this.dismissedPinId === pinId) return false;
+    this.dismissedPinId = pinId;
+    return true;
+  }
+
+  getVisible(): PinnedMessage | null {
+    if (!this.activePin || this.activePin.message.id === this.dismissedPinId) return null;
+    return this.activePin;
+  }
+
+  getActive(): PinnedMessage | null {
+    return this.activePin;
+  }
+}
+
 /** Moderation detail attached to a preserved message so the row can distinguish a permanent
  * BANLANDI from a TIMEOUT (with its duration) and name the moderator. */
 export interface PreservedMeta {
@@ -79,6 +130,7 @@ export interface ChatMessage {
   type: string;
   createdAt: string;
   sender: ChatMessageSender;
+  systemEvent?: ChatSystemEvent;
   replyContext?: ReplyContext;
   preserved: boolean;
   preservedReason?: PreservedReason;
@@ -144,6 +196,7 @@ export class ChatDomRegistry {
   register(element: HTMLElement, message: ChatMessage): void {
     this.messageByElement.set(element, message);
     this.elementByMessageId.set(message.id, element);
+    if (message.systemEvent) return;
     let set = this.elementsByUserId.get(message.sender.id);
     if (!set) {
       set = new Set();
@@ -169,6 +222,7 @@ export class ChatDomRegistry {
     const message = this.messageByElement.get(element);
     if (!message) return;
     this.elementByMessageId.delete(message.id);
+    if (message.systemEvent) return;
     const set = this.elementsByUserId.get(message.sender.id);
     if (set) {
       set.delete(element);
@@ -203,22 +257,26 @@ export class ChatIntegrityStore {
 
   constructor(private readonly options: ChatIntegrityStoreOptions = {}) {}
 
-  addMessage(message: ChatMessage): void {
-    if (this.messageById.has(message.id)) return;
+  /** Adds a message once. The boolean lets callers avoid queueing a duplicate id for render. */
+  addMessage(message: ChatMessage): boolean {
+    if (this.messageById.has(message.id)) return false;
     message.seq ??= this.nextSeq++;
     this.messageById.set(message.id, message);
-    this.indexByUser(message);
+    if (!message.systemEvent) {
+      this.indexByUser(message);
 
-    let perUserQueue = this.perUserQueues.get(message.sender.id);
-    if (!perUserQueue) {
-      perUserQueue = new LimitedQueue<ChatMessage>(PER_USER_CAPACITY);
-      this.perUserQueues.set(message.sender.id, perUserQueue);
+      let perUserQueue = this.perUserQueues.get(message.sender.id);
+      if (!perUserQueue) {
+        perUserQueue = new LimitedQueue<ChatMessage>(PER_USER_CAPACITY);
+        this.perUserQueues.set(message.sender.id, perUserQueue);
+      }
+      const evictedFromUser = perUserQueue.push(message);
+      if (evictedFromUser) this.forget(evictedFromUser);
     }
-    const evictedFromUser = perUserQueue.push(message);
-    if (evictedFromUser) this.forget(evictedFromUser);
 
     const evictedGlobally = this.global.push(message);
     if (evictedGlobally) this.forget(evictedGlobally);
+    return true;
   }
 
   private indexByUser(message: ChatMessage): void {
@@ -235,6 +293,7 @@ export class ChatIntegrityStore {
   private forget(message: ChatMessage): void {
     if (message.preserved) return;
     this.messageById.delete(message.id);
+    if (message.systemEvent) return;
     const ids = this.messagesByUserId.get(message.sender.id);
     if (ids) {
       ids.delete(message.id);
@@ -271,6 +330,7 @@ export class ChatIntegrityStore {
     const message = this.messageById.get(messageId);
     if (!message || message.preserved) return;
     this.messageById.delete(messageId);
+    if (message.systemEvent) return;
     const ids = this.messagesByUserId.get(message.sender.id);
     if (ids) {
       ids.delete(messageId);
@@ -297,7 +357,7 @@ export class ChatIntegrityStore {
 
   markMessageDeleted(messageId: string, meta: PreservedMeta = {}): ChatMessage | undefined {
     const message = this.messageById.get(messageId);
-    if (!message) return undefined;
+    if (!message || message.systemEvent) return undefined;
     this.preserveMessage(message, 'deleted', meta);
     return message;
   }

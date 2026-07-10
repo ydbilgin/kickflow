@@ -2,12 +2,14 @@ import { Lifecycle } from '../shared/lifecycle';
 import { SELECTORS } from '../shared/selectors';
 
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
+const PINNED_MESSAGE_HOST_ID = 'kickflow-pinned-message-host';
 const OWN_LIST_ID = 'kickflow-message-list';
 const CHAT_ACTIVE_CLASS = 'kickflow-chat-active';
 const SYNC_INTERVAL_MS = 500;
 
 export class ChatOverlayMount {
   readonly root: HTMLElement;
+  readonly pinnedMessageHost: HTMLElement;
   readonly ownList: HTMLElement;
   private activated = false;
   private readonly resizeObserver: ResizeObserver;
@@ -20,11 +22,16 @@ export class ChatOverlayMount {
     root.style.zIndex = '30';
     root.style.display = 'none';
 
+    const pinnedMessageHost = document.createElement('div');
+    pinnedMessageHost.id = PINNED_MESSAGE_HOST_ID;
+    pinnedMessageHost.style.display = 'none';
+
     const ownList = document.createElement('div');
     ownList.id = OWN_LIST_ID;
-    root.appendChild(ownList);
+    root.append(pinnedMessageHost, ownList);
     document.body.appendChild(root);
     this.root = root;
+    this.pinnedMessageHost = pinnedMessageHost;
     this.ownList = ownList;
     lifecycle.add(() => root.remove());
 

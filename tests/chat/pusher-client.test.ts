@@ -2,8 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PusherClient,
   normalizeBanPayload,
+  normalizeChatroomUpdatedPayload,
+  normalizeChannelSubscriptionPayload,
   normalizeDeletePayload,
+  normalizeHostPayload,
   normalizeMessage,
+  normalizePinnedMessagePayload,
+  normalizeSubscriptionPayload,
 } from '../../src/content/chat/pusher-client';
 
 class FakeWebSocket extends EventTarget {
@@ -279,13 +284,145 @@ describe('pusher-client normalizers', () => {
 
     expect(normalizeDeletePayload({ aiModerated: true })).toBeNull();
   });
+
+  it('normalizes live-captured subscription payloads and rejects malformed fields', () => {
+    expect(normalizeSubscriptionPayload({
+      chatroom_id: 15250312,
+      username: '***REMOVED***',
+      months: 5,
+    })).toEqual({ chatroomId: 15250312, username: '***REMOVED***', months: 5 });
+
+    expect(normalizeSubscriptionPayload({ chatroom_id: 1, username: 'user', months: '5' })).toBeNull();
+    expect(normalizeSubscriptionPayload({ chatroom_id: 1, username: '', months: 1 })).toBeNull();
+    expect(normalizeSubscriptionPayload({ chatroom_id: 1, username: 'user', months: 0 })).toBeNull();
+  });
+
+  it('normalizes live-captured gifted-subscription payloads using user_ids.length', () => {
+    expect(normalizeChannelSubscriptionPayload({
+      user_ids: [12098355, 12098356],
+      username: '***REMOVED***',
+      channel_id: 15462911,
+    })).toEqual({
+      userIds: [12098355, 12098356],
+      username: '***REMOVED***',
+      channelId: 15462911,
+      giftCount: 2,
+    });
+
+    expect(normalizeChannelSubscriptionPayload({ user_ids: [], username: 'user', channel_id: 1 })).toBeNull();
+    expect(normalizeChannelSubscriptionPayload({ user_ids: [1, '2'], username: 'user', channel_id: 1 })).toBeNull();
+    expect(normalizeChannelSubscriptionPayload({ user_ids: [1], username: 2, channel_id: 1 })).toBeNull();
+  });
+
+  it('normalizes host payloads with nullable messages and optional viewer counts', () => {
+    expect(normalizeHostPayload({
+      chatroom_id: 25314085,
+      optional_message: null,
+      number_viewers: 16,
+      host_username: 'Mr_Jelal',
+    })).toEqual({
+      chatroomId: 25314085,
+      hostUsername: 'Mr_Jelal',
+      numberViewers: 16,
+      optionalMessage: null,
+    });
+
+    expect(normalizeHostPayload({
+      chatroom_id: 25314085,
+      optional_message: 'Hoş geldiniz!',
+      number_viewers: 24,
+      host_username: 'another_host',
+    })).toEqual({
+      chatroomId: 25314085,
+      hostUsername: 'another_host',
+      numberViewers: 24,
+      optionalMessage: 'Hoş geldiniz!',
+    });
+
+    expect(normalizeHostPayload({
+      chatroom_id: 25314085,
+      host_username: 'viewerless_host',
+    })).toEqual({
+      chatroomId: 25314085,
+      hostUsername: 'viewerless_host',
+      numberViewers: 0,
+      optionalMessage: null,
+    });
+  });
+
+  it('rejects malformed host payload fields', () => {
+    expect(normalizeHostPayload(null)).toBeNull();
+    expect(normalizeHostPayload({ chatroom_id: 0, host_username: 'host' })).toBeNull();
+    expect(normalizeHostPayload({ chatroom_id: 1, host_username: '' })).toBeNull();
+    expect(normalizeHostPayload({ chatroom_id: 1, host_username: 'host', number_viewers: '16' })).toBeNull();
+    expect(normalizeHostPayload({ chatroom_id: 1, host_username: 'host', number_viewers: -1 })).toBeNull();
+    expect(normalizeHostPayload({ chatroom_id: 1, host_username: 'host', optional_message: 42 })).toBeNull();
+  });
+
+  it('normalizes the live-captured pinned-message payload through the normal message path', () => {
+    const normalized = normalizePinnedMessagePayload({
+      message: {
+        id: 'pin-uuid',
+        chatroom_id: 25314085,
+        content: 'hello [emote:123:kek]',
+        type: 'message',
+        created_at: '2026-07-10T16:00:00Z',
+        sender: {
+          id: 10,
+          username: 'BotRix',
+          slug: 'botrix',
+          identity: { color: '#75FD46', badges: [{ type: 'moderator' }], badges_v2: [] },
+        },
+      },
+      duration: '1200',
+      pinnedBy: { id: 11, username: 'Cainethedark', slug: 'cainethedark', identity: {} },
+    });
+
+    expect(normalized).toMatchObject({
+      message: {
+        id: 'pin-uuid',
+        chatroomId: 25314085,
+        content: 'hello [emote:123:kek]',
+        sender: { username: 'BotRix', identity: { badges: [{ type: 'moderator' }] } },
+      },
+      durationSeconds: 1200,
+      pinnedBy: { id: 11, username: 'Cainethedark', slug: 'cainethedark' },
+    });
+    expect(normalizePinnedMessagePayload({ duration: '1200', pinnedBy: { id: 1, username: 'mod', slug: 'mod' } })).toBeNull();
+    expect(normalizePinnedMessagePayload({ message: normalized?.message, duration: 'nope', pinnedBy: { id: 1, username: 'mod', slug: 'mod' } })).toBeNull();
+  });
+
+  it('normalizes the four captured chatroom modes and rejects partial/malformed state', () => {
+    expect(normalizeChatroomUpdatedPayload({
+      id: 25314085,
+      slow_mode: { enabled: true, message_interval: 5 },
+      subscribers_mode: { enabled: false },
+      followers_mode: { enabled: true, min_duration: 31 },
+      emotes_mode: { enabled: false },
+      advanced_bot_protection: { enabled: true },
+    })).toEqual({
+      chatroomId: 25314085,
+      slowMode: { enabled: true, messageInterval: 5 },
+      subscribersMode: { enabled: false },
+      followersMode: { enabled: true, minDuration: 31 },
+      emotesMode: { enabled: false },
+    });
+    expect(normalizeChatroomUpdatedPayload({ id: 1 })).toBeNull();
+    expect(normalizeChatroomUpdatedPayload({
+      id: 1,
+      slow_mode: { enabled: true, message_interval: '5' },
+      subscribers_mode: { enabled: false },
+      followers_mode: { enabled: true, min_duration: 31 },
+      emotes_mode: { enabled: false },
+    })).toBeNull();
+  });
 });
 
 describe('PusherClient lifecycle', () => {
   it('ignores a queued socket message after disposal', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const onMessage = vi.fn();
-    const client = new PusherClient(1, {
+    const client = new PusherClient(1, 2, {
       onMessage,
       onUserBanned: vi.fn(),
     });
@@ -312,7 +449,7 @@ describe('PusherClient lifecycle', () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const onDisconnected = vi.fn();
-    const client = new PusherClient(1, {
+    const client = new PusherClient(1, 2, {
       onMessage: vi.fn(),
       onUserBanned: vi.fn(),
       onDisconnected,
@@ -338,7 +475,7 @@ describe('PusherClient lifecycle', () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const onDisconnected = vi.fn();
-    const client = new PusherClient(1, {
+    const client = new PusherClient(1, 2, {
       onMessage: vi.fn(),
       onUserBanned: vi.fn(),
       onDisconnected,
@@ -350,6 +487,199 @@ describe('PusherClient lifecycle', () => {
     vi.advanceTimersByTime(1000);
 
     expect(FakeWebSocket.instances).toHaveLength(2);
+    client.dispose();
+  });
+
+  it('subscribes to chatroom and channel on one socket and routes captured public events', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onSubscription = vi.fn();
+    const onChannelSubscription = vi.fn();
+    const onHost = vi.fn();
+    const onPinnedMessage = vi.fn();
+    const onChatroomUpdated = vi.fn();
+    const client = new PusherClient(15250312, 15462911, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onSubscription,
+      onChannelSubscription,
+      onHost,
+      onPinnedMessage,
+      onChatroomUpdated,
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error('missing fake socket');
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { event: 'pusher:subscribe', data: { auth: '', channel: 'chatrooms.15250312.v2' } },
+      { event: 'pusher:subscribe', data: { auth: '', channel: 'channel.15462911' } },
+    ]);
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'pusher_internal:subscription_succeeded',
+        channel: 'channel.15462911',
+        data: '{}',
+      }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\PinnedMessageCreatedEvent',
+        channel: 'chatrooms.15250312.v2',
+        data: JSON.stringify({
+          message: {
+            id: 'pin-1',
+            chatroom_id: 15250312,
+            content: 'pinned',
+            type: 'message',
+            created_at: '2026-07-10T16:00:00Z',
+            sender: { id: 4, username: 'BotRix', slug: 'botrix', identity: { color: '#75FD46', badges: [], badges_v2: [] } },
+          },
+          duration: '1200',
+          pinnedBy: { id: 5, username: 'moderator', slug: 'moderator' },
+        }),
+      }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\ChatroomUpdatedEvent',
+        channel: 'chatrooms.15250312.v2',
+        data: JSON.stringify({
+          id: 15250312,
+          slow_mode: { enabled: true, message_interval: 5 },
+          subscribers_mode: { enabled: false },
+          followers_mode: { enabled: true, min_duration: 31 },
+          emotes_mode: { enabled: false },
+        }),
+      }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\SubscriptionEvent',
+        channel: 'chatrooms.15250312.v2',
+        data: JSON.stringify({ chatroom_id: 15250312, username: '***REMOVED***', months: 5 }),
+      }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\ChannelSubscriptionEvent',
+        channel: 'channel.15462911',
+        data: JSON.stringify({ user_ids: [12098355, 12098356], username: '***REMOVED***', channel_id: 15462911 }),
+      }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\StreamHostEvent',
+        channel: 'chatrooms.15250312.v2',
+        data: JSON.stringify({
+          chatroom_id: 15250312,
+          optional_message: null,
+          number_viewers: 16,
+          host_username: 'Mr_Jelal',
+        }),
+      }),
+    }));
+
+    expect(onSubscription).toHaveBeenCalledOnce();
+    expect(onSubscription).toHaveBeenCalledWith({ chatroomId: 15250312, username: '***REMOVED***', months: 5 });
+    expect(onChannelSubscription).toHaveBeenCalledOnce();
+    expect(onChannelSubscription).toHaveBeenCalledWith({
+      userIds: [12098355, 12098356],
+      username: '***REMOVED***',
+      channelId: 15462911,
+      giftCount: 2,
+    });
+    expect(onHost).toHaveBeenCalledOnce();
+    expect(onHost).toHaveBeenCalledWith({
+      chatroomId: 15250312,
+      hostUsername: 'Mr_Jelal',
+      numberViewers: 16,
+      optionalMessage: null,
+    });
+    expect(onPinnedMessage).toHaveBeenCalledOnce();
+    expect(onPinnedMessage).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ id: 'pin-1', content: 'pinned' }),
+      durationSeconds: 1200,
+      pinnedBy: { id: 5, username: 'moderator', slug: 'moderator' },
+    }));
+    expect(onChatroomUpdated).toHaveBeenCalledWith({
+      chatroomId: 15250312,
+      slowMode: { enabled: true, messageInterval: 5 },
+      subscribersMode: { enabled: false },
+      followersMode: { enabled: true, minDuration: 31 },
+      emotesMode: { enabled: false },
+    });
+    client.dispose();
+  });
+
+  it('logs a channel subscription error and skips gifted-subscription events gracefully', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onChannelSubscription = vi.fn();
+    const client = new PusherClient(1, 2, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onChannelSubscription,
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error('missing fake socket');
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'pusher:subscription_error',
+        channel: 'channel.2',
+        data: JSON.stringify({ status: 403, message: 'denied' }),
+      }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\ChannelSubscriptionEvent',
+        channel: 'channel.2',
+        data: JSON.stringify({ user_ids: [3], username: 'gifter', channel_id: 2 }),
+      }),
+    }));
+
+    expect(warn).toHaveBeenCalledWith(
+      '[KickFlow]',
+      'pusher-client: channel subscription failed; gifted subscriptions disabled',
+      'channel.2',
+      '{"status":403,"message":"denied"}',
+    );
+    expect(onChannelSubscription).not.toHaveBeenCalled();
+    client.dispose();
+  });
+
+  it('logs and disables gifted subscriptions when channel confirmation never arrives', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = new PusherClient(1, 2, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onChannelSubscription: vi.fn(),
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error('missing fake socket');
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    vi.advanceTimersByTime(10_000);
+
+    expect(warn).toHaveBeenCalledWith(
+      '[KickFlow]',
+      'pusher-client: channel subscription was not confirmed; gifted subscriptions disabled',
+      'channel.2',
+    );
     client.dispose();
   });
 });

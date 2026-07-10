@@ -11,6 +11,16 @@ export interface FeatureFlags {
   /** Ban preservation: when Kick removes banned users' native rows, render them inside a
    * surviving virtualized row wrapper or a small fallback strip. */
   preserveBansInline: boolean;
+  /** Show new subscription events in KickFlow's own chat list. */
+  showSubscriptions: boolean;
+  /** Show new gifted-subscription events in KickFlow's own chat list. */
+  showGiftedSubs: boolean;
+  /** Show new host and raid events in KickFlow's own chat list. */
+  showHostRaid: boolean;
+  /** Show the latest pinned chat message above KickFlow's own scrolling list. */
+  showPinnedMessage: boolean;
+  /** Show rows describing chatroom mode changes after the initial state snapshot. */
+  showModeChanges: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
 }
@@ -20,6 +30,11 @@ export const featureFlags: FeatureFlags = {
   debugLogging: false,
   showDeletedMessages: true,
   preserveBansInline: true,
+  showSubscriptions: true,
+  showGiftedSubs: true,
+  showHostRaid: true,
+  showPinnedMessage: true,
+  showModeChanges: true,
   modLogPanel: false,
 };
 
