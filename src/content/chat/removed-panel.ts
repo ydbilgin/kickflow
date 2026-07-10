@@ -63,6 +63,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private hostRaidCheckbox: HTMLInputElement | null = null;
   private pinnedMessageCheckbox: HTMLInputElement | null = null;
   private modeChangesCheckbox: HTMLInputElement | null = null;
+  private sidebarRefreshCheckbox: HTMLInputElement | null = null;
 
   constructor(
     lifecycle: Lifecycle,
@@ -307,6 +308,16 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     modeChangesLabel.append(modeChangesText, modeChangesCheckbox);
     this.modeChangesCheckbox = modeChangesCheckbox;
 
+    const sidebarRefreshLabel = document.createElement('label');
+    const sidebarRefreshText = document.createElement('span');
+    sidebarRefreshText.textContent = 'Sidebar yenileme';
+    const sidebarRefreshCheckbox = document.createElement('input');
+    sidebarRefreshCheckbox.type = 'checkbox';
+    sidebarRefreshCheckbox.checked = featureFlags.showSidebarRefresh;
+    sidebarRefreshCheckbox.addEventListener('change', () => dispatchFlag('showSidebarRefresh', sidebarRefreshCheckbox.checked));
+    sidebarRefreshLabel.append(sidebarRefreshText, sidebarRefreshCheckbox);
+    this.sidebarRefreshCheckbox = sidebarRefreshCheckbox;
+
     settings.append(
       modeLabel,
       deletedLabel,
@@ -316,6 +327,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       hostRaidLabel,
       pinnedMessageLabel,
       modeChangesLabel,
+      sidebarRefreshLabel,
     );
     return settings;
   }
@@ -350,6 +362,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     if (this.modeChangesCheckbox && this.modeChangesCheckbox.checked !== featureFlags.showModeChanges) {
       this.modeChangesCheckbox.checked = featureFlags.showModeChanges;
+    }
+    if (this.sidebarRefreshCheckbox && this.sidebarRefreshCheckbox.checked !== featureFlags.showSidebarRefresh) {
+      this.sidebarRefreshCheckbox.checked = featureFlags.showSidebarRefresh;
     }
   }
 

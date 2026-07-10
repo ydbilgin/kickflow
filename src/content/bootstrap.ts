@@ -37,6 +37,7 @@ import { initRewindHotkeys } from './player/rewind-hotkeys';
 import { initRewindControls } from './player/rewind-controls';
 import { initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
+import { SidebarRefreshController } from './sidebar/sidebar-refresh';
 
 const STYLE_ID = 'kickflow-styles';
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
@@ -54,6 +55,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showHostRaid',
   'showPinnedMessage',
   'showModeChanges',
+  'showSidebarRefresh',
 ] as const;
 
 type BooleanFlagKey = (typeof BOOLEAN_FLAG_KEYS)[number];
@@ -434,6 +436,8 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
+    [data-kickflow-live="true"] { background: #22c55e !important; }
+    [data-kickflow-live="false"] { background: #6b7280 !important; }
     .kickflow-scroll-pill {
       position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
       display: inline-flex; align-items: center; gap: 5px;
@@ -939,6 +943,14 @@ let currentLifecycle: Lifecycle | null = null;
 let currentSlug: string | null = null;
 let sessionToken = 0;
 let navPollId: number | null = null;
+let sidebarRefreshController: SidebarRefreshController | null = null;
+
+function initSidebarRefreshSession(lifecycle: Lifecycle): void {
+  whenElementPresent<HTMLAnchorElement>('a[data-testid^="sidebar-following-channel-1"]', lifecycle, () => {
+    if (lifecycle.isDisposed || !featureFlags.showSidebarRefresh || sidebarRefreshController) return;
+    sidebarRefreshController = new SidebarRefreshController(lifecycle);
+  });
+}
 
 /** Named (not inline) so teardownZombie can removeEventListener it. */
 function onPopstate(): void {
@@ -958,6 +970,7 @@ function startSession(slug: string): void {
 
   // Player QoL and chat integrity are started concurrently and never gate each other.
   initPlayerQolSession(lifecycle);
+  initSidebarRefreshSession(lifecycle);
 
   if (!document.querySelector(SELECTORS.chatMessagesContainer)) {
     logger.debug('bootstrap:', SELECTORS.chatMessagesContainer, 'not present yet for', slug, '- chat integrity module waiting');
@@ -974,6 +987,7 @@ function startSession(slug: string): void {
 function stopSession(): void {
   currentLifecycle?.dispose();
   currentLifecycle = null;
+  sidebarRefreshController = null;
 }
 
 /** The extension context died (reload/update/disable) while this injected script kept running.
@@ -1027,6 +1041,14 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
     if (key === 'debugLogging') setDebugLogging(value);
     if (key === 'showPinnedMessage') refreshActivePinnedMessage?.();
+    if (key === 'showSidebarRefresh') {
+      if (value) {
+        if (currentLifecycle) initSidebarRefreshSession(currentLifecycle);
+      } else {
+        sidebarRefreshController?.dispose();
+        sidebarRefreshController = null;
+      }
+    }
     void safeStorageSet({ ['kf_flag_' + key]: value });
   } else if (key === 'chatMode' && (value === 'native' || value === 'own')) {
     setFeatureFlag('chatMode', value);
@@ -1049,6 +1071,7 @@ export function getPopupFeatureFlags(): {
   showHostRaid: boolean;
   showPinnedMessage: boolean;
   showModeChanges: boolean;
+  showSidebarRefresh: boolean;
 } {
   return {
     chatMode: featureFlags.chatMode,
@@ -1060,6 +1083,7 @@ export function getPopupFeatureFlags(): {
     showHostRaid: featureFlags.showHostRaid,
     showPinnedMessage: featureFlags.showPinnedMessage,
     showModeChanges: featureFlags.showModeChanges,
+    showSidebarRefresh: featureFlags.showSidebarRefresh,
   };
 }
 
@@ -1125,6 +1149,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showHostRaid',
     'kf_flag_showPinnedMessage',
     'kf_flag_showModeChanges',
+    'kf_flag_showSidebarRefresh',
   ]);
   if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
   if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
@@ -1135,6 +1160,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
   if (typeof saved.kf_flag_showPinnedMessage === 'boolean') setFeatureFlag('showPinnedMessage', saved.kf_flag_showPinnedMessage);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
+  if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
 }
 
 function installNavigationHooks(): void {

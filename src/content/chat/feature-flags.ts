@@ -21,6 +21,8 @@ export interface FeatureFlags {
   showPinnedMessage: boolean;
   /** Show rows describing chatroom mode changes after the initial state snapshot. */
   showModeChanges: boolean;
+  /** Refresh native followed-channel sidebar viewer counts and live indicators. */
+  showSidebarRefresh: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
 }
@@ -35,6 +37,7 @@ export const featureFlags: FeatureFlags = {
   showHostRaid: true,
   showPinnedMessage: true,
   showModeChanges: true,
+  showSidebarRefresh: true,
   modLogPanel: false,
 };
 
