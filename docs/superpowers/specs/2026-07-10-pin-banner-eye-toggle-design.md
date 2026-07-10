@@ -9,8 +9,8 @@ Owner: sabitlenmiş mesaj banner'ına, mevcut × (dismiss) butonunun yanına bir
 ## Davranış
 - Banner header'ına × butonunun yanına yeni bir 👁 buton eklenir.
 - **Göz açık (varsayılan):** mevcut tam banner (başlık + gönderen + rozet + içerik).
-- **Göz kapalı (tıklanınca):** banner ince tek-satır bir bar'a küçülür — sadece 📌 ikon + mevcut amber accent rengi, metin yok (navbar gibi sade). Bar'ın herhangi bir yerine tıklanınca göz tekrar açılır, tam banner geri gelir.
-- **× (dismiss) davranışı bağımsız:** göz durumu ne olursa olsun × her zaman o pin id'sini tamamen gizler (mevcut `ActivePinnedMessageState.dismiss` mantığı).
+- **Göz kapalı (tıklanınca):** banner ince tek-satır bir bar'a küçülür — sadece 📌 ikon + mevcut amber accent rengi, **başka HİÇBİR eleman yok (× dahil değil)**. Bar'ın herhangi bir yerine tıklanınca göz tekrar açılır, tam banner geri gelir.
+- **× (dismiss) sadece genişletilmiş halde erişilebilir (owner kararı, çelişki düzeltmesi 2026-07-10):** daralı bar'da × butonu YOK — bir pin'i tamamen kapatmak isteyen önce bara tıklayıp genişletir, sonra × ile kapatır. Genişletilmiş haldeyken × davranışı mevcut `ActivePinnedMessageState.dismiss` mantığıyla aynı, göz durumundan etkilenmez.
 - **Yeni/farklı pin geldiğinde:** göz durumu her zaman "açık"a sıfırlanır (mevcut `setActive()`'in `dismissedPinId`'i sıfırlamasıyla aynı tetikleyici noktası) — owner kararı: her yeni pin tam banner olarak başlar.
 - **Kalıcılık yok:** göz durumu `chrome.storage`'a yazılmaz, sadece o pin'in ömrü boyunca geçerli oturum-içi UI state'i (diğer `showXxx` toggle'larından farklı — onlar özelliği tamamen açıp kapatıyor, bu sadece görünüm modu).
 
@@ -22,7 +22,7 @@ Owner: sabitlenmiş mesaj banner'ına, mevcut × (dismiss) butonunun yanına bir
 ## Test planı (tamamen jsdom'da test edilebilir, engelleyici yok)
 - 👁 tıklanınca ince-bar'a geçiyor, tekrar tıklanınca tam banner'a dönüyor.
 - İnce-bar'ın herhangi bir noktasına tıklamak da açıyor (sadece göz ikonuna tıklamak zorunlu değil).
-- × tıklaması göz durumundan bağımsız çalışıyor (collapsed=true iken de × banner'ı tamamen kaldırıyor).
+- İnce-bar modunda × butonu DOM'da yok (render edilmiyor) — sadece genişletilmiş halde × mevcut ve çalışıyor.
 - Yeni farklı pin id geldiğinde collapsed her zaman false'a dönüyor (önceki pin collapsed=true bırakılmış olsa bile).
 - Aynı pin id tekrar gelirse (`setActive` false dönen durum) collapsed state korunuyor (resetlenmiyor) — sadece GERÇEKTEN yeni pin resetler.
 
