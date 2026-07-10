@@ -39,6 +39,21 @@ describe('rewind-controls media boundaries', () => {
     expect(clampSeekTarget(video, 100)).toBe(44);
   });
 
+  it('lets a rewind cross past buffered.start into a sane seekable DVR window (real Kick)', () => {
+    // Kick's current player (measured 2026-07-10): seekable is the real DVR [0, 2585] and the
+    // server re-loads any seekable position even if not buffered. A ⏪10 from a rewound spot must
+    // reach into the DVR, not clamp to the small buffered window's start.
+    const video = fakeVideo({
+      buffered: [[1700, 1736]],
+      seekable: [[0, 2585]],
+      currentTime: 1703,
+    });
+
+    expect(clampSeekTarget(video, -10)).toBe(1693); // crosses past buffered.start (1700)
+    expect(clampSeekTarget(video, -3000)).toBe(0); // clamped to the DVR floor
+    expect(clampSeekTarget(video, 10_000)).toBe(2585); // clamped to the live edge (seekable.end)
+  });
+
   it('snaps directional seeks out of gaps between buffered ranges', () => {
     expect(clampSeekTarget(fakeVideo({
       buffered: [[0, 10], [20, 30]],

@@ -72,6 +72,19 @@ export function seekFloor(video: HTMLVideoElement): number {
  * bogus `seekable` sentinels so seeks can't catapult outside media the player can decode. */
 export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
   const target = video.currentTime + delta;
+
+  // Prefer the SEEKABLE range as the clamp bounds. Measured on Kick's current player
+  // (2026-07-10): `seekable` is the real DVR window (seekable.end ≈ live edge, accurate) and
+  // the server re-loads ANY seekable position even if not yet buffered — so ⏪10 must be able
+  // to cross PAST buffered.start into the DVR window (owner request). `saneRanges` filters the
+  // old 2^30 sentinel, so a player that still reports a bogus `seekable` falls through to the
+  // buffered-range logic below (the pre-2026-07-10 safe behavior — no catapult).
+  const seekableRanges = saneRanges(video.seekable);
+  const dvr = seekableRanges[seekableRanges.length - 1];
+  if (dvr && dvr.end - dvr.start > STEP_SECONDS) {
+    return Math.min(Math.max(target, dvr.start), dvr.end);
+  }
+
   const bufferedRanges = saneRanges(video.buffered);
   if (bufferedRanges.length > 0) {
     for (const range of bufferedRanges) {

@@ -1,8 +1,7 @@
 import { logger } from '../shared/logger';
-import { getVideoElement } from '../shared/selectors';
+import { findLiveButton, getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
-import { bindVideoElementListener } from './video-element';
-import { liveEdge } from './rewind-controls';
+import { bindVideoElementListener, observeVideoElement } from './video-element';
 import {
   NORMAL_PLAYBACK_RATE,
   ensurePlayerStateLoaded,
@@ -57,19 +56,28 @@ export function decideCatchup(input: {
   return { kind: 'none' };
 }
 
-function getLiveEdgeSeconds(video: HTMLVideoElement): number | null {
-  return liveEdge(video);
-}
-
-/** Kick's live HLS player reports an infinite duration or a large finite sentinel, while
- * VODs and clips expose their actual finite duration. Buffered ranges alone therefore
- * cannot distinguish a DVR/live edge from ordinary VOD buffering. */
+/** Fast-path live check for players that report an infinite/sentinel duration. Kick's CURRENT
+ * player reports a FINITE, growing duration (measured 2026-07-10), so this returns false there —
+ * the stateful `makeLiveDetector` below handles that case bar-independently. Kept pure/exported
+ * for the Infinity-reporting case and existing tests. */
 export function isLiveStream(video: HTMLVideoElement): boolean {
   return video.duration === Infinity || video.duration >= LIVE_DURATION_SENTINEL_SECONDS;
 }
 
-/** Event-driven off the init-time video element. The live edge is the furthest buffered
- * playback position; seekable.end/video.duration are deliberately not used. */
+/** The live edge on Kick's current player IS `seekable.end` (measured: seekable.end ≈ duration ≈
+ * the true live position; `seekable.end - currentTime` = real behind-live distance). The stale
+ * 2026-07-04 note that seekable is a 2^30 sentinel no longer holds for Kick's player — but a
+ * sentinel/absurd reading is still filtered so a regressed player can't catapult playback. */
+function seekableLiveEdge(video: HTMLVideoElement): number | null {
+  const s = video.seekable;
+  if (!s.length) return null;
+  const end = s.end(s.length - 1);
+  if (!Number.isFinite(end) || end <= 0 || end >= LIVE_DURATION_SENTINEL_SECONDS) return null;
+  return end;
+}
+
+/** Event-driven and rebound across video-element swaps. A sane buffered edge anchors a
+ * wall-clock projection; seekable.end/video.duration are deliberately not media boundaries. */
 export function initLiveCatchup(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
@@ -80,6 +88,31 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   let catchingUp = false;
   let liveButtonEl: HTMLButtonElement | null = null;
   let lastLiveLabel = '';
+
+  // Live detection must NOT depend on the control bar: Kick auto-hides it (and its go-to-live
+  // button) when the mouse leaves the player, and `findLiveButton()` would then go null and
+  // wrongly flip us to "not live", stopping catch-up (owner-observed 2026-07-10). Latch live
+  // once confirmed — via Infinity duration, OR the live control seen while the bar IS visible,
+  // OR (bar-independent) `seekable.end` growing over time (it advances on live, fixed on VOD).
+  // Reset the latch only on a real media change (loadstart / <video> swap).
+  let liveLatched = false;
+  let lastSeekEnd: number | null = null;
+  const detectLive = (current: HTMLVideoElement): boolean => {
+    if (liveLatched) return true;
+    if (isLiveStream(current) || findLiveButton() !== null) {
+      liveLatched = true;
+      return true;
+    }
+    const end = seekableLiveEdge(current);
+    if (end !== null) {
+      if (lastSeekEnd !== null && end > lastSeekEnd + 0.5) {
+        liveLatched = true;
+        return true;
+      }
+      lastSeekEnd = end;
+    }
+    return false;
+  };
 
   /** ≥100s the seconds form ("-3600sn") would overflow the button's fixed min-width and
    * shove the controls to its right — switch to minutes, which stays within 2-3 chars. */
@@ -111,20 +144,31 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     }
   };
 
+  const resetMediaTracking = (current: HTMLVideoElement | null): void => {
+    liveLatched = false;
+    lastSeekEnd = null;
+    resetAutoPlaybackRate(current);
+    setLiveButtonState(null);
+  };
+
   const goLive = (): void => {
+    // The live edge is seekable.end (not buffered.end, which trails the playhead). Seeking the
+    // <video> to seekable.end returns to live; if seekable is unreadable, delegate to Kick's own
+    // "Canlı Yayına Geç" control (owner-confirmed working) as a fallback.
     const current = getVideoElement();
-    if (!current) return;
-    const edge = getLiveEdgeSeconds(current);
-    if (edge === null) return;
-    try {
-      current.currentTime = edge;
-      if (getPlayerState().mode === 'auto') {
-        resetAutoPlaybackRate(current);
+    const edge = current ? seekableLiveEdge(current) : null;
+    if (current && edge !== null) {
+      try {
+        current.currentTime = edge;
+        if (getPlayerState().mode === 'auto') resetAutoPlaybackRate(current);
+        if (current.paused) void current.play().catch(() => undefined);
+        return;
+      } catch (error) {
+        logger.warn('live-catchup: go-live seek failed', error);
       }
-      if (current.paused) void current.play().catch(() => undefined);
-    } catch (error) {
-      logger.warn('live-catchup: go-live failed', error);
     }
+    findLiveButton()?.click();
+    if (getPlayerState().mode === 'auto') resetAutoPlaybackRate();
   };
 
   const onTimeUpdate = (event: Event): void => {
@@ -132,20 +176,20 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     if (!(current instanceof HTMLVideoElement)) return;
     const playerState = getPlayerState();
 
-    if (!isLiveStream(current)) {
+    if (!detectLive(current)) {
       if (catchingUp) resetAutoPlaybackRate(current);
       setLiveButtonState(null);
       return;
     }
 
-    const liveEdge = getLiveEdgeSeconds(current);
-    if (liveEdge === null) {
+    const liveEdgeSec = seekableLiveEdge(current);
+    if (liveEdgeSec === null) {
       if (catchingUp) resetAutoPlaybackRate(current);
       setLiveButtonState(null);
       return;
     }
 
-    const behindBy = liveEdge - current.currentTime;
+    const behindBy = liveEdgeSec - current.currentTime;
     const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
     // Behind-live is shown in BOTH modes (unlike the old catch-up-only indicator): "how far
     // behind am I" is orthogonal to whether auto catch-up is doing anything about it.
@@ -191,7 +235,22 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   };
 
   bindVideoElementListener(lifecycle, 'timeupdate', onTimeUpdate);
-  lifecycle.add(resetAutoPlaybackRate);
+  bindVideoElementListener(lifecycle, 'loadstart', (event) => {
+    const current = event.currentTarget;
+    if (current instanceof HTMLVideoElement) resetMediaTracking(current);
+  });
+  let currentVideo: HTMLVideoElement | null = video;
+  observeVideoElement(lifecycle, (current) => {
+    if (current === currentVideo) return;
+    if (currentVideo && getPlayerState().mode === 'auto') {
+      setPlayerPlaybackRate(currentVideo, NORMAL_PLAYBACK_RATE);
+    }
+    currentVideo = current;
+    resetMediaTracking(current);
+  });
+  lifecycle.add(() => {
+    resetAutoPlaybackRate();
+  });
   lifecycle.add(subscribePlayerState(() => {
     if (getPlayerState().mode === 'manual') catchingUp = false;
   }));

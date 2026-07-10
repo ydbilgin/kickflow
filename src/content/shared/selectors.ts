@@ -62,25 +62,47 @@ export function findPlayerWrapper(): HTMLElement | null {
   return getVideoElement()?.parentElement ?? null;
 }
 
+function normalizeLiveButtonText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const LIVE_EDGE_LABELS = new Set(['LIVE', 'CANLI']);
+const GO_TO_LIVE_PHRASES = [
+  'GO TO LIVE',
+  'GO LIVE',
+  'JUMP TO LIVE',
+  'CANLI YAYINA',
+  'YAYINA GEC',
+] as const;
+
 /** Best-effort text-content lookup rather than a guessed class name (confirmed live: the
- * jump-to-live control has no testable attributes, just visible "LIVE" text). Strictly
- * scoped to WITHIN the control bar — no document-wide fallback — so this can never match
- * an unrelated button elsewhere on the page that happens to say "LIVE" (e.g. a stream
- * status badge). Relied on by player/native-bar.ts as the anchor to inject KickFlow's own
- * controls after. */
+ * jump-to-live control has no stable testable attributes, only stateful visible text).
+ * Turkish labels come from the owner's 2026-07-10 screenshot; diacritic folding keeps
+ * `Canlı Yayına Geç` independent of Turkish/English uppercase rules. Strictly scoped to
+ * WITHIN the active control bar — no document-wide fallback — so an unrelated LIVE badge
+ * elsewhere on the page can never become KickFlow's insertion anchor. */
 export function findLiveButton(): HTMLElement | null {
   const bar = findControlBar();
   if (!bar) return null;
   const candidates = bar.querySelectorAll<HTMLElement>('button');
   for (const el of candidates) {
-    if (el.textContent?.trim().toUpperCase() === 'LIVE') return el;
+    // Once mounted, KickFlow also contributes a button labelled CANLI to this bar. It is
+    // never a valid native insertion anchor, especially if Kick switches to an as-yet
+    // unknown locale while the existing KickFlow group remains connected.
+    if (el.closest('[id^="kickflow-"]')) continue;
+    const text = normalizeLiveButtonText(el.textContent ?? '');
+    if (LIVE_EDGE_LABELS.has(text) || GO_TO_LIVE_PHRASES.some((phrase) => text.includes(phrase))) {
+      return el;
+    }
   }
   return null;
 }
 
-// UNCONFIRMED: the settings/quality button is icon-only with no aria-label anywhere in
-// the control bar (checked live) — there is no reliable selector for it, and a positional
-// guess was tried and removed from quality-lock.ts (risked toggling the wrong control,
-// e.g. fullscreen/captions, with no safe undo). quality-lock.ts relies solely on writing
-// Kick's own `stream_quality` sessionStorage key instead; a real UI selector is future
-// work, once one is actually confirmed.
+// The settings/quality button is icon-only with no aria-label anywhere in the control bar
+// (checked live). quality-lock.ts therefore identifies its confirmed cog SVG path and
+// deliberately has no positional fallback, which could press fullscreen/captions instead.
