@@ -173,6 +173,30 @@ describe('ActivePinnedMessageState', () => {
     expect(state.getActive()?.message.id).toBe('pin-2');
     expect(state.getVisible()?.message.id).toBe('pin-2');
   });
+
+  it('preserves collapsed state for the same pin, resets it for a new pin, and toggles it', () => {
+    const state = new ActivePinnedMessageState();
+    const pin = (id: string): PinnedMessage => ({
+      message: message(id),
+      durationSeconds: 1200,
+      pinnedBy: { id: 9, username: 'mod', slug: 'mod' },
+    });
+
+    expect(state.setActive(pin('pin-1'))).toBe(true);
+    state.toggleCollapsed();
+    expect(state.isCollapsed()).toBe(true);
+
+    expect(state.setActive(pin('pin-1'))).toBe(false);
+    expect(state.isCollapsed()).toBe(true);
+
+    state.toggleCollapsed();
+    expect(state.isCollapsed()).toBe(false);
+    state.toggleCollapsed();
+    expect(state.isCollapsed()).toBe(true);
+
+    expect(state.setActive(pin('pin-2'))).toBe(true);
+    expect(state.isCollapsed()).toBe(false);
+  });
 });
 
 describe('mergeIdentityBadges', () => {

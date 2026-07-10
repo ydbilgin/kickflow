@@ -205,10 +205,18 @@ export function createPinnedMessageController(
       host.style.display = 'none';
       return;
     }
-    const element = buildPinnedMessageElement(pin, (pinId) => {
-      if (!state.dismiss(pinId)) return;
-      refresh();
-    });
+    const element = buildPinnedMessageElement(
+      pin,
+      state.isCollapsed(),
+      (pinId) => {
+        if (!state.dismiss(pinId)) return;
+        refresh();
+      },
+      () => {
+        state.toggleCollapsed();
+        refresh();
+      },
+    );
     host.replaceChildren(element);
     host.style.display = '';
     onShow();
@@ -341,10 +349,17 @@ function ensureStyles(): void {
     }
     .kickflow-pinned-message__title { font-weight: 800; }
     .kickflow-pinned-message__actor { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8c8cf; font-size: 11px; }
+    .kickflow-pinned-message--collapsed {
+      min-height: 26px; display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+      background: rgba(255,176,32,0.12); color: #ffd27a; cursor: pointer;
+    }
+    .kickflow-pinned-message__collapse,
     .kickflow-pinned-message__dismiss {
-      flex: none; margin-left: auto; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px;
+      flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px;
       background: transparent; color: #c8c8cf; font: 700 18px/24px system-ui, sans-serif; cursor: pointer;
     }
+    .kickflow-pinned-message__collapse { margin-left: auto; }
+    .kickflow-pinned-message__collapse:hover,
     .kickflow-pinned-message__dismiss:hover { background: rgba(255,255,255,0.1); color: #fff; }
     .kickflow-pinned-message__body { padding: 7px 9px 8px; word-break: break-word; overflow-wrap: anywhere; }
     .kickflow-pinned-message__badges:empty { display: none; }

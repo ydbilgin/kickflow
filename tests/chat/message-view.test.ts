@@ -135,6 +135,7 @@ describe('message-view safe rendering', () => {
 
   it('builds the sticky pin with normal badges/content parsing and ID-scoped dismiss', () => {
     const onDismiss = vi.fn();
+    const onToggleCollapse = vi.fn();
     const pinned: PinnedMessage = {
       message: message('botrix', { badges: [{ type: 'moderator', text: 'Moderator' }] }, {
         id: 'pin-1',
@@ -150,7 +151,7 @@ describe('message-view safe rendering', () => {
       pinnedBy: { id: 2, username: '<svg onload=alert(1)>', slug: 'moderator' },
     };
 
-    const banner = buildPinnedMessageElement(pinned, onDismiss);
+    const banner = buildPinnedMessageElement(pinned, false, onDismiss, onToggleCollapse);
     expect(banner.dataset.pinId).toBe('pin-1');
     expect(banner.querySelector('.kickflow-pinned-message__username')?.textContent).toBe('<img src=x onerror=alert(1)>');
     expect(banner.querySelector('.kickflow-pinned-message__actor')?.textContent).toBe('<svg onload=alert(1)> sabitledi');
@@ -159,9 +160,34 @@ describe('message-view safe rendering', () => {
     expect(banner.querySelector('.kickflow-mention')?.textContent).toBe('@Bob');
     expect(banner.querySelector('.kickflow-pinned-message__content')?.textContent).toContain('<script>alert(1)</script>');
     expect(banner.querySelector('script, svg')).toBeNull();
+    expect(banner.querySelector('.kickflow-pinned-message__collapse')).not.toBeNull();
 
     banner.querySelector<HTMLButtonElement>('.kickflow-pinned-message__dismiss')?.click();
     expect(onDismiss).toHaveBeenCalledWith('pin-1');
+    banner.querySelector<HTMLButtonElement>('.kickflow-pinned-message__collapse')?.click();
+    expect(onToggleCollapse).toHaveBeenCalledOnce();
+  });
+
+  it('builds a collapsed pin bar without the body or dismiss button and expands on click', () => {
+    const onDismiss = vi.fn();
+    const onToggleCollapse = vi.fn();
+    const pinned: PinnedMessage = {
+      message: message('botrix', {}, { id: 'pin-1' }),
+      durationSeconds: 1200,
+      pinnedBy: { id: 2, username: 'mod', slug: 'moderator' },
+    };
+
+    const banner = buildPinnedMessageElement(pinned, true, onDismiss, onToggleCollapse);
+
+    expect(banner.classList.contains('kickflow-pinned-message--collapsed')).toBe(true);
+    expect(banner.textContent).toBe('📌');
+    expect(banner.querySelector('.kickflow-pinned-message__body')).toBeNull();
+    expect(banner.querySelector('.kickflow-pinned-message__dismiss')).toBeNull();
+    expect(banner.querySelector('.kickflow-pinned-message__header')).toBeNull();
+
+    banner.click();
+    expect(onToggleCollapse).toHaveBeenCalledOnce();
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it('opens a mention slug in a new tab on middle-click without adding a same-origin anchor', () => {

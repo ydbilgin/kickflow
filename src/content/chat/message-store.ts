@@ -81,12 +81,22 @@ export interface PinnedMessage {
 export class ActivePinnedMessageState {
   private activePin: PinnedMessage | null = null;
   private dismissedPinId: string | null = null;
+  private collapsed = false;
 
   setActive(pin: PinnedMessage): boolean {
     if (this.activePin?.message.id === pin.message.id) return false;
     this.activePin = pin;
     this.dismissedPinId = null;
+    this.collapsed = false;
     return true;
+  }
+
+  toggleCollapsed(): void {
+    this.collapsed = !this.collapsed;
+  }
+
+  isCollapsed(): boolean {
+    return this.collapsed;
   }
 
   dismiss(pinId: string): boolean {

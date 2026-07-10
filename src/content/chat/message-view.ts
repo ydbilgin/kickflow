@@ -418,11 +418,22 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
  * same parsed-content/badge helpers as ordinary chat messages. */
 export function buildPinnedMessageElement(
   pin: PinnedMessage,
+  collapsed: boolean,
   onDismiss: (pinId: string) => void,
+  onToggleCollapse: () => void,
 ): HTMLElement {
   const banner = document.createElement('section');
   banner.className = PINNED_MESSAGE_CLASS;
   banner.dataset.pinId = pin.message.id;
+
+  if (collapsed) {
+    banner.classList.add(`${PINNED_MESSAGE_CLASS}--collapsed`);
+    banner.title = 'Sabitlenmiş mesajı genişlet';
+    banner.setAttribute('aria-label', 'Sabitlenmiş mesajı genişlet');
+    banner.textContent = '📌';
+    banner.addEventListener('click', onToggleCollapse);
+    return banner;
+  }
 
   const header = document.createElement('div');
   header.className = `${PINNED_MESSAGE_CLASS}__header`;
@@ -432,6 +443,13 @@ export function buildPinnedMessageElement(
   const actor = document.createElement('span');
   actor.className = `${PINNED_MESSAGE_CLASS}__actor`;
   actor.textContent = `${pin.pinnedBy.username} sabitledi`;
+  const collapse = document.createElement('button');
+  collapse.type = 'button';
+  collapse.className = `${PINNED_MESSAGE_CLASS}__collapse`;
+  collapse.title = 'Sabitlenmiş mesajı küçült';
+  collapse.setAttribute('aria-label', 'Sabitlenmiş mesajı küçült');
+  collapse.textContent = '👁';
+  collapse.addEventListener('click', onToggleCollapse);
   const dismiss = document.createElement('button');
   dismiss.type = 'button';
   dismiss.className = `${PINNED_MESSAGE_CLASS}__dismiss`;
@@ -439,7 +457,7 @@ export function buildPinnedMessageElement(
   dismiss.setAttribute('aria-label', 'Bu sabitlenmiş mesajı kapat');
   dismiss.textContent = '×';
   dismiss.addEventListener('click', () => onDismiss(pin.message.id));
-  header.append(title, actor, dismiss);
+  header.append(title, actor, collapse, dismiss);
 
   const body = document.createElement('div');
   body.className = `${PINNED_MESSAGE_CLASS}__body`;
@@ -496,33 +514,40 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
   username.className = `${EVENT_ROW_CLASS}__username`;
   username.textContent = event.username;
 
-  row.append(icon, username);
+  // Flex-item boundaries collapse adjacent whitespace (CSS Flexbox ยง4), so bare text
+  // nodes can't sit directly between elements here — everything but the icon goes in
+  // one non-flex text container where normal inline whitespace rules apply.
+  const body = document.createElement('span');
+  body.className = `${EVENT_ROW_CLASS}__body`;
+  body.appendChild(username);
+
   if (event.kind === 'subscription') {
     if (event.months === 1) {
-      row.appendChild(document.createTextNode(' abone oldu'));
+      body.appendChild(document.createTextNode(' abone oldu'));
     } else {
-      row.appendChild(document.createTextNode(' '));
+      body.appendChild(document.createTextNode(' '));
       const count = document.createElement('span');
       count.className = `${EVENT_ROW_CLASS}__count`;
       count.textContent = String(event.months);
-      row.append(count, document.createTextNode(' ay abone oldu'));
+      body.append(count, document.createTextNode(' ay abone oldu'));
     }
   } else if (event.kind === 'gifted-subscription') {
-    row.appendChild(document.createTextNode(' '));
+    body.appendChild(document.createTextNode(' '));
     const count = document.createElement('span');
     count.className = `${EVENT_ROW_CLASS}__count`;
     count.textContent = String(event.giftCount);
-    row.append(count, document.createTextNode(' kişiye abonelik hediye etti'));
+    body.append(count, document.createTextNode(' kişiye abonelik hediye etti'));
   } else if (event.numberViewers > 0) {
-    row.appendChild(document.createTextNode(' '));
+    body.appendChild(document.createTextNode(' '));
     const count = document.createElement('span');
     count.className = `${EVENT_ROW_CLASS}__count`;
     count.textContent = new Intl.NumberFormat('tr-TR').format(event.numberViewers);
-    row.append(count, document.createTextNode(' izleyiciyle host etti'));
+    body.append(count, document.createTextNode(' izleyiciyle host etti'));
   } else {
-    row.appendChild(document.createTextNode(' host etti'));
+    body.appendChild(document.createTextNode(' host etti'));
   }
 
+  row.append(icon, body);
   return row;
 }
 
