@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ScrollFollowController, decideScrollFollow, trimMessageWindow } from '../../src/content/chat/dom-window';
 import { RenderQueue } from '../../src/content/chat/render-queue';
 import { ChatDomRegistry, type ChatMessage } from '../../src/content/chat/message-store';
 
@@ -70,5 +71,47 @@ describe('RenderQueue', () => {
     expect(animationFrame).not.toHaveBeenCalled();
     expect(container.textContent).toContain('queued message');
     queue.dispose();
+  });
+
+  it('keeps a hidden-tab bulk flush pinned when the tab becomes visible again', () => {
+    vi.useFakeTimers();
+    let hidden = true;
+    vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden);
+    const container = document.createElement('div');
+    let scrollTop = 0;
+    Object.defineProperties(container, {
+      clientHeight: { configurable: true, get: () => 100 },
+      scrollHeight: { configurable: true, get: () => Math.max(100, container.childElementCount * 20) },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = Math.max(0, Math.min(value, container.scrollHeight - container.clientHeight));
+        },
+      },
+    });
+    document.body.append(container);
+    const registry = new ChatDomRegistry();
+    const follow = new ScrollFollowController(container, { createResizeObserver: () => null });
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry,
+      onFlush: (appended) => {
+        const decision = decideScrollFollow(follow.isPinned, appended.length);
+        trimMessageWindow(container, registry, decision.trimCap);
+        if (decision.scrollToBottom) follow.scrollToBottom();
+      },
+    });
+
+    for (let i = 0; i < 10; i++) queue.enqueue(message(`hidden-bulk-${i}`));
+    vi.runAllTimers();
+    hidden = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(container.childElementCount).toBe(10);
+    expect(scrollTop).toBe(100);
+    expect(follow.isPinned).toBe(true);
+    queue.dispose();
+    follow.dispose();
   });
 });

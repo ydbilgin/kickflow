@@ -12,7 +12,7 @@ import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNati
 import { RemovedMessagesPanel } from './chat/removed-panel';
 import { FooterToggleButton } from './chat/footer-toggle';
 import { RenderQueue } from './chat/render-queue';
-import { trimMessageWindow, isNearBottom, decideScrollFollow } from './chat/dom-window';
+import { ScrollFollowController, trimMessageWindow, decideScrollFollow } from './chat/dom-window';
 import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
@@ -532,20 +532,18 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   scrollPill.className = 'kickflow-scroll-pill';
   scrollPill.textContent = '↓ Yeni mesajlar';
   scrollPill.style.display = 'none';
+  const scrollFollow = new ScrollFollowController(ownList, {
+    onPinnedChange: (pinned) => {
+      if (pinned) scrollPill.style.display = 'none';
+    },
+  });
+  lifecycle.add(() => scrollFollow.dispose());
   scrollPill.addEventListener('click', () => {
-    ownList.scrollTop = ownList.scrollHeight;
-    stickToBottom = true;
+    scrollFollow.scrollToBottom();
     scrollPill.style.display = 'none';
   });
   mount.root.appendChild(scrollPill);
   lifecycle.add(() => scrollPill.remove());
-
-  let stickToBottom = true;
-
-  lifecycle.addEventListener(ownList, 'scroll', () => {
-    stickToBottom = isNearBottom(ownList);
-    if (stickToBottom) scrollPill.style.display = 'none';
-  });
 
   let activated = false;
   const renderQueue = new RenderQueue({
@@ -562,10 +560,11 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
         setStatus({ active: true, reason: 'aktif — kendi liste render ediliyor' });
       }
 
-      const decision = decideScrollFollow(stickToBottom, appended.length);
+      const decision = decideScrollFollow(scrollFollow.isPinned, appended.length);
       trimMessageWindow(ownList, registry, decision.trimCap);
+      scrollFollow.observeRows(appended);
       if (decision.scrollToBottom) {
-        ownList.scrollTop = ownList.scrollHeight;
+        scrollFollow.scrollToBottom();
       }
       if (decision.showPill) {
         scrollPill.style.display = '';
