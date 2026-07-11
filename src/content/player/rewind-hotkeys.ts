@@ -34,7 +34,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return false;
 }
 
-/** Kick has no native arrow-key seek. Best-effort against #video-player's own
+/** Arrow handling is consumed at document-capture phase before Kick or the browser can apply a
+ * second arrow action. This makes the shared clamp the only currentTime write for a keypress,
+ * avoiding a competing native handler sending the player to stream start. Best-effort against #video-player's own
  * currentTime — the one confirmed-stable selector — rather than Kick's (unconfirmed)
  * native rewind seek-bar DOM. Clamped to the same [seekFloor, liveEdge] range as
  * rewind-controls.ts's inline buttons (shared clampSeekTarget) — the floor preserves DVR
@@ -57,14 +59,18 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
     const current = getVideoElement();
     if (!current) return;
     try {
+      // `preventDefault()` alone does not stop a page-level listener that writes currentTime.
+      // Capture + stopImmediatePropagation isolates this extension's documented Arrow behavior
+      // while leaving text inputs/chat untouched (guarded above).
+      keyboardEvent.preventDefault();
+      keyboardEvent.stopImmediatePropagation();
       const target = clampSeekTarget(current, direction * SEEK_STEP_SECONDS);
       current.currentTime = target;
-      keyboardEvent.preventDefault();
       logger.debug('rewind-hotkeys: seeked to', target);
     } catch (error) {
       logger.warn('rewind-hotkeys: seek failed', error);
     }
   };
 
-  lifecycle.addEventListener(document, 'keydown', onKeyDown);
+  lifecycle.addEventListener(document, 'keydown', onKeyDown, true);
 }

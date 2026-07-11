@@ -80,8 +80,15 @@ export function clampSeekTarget(video: HTMLVideoElement, delta: number): number 
   // old 2^30 sentinel, so a player that still reports a bogus `seekable` falls through to the
   // buffered-range logic below (the pre-2026-07-10 safe behavior — no catapult).
   const seekableRanges = saneRanges(video.seekable);
-  const dvr = seekableRanges[seekableRanges.length - 1];
-  if (dvr && dvr.end - dvr.start > STEP_SECONDS) {
+  // A fresh live join may initially expose only a short (including exactly 10s) DVR window.
+  // It remains authoritative when it contains the current playhead, and seeking its start asks
+  // Kick to reload that unbuffered DVR position. Requiring a window wider than one step made
+  // both the pill and Left-arrow fall back to buffered.start and appear to do nothing after F5.
+  // Requiring the current playhead to be in the range rejects stale preload ranges elsewhere.
+  const dvr = seekableRanges.find(
+    (range) => video.currentTime >= range.start && video.currentTime <= range.end,
+  );
+  if (dvr) {
     return Math.min(Math.max(target, dvr.start), dvr.end);
   }
 

@@ -28,18 +28,22 @@ describe('rewind-controls media boundaries', () => {
     expect(seekFloor(fakeVideo())).toBe(0);
   });
 
-  it('clamps seek targets to the playable floor and live edge', () => {
+  it('rewinds 10s inside the real buffered window when seekable is the Infinity-regime sentinel', () => {
+    // Owner badge after F5: duration=Infinity, buffered=[0, 46.6], seekable=[0, 2^30], cur=13.4.
+    // Both the inline ⏪10 button and Left-arrow call this shared clamp.
     const video = fakeVideo({
-      buffered: [[6, 44]],
+      buffered: [[0, 46.6]],
       seekable: [[0, SENTINEL]],
-      currentTime: 10,
+      currentTime: 13.4,
     });
 
-    expect(clampSeekTarget(video, -30)).toBe(6);
-    expect(clampSeekTarget(video, 100)).toBe(44);
+    const target = clampSeekTarget(video, -10);
+    expect(target).toBeCloseTo(3.4, 8);
+    expect(target).toBeLessThan(video.currentTime - 9);
+    expect(target).toBeGreaterThan(0); // never snap the owner to broadcast start
   });
 
-  it('lets a rewind cross past buffered.start into a sane seekable DVR window (real Kick)', () => {
+  it('keeps the finite seekable regime unchanged while crossing past buffered.start into DVR (real Kick)', () => {
     // Kick's current player (measured 2026-07-10): seekable is the real DVR [0, 2585] and the
     // server re-loads any seekable position even if not buffered. A ⏪10 from a rewound spot must
     // reach into the DVR, not clamp to the small buffered window's start.
@@ -54,14 +58,31 @@ describe('rewind-controls media boundaries', () => {
     expect(clampSeekTarget(video, 10_000)).toBe(2585); // clamped to the live edge (seekable.end)
   });
 
+  it('uses a valid short fresh-join DVR range for the shared ⏪10 and Left-arrow seek', () => {
+    // Right after F5 Kick can expose only a 10s seekable DVR window ending at the fresh
+    // playhead, while buffered starts at the playhead. It is still a real DVR range: a -10
+    // target must enter it so Kick can load the unbuffered position.
+    const video = fakeVideo({
+      buffered: [[8174.7, 8210.8]],
+      seekable: [[8165, 8175]],
+      currentTime: 8174.7,
+    });
+
+    const target = clampSeekTarget(video, -10);
+    expect(target).toBe(8165);
+    expect(target).toBeLessThan(video.currentTime - 9);
+  });
+
   it('snaps directional seeks out of gaps between buffered ranges', () => {
     expect(clampSeekTarget(fakeVideo({
       buffered: [[0, 10], [20, 30]],
+      seekable: [[0, SENTINEL]],
       currentTime: 21,
     }), -10)).toBe(10);
 
     expect(clampSeekTarget(fakeVideo({
       buffered: [[0, 10], [20, 30]],
+      seekable: [[0, SENTINEL]],
       currentTime: 9,
     }), 10)).toBe(20);
   });
@@ -69,6 +90,7 @@ describe('rewind-controls media boundaries', () => {
   it('keeps a short rewind in the current playable range when an early preload range is stale', () => {
     const video = fakeVideo({
       buffered: [[0, 2], [100, 160]],
+      seekable: [[0, 2]],
       currentTime: 105,
     });
 
