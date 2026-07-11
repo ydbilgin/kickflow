@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decideCatchup, initLiveCatchup, isLiveStream, type CatchupAction } from '../../src/content/player/live-catchup';
+import { catchupLiveEdge, decideCatchup, initLiveCatchup, isLiveStream, type CatchupAction } from '../../src/content/player/live-catchup';
+import { setAutoMode, setManualRate } from '../../src/content/player/player-state';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { fakeTimeRanges } from '../helpers/timeRanges';
 
@@ -34,9 +35,9 @@ describe('decideCatchup', () => {
     });
     const bar = document.createElement('div');
     bar.className = 'z-controls bottom-0';
-    const live = document.createElement('button');
-    live.textContent = 'LIVE';
-    bar.append(live);
+    const vodButton = document.createElement('button');
+    vodButton.textContent = 'Quality';
+    bar.append(vodButton);
     wrapper.append(video, bar);
     document.body.append(wrapper);
 
@@ -215,6 +216,133 @@ describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
 
     expect(video.playbackRate).toBe(1.5);
     expect(findCanliButton().textContent).toBe('CANLI -16sn');
+    lifecycle.dispose();
+  });
+
+  it('uses buffered.end in the Infinity/sentinel regime so a rewound live player shows behind and catches up', () => {
+    // Owner badge after F5: duration=Infinity, seekable.end=2^30 sentinel, but the playable
+    // buffered window is [0, 46.6] and the current time is 13.4.
+    const { video, lifecycle } = mountLivePlayer(13.4, 46.6);
+    Object.defineProperty(video, 'seekable', {
+      configurable: true,
+      value: fakeTimeRanges([[0, 2 ** 30]]),
+    });
+
+    expect(catchupLiveEdge(video)).toBe(46.6);
+    video.dispatchEvent(new Event('timeupdate'));
+
+    expect(video.playbackRate).toBe(1.5);
+    expect(findCanliButton().textContent).toBe('CANLI -33sn');
+    lifecycle.dispose();
+  });
+
+  it('leaves the finite seekable/duration live-edge path unchanged even if buffered differs', () => {
+    const { video, lifecycle } = mountLivePlayer(1703, 1704, {
+      duration: 2585,
+      liveButtonText: 'Canlı Yayına Geç',
+    });
+    Object.defineProperty(video, 'buffered', { configurable: true, value: fakeTimeRanges([[1702, 1704]]) });
+
+    expect(catchupLiveEdge(video)).toBe(2585);
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(video.playbackRate).toBe(1.5);
+    expect(findCanliButton().textContent).toBe('CANLI -15dk');
+    lifecycle.dispose();
+  });
+
+  it('uses the finite duration live edge when a DVR rewind collapses seekable near the playhead', () => {
+    // Owner reproduction: after a deep rewind Kick can reload the DVR window so seekable.end
+    // lands beside currentTime, while duration remains the growing stream position/live edge.
+    const { video, lifecycle } = mountLivePlayer(1703, 1704, {
+      duration: 2585,
+      liveButtonText: 'Canlı Yayına Geç',
+    });
+    Object.defineProperty(video, 'buffered', { configurable: true, value: fakeTimeRanges([[1702, 1704]]) });
+    video.dispatchEvent(new Event('timeupdate'));
+
+    expect(video.playbackRate).toBe(1.5);
+    expect(findCanliButton().textContent).toBe('CANLI -15dk');
+    expect(findCanliButton().classList.contains('kickflow-player-btn--behind')).toBe(true);
+    findCanliButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(video.currentTime).toBe(1704); // go-live still targets the seekable DVR endpoint
+    lifecycle.dispose();
+  });
+
+  it('re-asserts auto catch-up after Kick resets the rate during a DVR seek, then drops only at the edge', () => {
+    const { video, lifecycle } = mountLivePlayer(8174.7, 8370.8, {
+      duration: 8370.8,
+      liveButtonText: 'Canlı Yayına Geç',
+    });
+
+    try {
+      video.dispatchEvent(new Event('timeupdate'));
+      expect(video.playbackRate).toBe(1.5);
+
+      // Owner-observed state: Kick resets the media element during a DVR seek/rebuffer, while
+      // our hysteresis state remains catchingUp=true and the live edge is still 196s away.
+      video.playbackRate = 1;
+      video.dispatchEvent(new Event('timeupdate'));
+      expect(video.playbackRate).toBe(1.5);
+
+      // Hysteresis remains unchanged: stay fast until the 1.5s caught-up threshold, then 1x.
+      video.currentTime = 8368;
+      video.dispatchEvent(new Event('timeupdate'));
+      expect(video.playbackRate).toBe(1.5);
+      video.currentTime = 8369.4;
+      video.dispatchEvent(new Event('timeupdate'));
+      expect(video.playbackRate).toBe(1);
+
+      // Manual playback is never overridden while behind.
+      video.currentTime = 8174.7;
+      video.playbackRate = 2;
+      setManualRate(2);
+      video.dispatchEvent(new Event('timeupdate'));
+      expect(video.playbackRate).toBe(2);
+    } finally {
+      setManualRate(1);
+      setAutoMode();
+      lifecycle.dispose();
+    }
+  });
+
+  it('does not report behind or catch up when duration and seekable agree at the live edge', () => {
+    const { video, lifecycle } = mountLivePlayer(2585, 2585, {
+      duration: 2585,
+      liveButtonText: 'Canlı Yayına Geç',
+    });
+    video.dispatchEvent(new Event('timeupdate'));
+
+    expect(video.playbackRate).toBe(1);
+    expect(findCanliButton().textContent).toBe('CANLI');
+    expect(findCanliButton().classList.contains('kickflow-player-btn--behind')).toBe(false);
+    lifecycle.dispose();
+  });
+
+  it('fails closed for finite VOD even when duration and seekable are far ahead', () => {
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    Object.defineProperties(video, {
+      duration: { configurable: true, value: 2585 },
+      currentTime: { configurable: true, value: 1703, writable: true },
+      buffered: { configurable: true, value: fakeTimeRanges([[1702, 1704]]) },
+      seekable: { configurable: true, value: fakeTimeRanges([[0, 1704]]) },
+      playbackRate: { configurable: true, value: 1, writable: true },
+    });
+    const bar = document.createElement('div');
+    bar.className = 'z-controls bottom-0';
+    const vodButton = document.createElement('button');
+    vodButton.textContent = 'Quality';
+    bar.append(vodButton);
+    wrapper.append(video, bar);
+    document.body.append(wrapper);
+
+    const lifecycle = new Lifecycle();
+    initLiveCatchup(lifecycle);
+    video.dispatchEvent(new Event('timeupdate'));
+
+    expect(video.playbackRate).toBe(1);
+    expect(document.querySelector('#kickflow-catchup-controls')).toBeNull();
     lifecycle.dispose();
   });
 

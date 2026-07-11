@@ -64,20 +64,53 @@ export function isLiveStream(video: HTMLVideoElement): boolean {
   return video.duration === Infinity || video.duration >= LIVE_DURATION_SENTINEL_SECONDS;
 }
 
-/** The live edge on Kick's current player IS `seekable.end` (measured: seekable.end ≈ duration ≈
- * the true live position; `seekable.end - currentTime` = real behind-live distance). The stale
- * 2026-07-04 note that seekable is a 2^30 sentinel no longer holds for Kick's player — but a
- * sentinel/absurd reading is still filtered so a regressed player can't catapult playback. */
+/** Kick switches between two live-player regimes: current finite duration/seekable media-time
+ * positions, and classic HLS where duration=Infinity and seekable.end is a 2^30 sentinel.
+ * Sane readings are the finite-regime live-edge candidates; sentinel/absurd readings must
+ * never reach a seek target or catch-up distance. */
+function saneLiveEdge(value: number): number | null {
+  if (!Number.isFinite(value) || value <= 0 || value >= LIVE_DURATION_SENTINEL_SECONDS) return null;
+  return value;
+}
+
 function seekableLiveEdge(video: HTMLVideoElement): number | null {
   const s = video.seekable;
   if (!s.length) return null;
-  const end = s.end(s.length - 1);
-  if (!Number.isFinite(end) || end <= 0 || end >= LIVE_DURATION_SENTINEL_SECONDS) return null;
-  return end;
+  return saneLiveEdge(s.end(s.length - 1));
 }
 
-/** Event-driven and rebound across video-element swaps. A sane buffered edge anchors a
- * wall-clock projection; seekable.end/video.duration are deliberately not media boundaries. */
+function durationLiveEdge(video: HTMLVideoElement): number | null {
+  return saneLiveEdge(video.duration);
+}
+
+function bufferedLiveEdge(video: HTMLVideoElement): number | null {
+  let furthest: number | null = null;
+  for (let index = 0; index < video.buffered.length; index++) {
+    const end = saneLiveEdge(video.buffered.end(index));
+    if (end !== null && (furthest === null || end > furthest)) furthest = end;
+  }
+  return furthest;
+}
+
+/**
+ * Kick normally reports both seekable.end and finite duration at the live edge. A DVR reload
+ * can shrink seekable to the newly loaded window near currentTime while duration remains the
+ * stream's growing media position, so use the furthest sane reading for catch-up only.
+ * Go-live remains seekable-based: it must seek to a currently addressable DVR endpoint.
+ */
+export function catchupLiveEdge(video: HTMLVideoElement): number | null {
+  const seekable = seekableLiveEdge(video);
+  const duration = durationLiveEdge(video);
+  // Keep the finite regime exactly as before: buffered is considered only after BOTH prior
+  // sources are unusable (Infinity/sentinel). In that regime the IVS probe showed buffered.end
+  // stays 7-8 seconds ahead after a deep in-buffer rewind, so it is a usable live-edge proxy.
+  if (seekable === null) return duration ?? bufferedLiveEdge(video);
+  if (duration === null) return seekable;
+  return Math.max(seekable, duration);
+}
+
+/** Event-driven and rebound across video-element swaps. Catch-up uses the furthest sane
+ * live-edge reading, while live detection remains separately latched and fail-closed. */
 export function initLiveCatchup(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {
@@ -176,20 +209,22 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     if (!(current instanceof HTMLVideoElement)) return;
     const playerState = getPlayerState();
 
-    if (!detectLive(current)) {
+    const live = detectLive(current);
+    const liveEdgeSec = catchupLiveEdge(current);
+    const behindBy = liveEdgeSec === null ? null : liveEdgeSec - current.currentTime;
+
+    if (!live) {
       if (catchingUp) resetAutoPlaybackRate(current);
       setLiveButtonState(null);
       return;
     }
 
-    const liveEdgeSec = seekableLiveEdge(current);
-    if (liveEdgeSec === null) {
+    if (liveEdgeSec === null || behindBy === null) {
       if (catchingUp) resetAutoPlaybackRate(current);
       setLiveButtonState(null);
       return;
     }
 
-    const behindBy = liveEdgeSec - current.currentTime;
     const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
     // Behind-live is shown in BOTH modes (unlike the old catch-up-only indicator): "how far
     // behind am I" is orthogonal to whether auto catch-up is doing anything about it.
@@ -224,10 +259,19 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       behindPlausible: plausible,
     });
 
-    if (action.kind === 'setRate' && action.rate === CATCHUP_PLAYBACK_RATE) {
+    const shouldMaintainCatchupRate =
+      (action.kind === 'setRate' && action.rate === CATCHUP_PLAYBACK_RATE)
+      || (catchingUp && behindBy > CAUGHT_UP_THRESHOLD_SECONDS);
+    if (shouldMaintainCatchupRate) {
+      const startedCatchingUp = !catchingUp;
       catchingUp = true;
-      setPlayerPlaybackRate(current, action.rate);
-      logger.debug('live-catchup: behind by', behindBy.toFixed(1), 's, speeding up');
+      // Kick can reset playbackRate to 1x during an in-DVR seek/rebuffer without a media load.
+      // Reconcile every auto-mode tick while hysteresis says we are catching up; the setter's
+      // equality guard avoids writing (and thus fighting Kick) when the rate is already 1.5x.
+      setPlayerPlaybackRate(current, CATCHUP_PLAYBACK_RATE);
+      if (startedCatchingUp) {
+        logger.debug('live-catchup: behind by', behindBy.toFixed(1), 's, speeding up');
+      }
     } else if (action.kind === 'setRate' && action.rate === NORMAL_PLAYBACK_RATE) {
       resetAutoPlaybackRate(current);
       logger.debug('live-catchup: caught up, resetting playback rate');
