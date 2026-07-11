@@ -1,7 +1,15 @@
 # KickFlow — CURRENT STATUS
 
 > Bu dosya = projenin anlık durumu. Owner "status oku" derse BU dosya okunur.
-> Son güncelleme: 2026-07-10
+> Son güncelleme: 2026-07-11
+
+## 🟢 2026-07-11 (25) — PLAYER: canlı-kenar/catch-up/rewind FIX'LERİ Kick'in İKİ player REJİMİ için (cx 4-turlu implement, Claude cross-family review, owner CANLI TEYİT ETTİ, ✅ COMMIT'Lİ `1d1bf68` + `836a7ab`)
+Owner canlıda: "geri alınca hâlâ CANLI gösteriyor, 1x'te devam ediyor; sol ok yayının başına atıyor; F5 sonrası ⏪10 geri gitmiyor." 4 cx dispatch turu + her turda ekran-içi debug badge ile owner canlı okuma (WAF Claude'u engellediği için badge = tek gerçek-veri kaynağı, round 19-20 yöntemi).
+- **🔑 KEŞİF — Kick player'ı İKİ REJİM arasında geçiyor** (badge owner-okumasıyla kanıtlandı): **(A) sonlu** `duration`+`seekable.end` = gerçek canlı kenar (round 17/19/20 bunu ele alıyordu); **(B) sonsuz/classic-live** `duration=∞`, `seekable.end=2^30 sentinel` (F5 sonrası bu rejim). Rejim B'de tüm canlı-kenar kaynaklarımız null dönüyordu → behind=null → düz CANLI + 1x + rewind şaşırıyor. Bu, önceki turların hiç görmediği durumdu.
+- **Fix'ler (SHIP, commit'li):** (1) `catchupLiveEdge = max(sane seekable.end, finite duration)` + **rejim B'de `buffered.end` fallback** (IVS probe rewind sonrası buffered.end'in ~7-8sn önde kaldığını doğruladı); sonlu rejim değişmedi. (2) **catch-up hızı her tick yeniden dayatılıyor** — Kick in-DVR seek/rebuffer'da `playbackRate`'i 1x'e resetliyor, eski "sadece geçişte yaz" mantığı 1x'te bırakıyordu (`catchingUp=true` ama hız 1.0 desync). Hysteresis (3sn/1.5sn) korundu. (3) **Ok tuşları capture-phase + stopImmediatePropagation** → rakip sayfa-handler'ı seek'i ezip başa atamıyor. (4) `clampSeekTarget` playhead'i İÇEREN seekable aralığını kullanıyor → F5-sonrası kısa DVR penceresinde ⏪10/ok çalışıyor.
+- **✅ OWNER TEYİT:** sol ok artık başa atmıyor 10sn geri alıyor; behind-göstergesi + catch-up çalışıyor.
+- **⛔ KABUL EDİLEN LİMİT (round-4 GERİ ALINDI):** rejim B'de **katılış noktasından ÖNCESİNE** geri sarma Kick platform limiti — `seekable.start=0` gerçek DVR tabanı değil sentinel; buffer-altı seek canlıya geri-snap'liyor (IVS probe + 2026-07-09 DVR ölçümü aynı yöne). Round-4'ün `seekable.start`-taban denemesi bu yüzden geri alındı (canlıya fırlatma riski). Owner: "bir önceki versiyona geç." Sonlu rejime (A) geçince round-20'nin tam-DVR'ı zaten çalışıyor.
+- **Temizlik:** debug badge tamamen kaldırıldı, round-4 revert edildi, `npx vitest run` 239/239 + tsc + build temiz, secret-scan temiz.
 
 ## 🟢 2026-07-10 (24) — SIDEBAR (Takip Edilen Kanallar) İZLEYİCİ SAYISI + CANLI-DURUM YENİLEME (brainstorming→spec→cx-terra implement, Claude cross-family review SHIP, ✅ COMMIT'Lİ `3029c19` — CANLI TEST EDİLMEDİ)
 Owner: "husamviyuviyu yeni açtı ama sidebar hâlâ eski sayıyı gösteriyor, Hype/CikomenTV canlı ama 0 izleyici yazıyor — neden yenilenmiyor?" `/brainstorming` skill'iyle spec'lendi (`docs/superpowers/specs/2026-07-10-sidebar-refresh-design.md`).
