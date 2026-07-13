@@ -40,6 +40,15 @@ function menuHost(): Element | null {
   return document.fullscreenElement ?? findPlayerWrapper();
 }
 
+/** Live flag teardown path: a disabled speed feature must not leave a manual rate/state behind
+ * that also prevents automatic live catch-up from resuming. Session navigation does not call
+ * this, so ordinary persisted speed behavior is otherwise unchanged. */
+export function deactivateSpeedControls(): void {
+  const current = getVideoElement();
+  if (getPlayerState().mode === 'manual') setAutoMode();
+  if (current) setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
+}
+
 export function initSpeedControls(lifecycle: Lifecycle): void {
   const video = getVideoElement();
   if (!video) {

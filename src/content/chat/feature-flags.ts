@@ -26,6 +26,16 @@ export interface FeatureFlags {
   /** Automatically enter Kick's theater layout when a channel/video loads. Opt-in because it
    * changes the page layout rather than only augmenting it. */
   autoTheater: boolean;
+  /** Show the 10-second rewind/forward controls and enable their configured hotkeys. */
+  rewindControls: boolean;
+  /** Show the CANLI/behind-live control and run automatic catch-up. */
+  liveCatchup: boolean;
+  /** Select the highest currently available stream quality after media loads. */
+  qualityLock: boolean;
+  /** Show frame capture and enable its configured hotkey. */
+  screenshot: boolean;
+  /** Show manual/automatic playback-speed controls. */
+  speedControls: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
 }
@@ -42,6 +52,11 @@ export const featureFlags: FeatureFlags = {
   showModeChanges: true,
   showSidebarRefresh: true,
   autoTheater: false,
+  rewindControls: true,
+  liveCatchup: true,
+  qualityLock: true,
+  screenshot: true,
+  speedControls: true,
   modLogPanel: false,
 };
 

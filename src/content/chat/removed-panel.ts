@@ -4,6 +4,17 @@ import type { FooterTogglePanel } from './footer-toggle';
 import { featureFlags } from './feature-flags';
 import { mergeIdentityBadges, type ChatIntegrityStore, type ChatMessage } from './message-store';
 import { appendBadges, appendParsedContent, applyPreservedMarking, wireUsernameProfileLink } from './message-view';
+import {
+  HOTKEY_ACTIONS,
+  HOTKEY_DEFINITIONS,
+  formatHotkeyKey,
+  getHotkeyBindings,
+  normalizeHotkeyKey,
+  resetHotkeyBindings,
+  setHotkeyCaptureActive,
+  updateHotkeyBinding,
+  type HotkeyAction,
+} from '../player/hotkey-registry';
 
 const PANEL_CLASS = 'kickflow-panel';
 const PANEL_HEADER_CLASS = 'kickflow-panel__header';
@@ -26,6 +37,12 @@ const DRAG_IGNORE_SELECTOR = `.${PANEL_BTN_CLASS}, button, select, input, label`
 // Bounded so a high-moderation channel (mass bans) can't grow the panel without limit — keep the
 // newest N removed messages only.
 const MAX_PANEL_ROWS = 60;
+
+interface HotkeyRowControls {
+  enabled: HTMLInputElement;
+  chip: HTMLElement;
+  change: HTMLButtonElement;
+}
 
 /** Dispatched by the settings controls; bootstrap.ts's single `applyFlagChange` mutator (also
  * called by the popup's chrome.runtime message) is the only thing that ever writes featureFlags
@@ -52,7 +69,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private open = false; // hidden by default — the footer button opens it — in-memory only (tab isolation)
   private lastSig = ''; // skip rebuilding the body when its contents are unchanged
   private disposeDrag: (() => void) | null = null;
-  private showSettings = false; // gear-revealed quick-settings section — in-memory only
+  private settingsVisible = false; // gear/navbar-revealed quick-settings section — in-memory only
   private settingsSection: HTMLElement | null = null;
   private countChip: HTMLElement | null = null;
   private chatModeSelect: HTMLSelectElement | null = null;
@@ -65,6 +82,14 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private sidebarRefreshCheckbox: HTMLInputElement | null = null;
   private autoTheaterCheckbox: HTMLInputElement | null = null;
+  private rewindControlsCheckbox: HTMLInputElement | null = null;
+  private liveCatchupCheckbox: HTMLInputElement | null = null;
+  private qualityLockCheckbox: HTMLInputElement | null = null;
+  private screenshotCheckbox: HTMLInputElement | null = null;
+  private speedControlsCheckbox: HTMLInputElement | null = null;
+  private readonly hotkeyRows = new Map<HotkeyAction, HotkeyRowControls>();
+  private hotkeyStatus: HTMLElement | null = null;
+  private captureAction: HotkeyAction | null = null;
 
   constructor(
     lifecycle: Lifecycle,
@@ -72,6 +97,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   ) {
     this.render();
     lifecycle.setInterval(() => this.render(), 1000);
+    lifecycle.addEventListener(document, 'keydown', (event) => this.onHotkeyCapture(event as KeyboardEvent), true);
     lifecycle.add(() => this.dispose());
   }
 
@@ -80,6 +106,16 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   toggle(): void {
     this.open = !this.open;
     this.render();
+  }
+
+  /** Navbar entry point: unlike the footer's general panel toggle, this always opens the one
+   * shared panel directly on its settings surface. */
+  showSettings(): void {
+    this.open = true;
+    this.settingsVisible = true;
+    this.render();
+    this.updateSettingsVisibility();
+    this.refreshSettingsControls();
   }
 
   isOpen(): boolean {
@@ -109,7 +145,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     // Settings visibility is independent of open/closed (gear lives in the same header). Keep
     // the controls' displayed values current — e.g. a flag changed via the Chrome popup, which
     // routes through the same applyFlagChange mutator — without stealing focus mid-interaction.
-    if (this.showSettings) this.refreshSettingsControls();
+    if (this.settingsVisible) this.refreshSettingsControls();
 
     const body = section.querySelector<HTMLElement>(`.${PANEL_BODY_CLASS}`);
     if (!body) return;
@@ -168,10 +204,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     gear.type = 'button';
     gear.className = `${PANEL_BTN_CLASS} ${PANEL_GEAR_CLASS}`;
     gear.title = 'Ayarlar';
+    gear.setAttribute('aria-label', 'KickFlow ayarlarını göster');
     gear.textContent = '⚙';
     gear.addEventListener('click', () => {
-      this.showSettings = !this.showSettings;
-      if (this.showSettings) this.refreshSettingsControls();
+      this.settingsVisible = !this.settingsVisible;
+      if (this.settingsVisible) this.refreshSettingsControls();
       this.updateSettingsVisibility();
     });
 
@@ -179,6 +216,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     close.type = 'button';
     close.className = `${PANEL_BTN_CLASS} ${PANEL_CLOSE_CLASS}`;
     close.title = 'Kapat';
+    close.setAttribute('aria-label', 'KickFlow panelini kapat');
     close.textContent = '×';
     close.addEventListener('click', () => this.toggle());
 
@@ -224,7 +262,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private buildSettingsSection(): HTMLElement {
     const settings = document.createElement('div');
     settings.className = PANEL_SETTINGS_CLASS;
-    settings.style.display = this.showSettings ? '' : 'none';
+    settings.style.display = this.settingsVisible ? '' : 'none';
 
     const modeCard = document.createElement('div');
     modeCard.className = 'kickflow-panel__settings-mode';
@@ -299,6 +337,58 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.autoTheaterCheckbox = autoTheaterCheckbox;
 
+    const { label: rewindControlsLabel, checkbox: rewindControlsCheckbox } = this.buildSettingsToggle(
+      'Geri / ileri sarma', 'rewindControls', featureFlags.rewindControls,
+    );
+    this.rewindControlsCheckbox = rewindControlsCheckbox;
+
+    const { label: liveCatchupLabel, checkbox: liveCatchupCheckbox } = this.buildSettingsToggle(
+      'Canlıya yetişme', 'liveCatchup', featureFlags.liveCatchup,
+    );
+    this.liveCatchupCheckbox = liveCatchupCheckbox;
+
+    const { label: qualityLockLabel, checkbox: qualityLockCheckbox } = this.buildSettingsToggle(
+      'En yüksek kalite', 'qualityLock', featureFlags.qualityLock,
+    );
+    this.qualityLockCheckbox = qualityLockCheckbox;
+
+    const { label: screenshotLabel, checkbox: screenshotCheckbox } = this.buildSettingsToggle(
+      'Ekran görüntüsü', 'screenshot', featureFlags.screenshot,
+    );
+    this.screenshotCheckbox = screenshotCheckbox;
+
+    const { label: speedControlsLabel, checkbox: speedControlsCheckbox } = this.buildSettingsToggle(
+      'Hız kontrolleri', 'speedControls', featureFlags.speedControls,
+    );
+    this.speedControlsCheckbox = speedControlsCheckbox;
+
+    const hotkeyTitle = document.createElement('div');
+    hotkeyTitle.className = 'kickflow-panel__settings-title';
+    hotkeyTitle.textContent = 'Kısayollar';
+
+    const hotkeyList = document.createElement('div');
+    hotkeyList.className = 'kickflow-panel__hotkeys';
+    for (const definition of HOTKEY_DEFINITIONS) hotkeyList.append(this.buildHotkeyRow(definition.action, definition.label));
+
+    const hotkeyFooter = document.createElement('div');
+    hotkeyFooter.className = 'kickflow-panel__hotkey-footer';
+    const hotkeyStatus = document.createElement('span');
+    hotkeyStatus.className = 'kickflow-panel__hotkey-status';
+    hotkeyStatus.setAttribute('role', 'status');
+    hotkeyStatus.setAttribute('aria-live', 'polite');
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'kickflow-panel__hotkey-reset';
+    reset.textContent = 'Varsayılana dön';
+    reset.addEventListener('click', () => {
+      this.finishHotkeyCapture();
+      resetHotkeyBindings();
+      this.refreshHotkeyControls();
+      this.setHotkeyStatus('Kısayollar sıfırlandı.');
+    });
+    hotkeyFooter.append(hotkeyStatus, reset);
+    this.hotkeyStatus = hotkeyStatus;
+
     const hint = document.createElement('p');
     hint.className = 'kickflow-panel__settings-hint';
     hint.textContent = 'Değişiklikler anında uygulanır.';
@@ -316,9 +406,113 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       sidebarRefreshLabel,
       playerTitle,
       autoTheaterLabel,
+      rewindControlsLabel,
+      liveCatchupLabel,
+      qualityLockLabel,
+      screenshotLabel,
+      speedControlsLabel,
+      hotkeyTitle,
+      hotkeyList,
+      hotkeyFooter,
       hint,
     );
     return settings;
+  }
+
+  private buildHotkeyRow(action: HotkeyAction, labelText: string): HTMLElement {
+    const binding = getHotkeyBindings()[action];
+    const row = document.createElement('div');
+    row.className = 'kickflow-panel__hotkey-row';
+
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.className = 'kickflow-panel__settings-toggle kickflow-panel__hotkey-enabled';
+    enabled.checked = binding.enabled;
+    enabled.setAttribute('aria-label', `${labelText} kısayolunu etkinleştir`);
+    enabled.addEventListener('change', () => {
+      updateHotkeyBinding(action, { enabled: enabled.checked });
+      this.refreshHotkeyControls();
+    });
+
+    const label = document.createElement('span');
+    label.className = 'kickflow-panel__hotkey-label';
+    label.textContent = labelText;
+
+    const chip = document.createElement('kbd');
+    chip.className = 'kickflow-panel__hotkey-chip';
+    chip.textContent = formatHotkeyKey(binding.key);
+
+    const change = document.createElement('button');
+    change.type = 'button';
+    change.className = 'kickflow-panel__hotkey-change';
+    change.textContent = 'Değiştir';
+    change.addEventListener('click', () => this.startHotkeyCapture(action));
+
+    row.append(enabled, label, chip, change);
+    this.hotkeyRows.set(action, { enabled, chip, change });
+    return row;
+  }
+
+  private startHotkeyCapture(action: HotkeyAction): void {
+    this.captureAction = action;
+    setHotkeyCaptureActive(true);
+    this.setHotkeyStatus('Bir tuşa bas…  Esc: iptal');
+    this.refreshHotkeyControls();
+  }
+
+  private finishHotkeyCapture(message?: string): void {
+    this.captureAction = null;
+    setHotkeyCaptureActive(false);
+    if (message !== undefined) this.setHotkeyStatus(message);
+    this.refreshHotkeyControls();
+  }
+
+  private onHotkeyCapture(event: KeyboardEvent): void {
+    const action = this.captureAction;
+    if (!action) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (event.key === 'Escape') {
+      this.finishHotkeyCapture('Değişiklik iptal edildi.');
+      return;
+    }
+    const key = normalizeHotkeyKey(event.key);
+    if (key === null) {
+      this.setHotkeyStatus('Tek başına bir değiştirici tuş kullanılamaz.');
+      return;
+    }
+
+    const result = updateHotkeyBinding(action, { key });
+    if (!result.ok) {
+      if (result.reason === 'collision' && result.conflictingAction) {
+        const conflict = HOTKEY_DEFINITIONS.find((item) => item.action === result.conflictingAction)?.label ?? result.conflictingAction;
+        this.setHotkeyStatus(`Bu tuş “${conflict}” için kullanımda.`);
+      } else {
+        this.setHotkeyStatus('Bu tuş bağlanamıyor.');
+      }
+      return;
+    }
+
+    this.finishHotkeyCapture(
+      result.nativeConflict ? 'Kaydedildi — Kick’in kendi kısayoluyla çakışabilir.' : 'Kısayol kaydedildi.',
+    );
+  }
+
+  private setHotkeyStatus(message: string): void {
+    if (this.hotkeyStatus) this.hotkeyStatus.textContent = message;
+  }
+
+  private refreshHotkeyControls(): void {
+    const bindings = getHotkeyBindings();
+    for (const action of HOTKEY_ACTIONS) {
+      const controls = this.hotkeyRows.get(action);
+      if (!controls) continue;
+      controls.enabled.checked = bindings[action].enabled;
+      controls.chip.textContent = formatHotkeyKey(bindings[action].key);
+      controls.change.textContent = this.captureAction === action ? 'Bir tuşa bas…' : 'Değiştir';
+      controls.change.classList.toggle('kickflow-panel__hotkey-change--capturing', this.captureAction === action);
+    }
   }
 
   private buildSettingsToggle(
@@ -340,7 +534,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   }
 
   private updateSettingsVisibility(): void {
-    if (this.settingsSection) this.settingsSection.style.display = this.showSettings ? '' : 'none';
+    if (this.settingsSection) this.settingsSection.style.display = this.settingsVisible ? '' : 'none';
   }
 
   /** Keeps the controls' displayed value/checked current with featureFlags without replacing
@@ -376,6 +570,22 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.autoTheaterCheckbox && this.autoTheaterCheckbox.checked !== featureFlags.autoTheater) {
       this.autoTheaterCheckbox.checked = featureFlags.autoTheater;
     }
+    if (this.rewindControlsCheckbox && this.rewindControlsCheckbox.checked !== featureFlags.rewindControls) {
+      this.rewindControlsCheckbox.checked = featureFlags.rewindControls;
+    }
+    if (this.liveCatchupCheckbox && this.liveCatchupCheckbox.checked !== featureFlags.liveCatchup) {
+      this.liveCatchupCheckbox.checked = featureFlags.liveCatchup;
+    }
+    if (this.qualityLockCheckbox && this.qualityLockCheckbox.checked !== featureFlags.qualityLock) {
+      this.qualityLockCheckbox.checked = featureFlags.qualityLock;
+    }
+    if (this.screenshotCheckbox && this.screenshotCheckbox.checked !== featureFlags.screenshot) {
+      this.screenshotCheckbox.checked = featureFlags.screenshot;
+    }
+    if (this.speedControlsCheckbox && this.speedControlsCheckbox.checked !== featureFlags.speedControls) {
+      this.speedControlsCheckbox.checked = featureFlags.speedControls;
+    }
+    this.refreshHotkeyControls();
   }
 
   /** Mirrors the row shape native-augment.ts uses for its inline ghost blocks: time + badges +
@@ -428,7 +638,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.disposeDrag?.();
     this.disposeDrag = null;
     this.countChip = null;
-    // showSettings stays in-memory (owner's preference survives a teardown/rebuild); only the
+    // settingsVisible stays in-memory (owner's preference survives a teardown/rebuild); only the
     // now-detached DOM refs are dropped.
     this.settingsSection = null;
     this.chatModeSelect = null;
@@ -441,9 +651,17 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.modeChangesCheckbox = null;
     this.sidebarRefreshCheckbox = null;
     this.autoTheaterCheckbox = null;
+    this.rewindControlsCheckbox = null;
+    this.liveCatchupCheckbox = null;
+    this.qualityLockCheckbox = null;
+    this.screenshotCheckbox = null;
+    this.speedControlsCheckbox = null;
+    this.hotkeyRows.clear();
+    this.hotkeyStatus = null;
   }
 
   private dispose(): void {
+    this.finishHotkeyCapture();
     this.removeSection();
   }
 }

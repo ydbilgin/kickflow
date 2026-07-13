@@ -280,6 +280,68 @@ describe('bootstrap event display flags', () => {
     expect(featureFlags.autoTheater).toBe(false);
   });
 
+  it('persists, loads, and reports every newly toggleable player feature', async () => {
+    storageSet.mockClear();
+    for (const key of ['rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
+      bootstrap.applyFlagChange(key, false);
+      expect(featureFlags[key]).toBe(false);
+      expect(storageSet).toHaveBeenCalledWith({ [`kf_flag_${key}`]: false });
+      expect(bootstrap.getPopupFeatureFlags()[key]).toBe(false);
+    }
+
+    storageGet.mockResolvedValue({
+      kf_flag_rewindControls: true,
+      kf_flag_liveCatchup: true,
+      kf_flag_qualityLock: true,
+      kf_flag_screenshot: true,
+      kf_flag_speedControls: true,
+    });
+    await bootstrap.applySavedFlags();
+    expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
+      rewindControls: true,
+      liveCatchup: true,
+      qualityLock: true,
+      screenshot: true,
+      speedControls: true,
+    });
+  });
+
+  it('live OFF tears down each mounted player surface and ON remounts it without restarting chat', () => {
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    const bar = document.createElement('div');
+    bar.className = 'z-controls bottom-0';
+    const nativeLive = document.createElement('button');
+    nativeLive.textContent = 'LIVE';
+    bar.append(nativeLive);
+    wrapper.append(video, bar);
+    document.body.append(wrapper);
+    for (const key of ['rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
+      featureFlags[key] = true;
+    }
+    const lifecycle = new Lifecycle();
+    bootstrap.initPlayerQolSession(lifecycle);
+
+    expect(document.getElementById('kickflow-rewind-controls')).not.toBeNull();
+    expect(document.getElementById('kickflow-catchup-controls')).not.toBeNull();
+    expect(document.getElementById('kickflow-speed-controls')).not.toBeNull();
+    expect(document.getElementById('kickflow-screenshot-controls')).not.toBeNull();
+
+    bootstrap.applyFlagChange('rewindControls', false);
+    bootstrap.applyFlagChange('liveCatchup', false);
+    bootstrap.applyFlagChange('screenshot', false);
+    bootstrap.applyFlagChange('speedControls', false);
+    bootstrap.applyFlagChange('qualityLock', false);
+    expect(document.querySelector('[id^="kickflow-"][id$="-controls"]')).toBeNull();
+
+    bootstrap.applyFlagChange('rewindControls', true);
+    expect(document.getElementById('kickflow-rewind-controls')).not.toBeNull();
+
+    lifecycle.dispose();
+    document.body.replaceChildren();
+  });
+
   it('deduplicates popup moderation counts across list, ghost, and panel copies', () => {
     document.body.innerHTML = `
       <div class="kickflow-preserved kickflow-banned" data-message-id="same"></div>

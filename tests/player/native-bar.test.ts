@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mountIntoControlBar } from '../../src/content/player/native-bar';
+import { mountIntoControlBar, shareNativeBarMountManager } from '../../src/content/player/native-bar';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import * as selectors from '../../src/content/shared/selectors';
 
@@ -259,5 +259,27 @@ describe('native-bar mounting', () => {
     lifecycle.dispose();
 
     expect(ids.map((id) => document.getElementById(id))).toEqual([null, null, null, null]);
+  });
+
+  it('shares ordered mounting across disposable feature lifecycles and removes only the disabled feature', () => {
+    const bar = setupPlayerBar();
+    const session = new Lifecycle();
+    const rewind = new Lifecycle();
+    const screenshot = new Lifecycle();
+    shareNativeBarMountManager(rewind, session);
+    shareNativeBarMountManager(screenshot, session);
+
+    mountIntoControlBar(screenshot, 'kickflow-screenshot-controls', () => document.createElement('span'));
+    mountIntoControlBar(rewind, 'kickflow-rewind-controls', () => document.createElement('span'));
+    expect(Array.from(bar.children).map((child) => child.id || child.textContent)).toEqual([
+      'LIVE',
+      'kickflow-rewind-controls',
+      'kickflow-screenshot-controls',
+    ]);
+
+    rewind.dispose();
+    expect(document.getElementById('kickflow-rewind-controls')).toBeNull();
+    expect(document.getElementById('kickflow-screenshot-controls')).not.toBeNull();
+    session.dispose();
   });
 });

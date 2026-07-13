@@ -85,6 +85,7 @@ export class FooterToggleButton {
     button.id = BUTTON_ID;
     button.className = BUTTON_CLASS;
     button.title = 'KickFlow — kaldırılanlar & ayarlar';
+    button.setAttribute('aria-label', 'KickFlow kaldırılan mesajlar ve ayarlar');
     button.appendChild(buildIcon());
 
     const badge = document.createElement('span');

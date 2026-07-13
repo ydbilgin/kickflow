@@ -1,13 +1,17 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
+import { featureFlags } from '../chat/feature-flags';
 import { clampSeekTarget } from './rewind-controls';
+import { captureScreenshot } from './screenshot';
+import { goLiveNow } from './live-catchup';
+import { findHotkeyAction, isHotkeyCaptureActive } from './hotkey-registry';
 import type { Lifecycle } from '../shared/lifecycle';
 
 // 10s to match the inline ⏪/⏩ buttons (rewind-controls.ts STEP_SECONDS) so keyboard and
 // click seek the same amount.
 const SEEK_STEP_SECONDS = 10;
 
-function isTypingTarget(target: EventTarget | null): boolean {
+export function isTypingTarget(target: EventTarget | null): boolean {
   let element: HTMLElement | null =
     target instanceof HTMLElement ? target
     : target instanceof Node ? target.parentElement
@@ -52,23 +56,35 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
 
   const onKeyDown = (event: Event): void => {
     const keyboardEvent = event as KeyboardEvent;
+    if (isHotkeyCaptureActive()) return;
     if (isTypingTarget(keyboardEvent.target)) return;
-    if (keyboardEvent.key !== 'ArrowLeft' && keyboardEvent.key !== 'ArrowRight') return;
+    if (keyboardEvent.ctrlKey || keyboardEvent.metaKey || keyboardEvent.altKey) return;
+    const action = findHotkeyAction(keyboardEvent.key);
+    if (!action) return;
 
-    const direction = keyboardEvent.key === 'ArrowLeft' ? -1 : 1;
-    const current = getVideoElement();
-    if (!current) return;
     try {
-      // `preventDefault()` alone does not stop a page-level listener that writes currentTime.
-      // Capture + stopImmediatePropagation isolates this extension's documented Arrow behavior
-      // while leaving text inputs/chat untouched (guarded above).
+      let handled = false;
+      if ((action === 'rewind' || action === 'forward') && featureFlags.rewindControls) {
+        const current = getVideoElement();
+        if (!current) return;
+        const direction = action === 'rewind' ? -1 : 1;
+        const target = clampSeekTarget(current, direction * SEEK_STEP_SECONDS);
+        current.currentTime = target;
+        logger.debug('rewind-hotkeys: seeked to', target);
+        handled = true;
+      } else if (action === 'screenshot' && featureFlags.screenshot) {
+        handled = captureScreenshot();
+      } else if (action === 'goLive' && featureFlags.liveCatchup) {
+        handled = goLiveNow();
+      }
+      if (!handled) return;
+
+      // `preventDefault()` alone does not stop page-level handlers. Capture plus immediate stop
+      // gives every configured KickFlow action one authoritative execution path.
       keyboardEvent.preventDefault();
       keyboardEvent.stopImmediatePropagation();
-      const target = clampSeekTarget(current, direction * SEEK_STEP_SECONDS);
-      current.currentTime = target;
-      logger.debug('rewind-hotkeys: seeked to', target);
     } catch (error) {
-      logger.warn('rewind-hotkeys: seek failed', error);
+      logger.warn('rewind-hotkeys: action failed', action, error);
     }
   };
 

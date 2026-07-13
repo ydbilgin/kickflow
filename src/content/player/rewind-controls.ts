@@ -1,6 +1,7 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
+import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 import type { Lifecycle } from '../shared/lifecycle';
 
 const CONTROLS_ID = 'kickflow-rewind-controls';
@@ -182,6 +183,16 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     return;
   }
 
+  let rewindButton: HTMLButtonElement | null = null;
+  let forwardButton: HTMLButtonElement | null = null;
+  const updateHotkeyTitles = (): void => {
+    const rewindHotkey = getHotkeyBinding('rewind');
+    const forwardHotkey = getHotkeyBinding('forward');
+    if (rewindButton) rewindButton.title = `${STEP_SECONDS} sn geri${rewindHotkey.enabled ? ` (${formatHotkeyKey(rewindHotkey.key)})` : ''}`;
+    if (forwardButton) forwardButton.title = `${STEP_SECONDS} sn ileri${forwardHotkey.enabled ? ` (${formatHotkeyKey(forwardHotkey.key)})` : ''}`;
+  };
+  lifecycle.add(subscribeHotkeyBindings(updateHotkeyTitles));
+
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
     group.className = 'kickflow-player-group kickflow-player-group--lead';
@@ -193,15 +204,16 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     rewind.type = 'button';
     rewind.className = 'kickflow-player-btn kickflow-seek-pill__btn';
     rewind.append(createChevronIcon(REWIND_PATHS), createStepLabel());
-    rewind.title = `${STEP_SECONDS} sn geri (←)`;
     rewind.setAttribute('aria-label', `${STEP_SECONDS} saniye geri sar`);
 
     const forward = document.createElement('button');
     forward.type = 'button';
     forward.className = 'kickflow-player-btn kickflow-seek-pill__btn';
     forward.append(createStepLabel(), createChevronIcon(FORWARD_PATHS));
-    forward.title = `${STEP_SECONDS} sn ileri (→)`;
     forward.setAttribute('aria-label', `${STEP_SECONDS} saniye ileri sar`);
+    rewindButton = rewind;
+    forwardButton = forward;
+    updateHotkeyTitles();
 
     // Attached directly to the button (not routed through Lifecycle): these buttons get
     // rebuilt by native-bar.ts's ensure() whenever Kick's control bar re-renders and drops

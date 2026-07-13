@@ -17,4 +17,12 @@ describe('feature-flags', () => {
   it('keeps automatic theater mode opt-in', () => {
     expect(featureFlags.autoTheater).toBe(false);
   });
+
+  it('keeps every previously unconditional player feature enabled by default', () => {
+    expect(featureFlags.rewindControls).toBe(true);
+    expect(featureFlags.liveCatchup).toBe(true);
+    expect(featureFlags.qualityLock).toBe(true);
+    expect(featureFlags.screenshot).toBe(true);
+    expect(featureFlags.speedControls).toBe(true);
+  });
 });

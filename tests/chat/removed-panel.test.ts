@@ -3,6 +3,7 @@ import { featureFlags } from '../../src/content/chat/feature-flags';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
+import { getHotkeyBindings, resetHotkeyBindings } from '../../src/content/player/hotkey-registry';
 
 /** Finds a settings row's control by its label text — resilient to row reordering, unlike
  * indexing into querySelectorAll('input')/('select'). */
@@ -437,6 +438,11 @@ describe('RemovedMessagesPanel', () => {
       ['Sabitlenmiş mesaj', 'showPinnedMessage'],
       ['Mod değişiklikleri', 'showModeChanges'],
       ['Otomatik tiyatro modu', 'autoTheater'],
+      ['Geri / ileri sarma', 'rewindControls'],
+      ['Canlıya yetişme', 'liveCatchup'],
+      ['En yüksek kalite', 'qualityLock'],
+      ['Ekran görüntüsü', 'screenshot'],
+      ['Hız kontrolleri', 'speedControls'],
     ] as const)('toggling "%s" dispatches kickflow:setFlag with {key: %s, value}', (label, key) => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
@@ -504,6 +510,42 @@ describe('RemovedMessagesPanel', () => {
       expect(panel.removedCount()).toBe(0);
       lifecycle.dispose();
       expect(document.querySelector('.kickflow-panel')).toBeNull();
+    });
+
+    it('navbar-style showSettings opens the existing panel directly on settings', () => {
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore());
+
+      panel.showSettings();
+
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      expect(panel.isOpen()).toBe(true);
+      expect(section.style.display).toBe('flex');
+      expect(section.querySelector<HTMLElement>('.kickflow-panel__settings')?.style.display).toBe('');
+      lifecycle.dispose();
+    });
+
+    it('captures a rebound key live, prevents collisions, and warns for Kick-native keys', () => {
+      resetHotkeyBindings();
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore());
+      panel.showSettings();
+      const screenshotChange = document.querySelector<HTMLButtonElement>('.kickflow-panel__hotkey-row:nth-child(3) .kickflow-panel__hotkey-change')!;
+      const screenshotChip = document.querySelector<HTMLElement>('.kickflow-panel__hotkey-row:nth-child(3) .kickflow-panel__hotkey-chip')!;
+      const status = document.querySelector<HTMLElement>('.kickflow-panel__hotkey-status')!;
+
+      screenshotChange.click();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+      expect(status.textContent).toContain('kullanımda');
+      expect(getHotkeyBindings().screenshot.key).toBe('s');
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'C', bubbles: true, cancelable: true }));
+      expect(getHotkeyBindings().screenshot.key).toBe('c');
+      expect(screenshotChip.textContent).toBe('C');
+      expect(status.textContent).toContain('Kick’in kendi kısayoluyla');
+
+      lifecycle.dispose();
+      resetHotkeyBindings();
     });
   });
 });

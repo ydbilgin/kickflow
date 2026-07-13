@@ -5,6 +5,17 @@ import type { Lifecycle } from '../shared/lifecycle';
 const OBSERVER_DEBOUNCE_MS = 150;
 const RETRY_INTERVAL_MS = 250;
 const RETRY_LIMIT = 20;
+const CONTROL_ORDER = [
+  'kickflow-rewind-controls',
+  'kickflow-catchup-controls',
+  'kickflow-speed-controls',
+  'kickflow-screenshot-controls',
+] as const;
+
+function controlPriority(id: string): number {
+  const index = (CONTROL_ORDER as readonly string[]).indexOf(id);
+  return index < 0 ? CONTROL_ORDER.length : index;
+}
 
 interface RegisteredControl {
   id: string;
@@ -15,6 +26,7 @@ interface RegisteredControl {
 /** A lifecycle owns one mount manager, rather than one pair of observers per control.
  * Map insertion order is the native-bar order: rewind, CANLI, speed, screenshot. */
 const managers = new WeakMap<Lifecycle, NativeBarMountManager>();
+const managerAliases = new WeakMap<Lifecycle, Lifecycle>();
 const controlOwners = new WeakMap<HTMLElement, NativeBarMountManager>();
 
 class NativeBarMountManager {
@@ -33,15 +45,27 @@ class NativeBarMountManager {
     lifecycle.add(() => this.dispose());
   }
 
-  mount(id: string, build: () => HTMLElement): HTMLElement | null {
+  mount(ownerLifecycle: Lifecycle, id: string, build: () => HTMLElement): HTMLElement | null {
     let control = this.controls.get(id);
     if (!control) {
       control = { id, build, element: null };
       this.controls.set(id, control);
+      ownerLifecycle.add(() => this.unmount(id));
     }
 
     this.ensureAll();
     return control.element?.isConnected ? control.element : null;
+  }
+
+  private unmount(id: string): void {
+    const control = this.controls.get(id);
+    if (!control) return;
+    control.element?.remove();
+    if (control.element) controlOwners.delete(control.element);
+    const existing = document.getElementById(id);
+    if (existing instanceof HTMLElement && controlOwners.get(existing) === this) existing.remove();
+    this.controls.delete(id);
+    this.ensureAll();
   }
 
   private rebindWrapper(): void {
@@ -70,7 +94,9 @@ class NativeBarMountManager {
   }
 
   private hasMissingControl(): boolean {
-    for (const control of this.controls.values()) {
+    const orderedControls = Array.from(this.controls.values())
+      .sort((left, right) => controlPriority(left.id) - controlPriority(right.id));
+    for (const control of orderedControls) {
       if (!(document.getElementById(control.id) instanceof HTMLElement)) return true;
     }
     return false;
@@ -116,7 +142,9 @@ class NativeBarMountManager {
     }
 
     let anchor: HTMLElement = liveButton;
-    for (const control of this.controls.values()) {
+    const orderedControls = Array.from(this.controls.values())
+      .sort((left, right) => controlPriority(left.id) - controlPriority(right.id));
+    for (const control of orderedControls) {
       const existing = document.getElementById(control.id);
       if (existing instanceof HTMLElement && existing !== control.element) {
         if (controlOwners.get(existing) && controlOwners.get(existing) !== this) {
@@ -175,15 +203,25 @@ class NativeBarMountManager {
 export function mountIntoControlBar(lifecycle: Lifecycle, id: string, build: () => HTMLElement): HTMLElement | null {
   if (lifecycle.isDisposed) return null;
 
-  let manager = managers.get(lifecycle);
+  const managerLifecycle = managerAliases.get(lifecycle) ?? lifecycle;
+  let manager = managers.get(managerLifecycle);
   if (!manager) {
-    manager = new NativeBarMountManager(lifecycle);
-    managers.set(lifecycle, manager);
+    manager = new NativeBarMountManager(managerLifecycle);
+    managers.set(managerLifecycle, manager);
   }
 
-  const mounted = manager.mount(id, build);
+  const mounted = manager.mount(lifecycle, id, build);
   if (!mounted) {
     logger.debug('native-bar: control bar/LIVE button not present yet for', id, '- retrying');
   }
   return mounted;
+}
+
+/** Lets independently disposable feature lifecycles share one ordered native-bar manager owned
+ * by their player session. This preserves rewind → CANLI → speed → screenshot ordering while
+ * still allowing any one feature to unmount live. */
+export function shareNativeBarMountManager(lifecycle: Lifecycle, managerLifecycle: Lifecycle): void {
+  if (lifecycle.isDisposed || managerLifecycle.isDisposed) return;
+  managerAliases.set(lifecycle, managerLifecycle);
+  lifecycle.add(() => managerAliases.delete(lifecycle));
 }

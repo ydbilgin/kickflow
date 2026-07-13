@@ -18,7 +18,7 @@
     * { box-sizing: border-box; }
     html { background: var(--bg); }
     body {
-      width: 352px; margin: 0; padding: 0 14px 14px;
+      width: 372px; margin: 0; padding: 0 14px 14px;
       background: var(--bg); color: var(--text);
       font-family: Inter, 'Segoe UI', system-ui, sans-serif; font-size: 12px; line-height: 1.35;
     }
@@ -99,6 +99,28 @@
     input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
     input[type=checkbox]:checked::after { background: #071006; transform: translateX(15px); }
     .hint { margin: 10px 3px 0; color: #747b84; font-size: 9.5px; text-align: center; }
+    .hotkey-list { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+    .hotkey-row {
+      display: grid; grid-template-columns: 34px minmax(0,1fr) auto auto; align-items: center; gap: 8px;
+      min-height: 40px; padding: 5px 9px; border-bottom: 1px solid rgba(255,255,255,.055);
+    }
+    .hotkey-row:last-child { border-bottom: 0; }
+    .hotkey-row > span { overflow: hidden; color: #dde0e3; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+    .hotkey-enabled { transform: scale(.88); transform-origin: left center; }
+    .key-chip {
+      min-width: 32px; padding: 4px 7px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
+      background: var(--bg); color: var(--text); font: 750 10px/1.2 Inter, 'Segoe UI', system-ui, sans-serif;
+      text-align: center; box-shadow: inset 0 -1px 0 rgba(255,255,255,.06);
+    }
+    .hotkey-change, .hotkey-reset {
+      appearance: none; height: 27px; padding: 0 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 6px;
+      background: var(--surface-raised); color: #cfd3d7; font: 650 10px/1 Inter, 'Segoe UI', system-ui, sans-serif; cursor: pointer;
+    }
+    .hotkey-change:hover, .hotkey-reset:hover { border-color: rgba(83,252,24,.45); color: #fff; }
+    .hotkey-change--capturing { border-color: var(--accent); color: var(--accent); }
+    .hotkey-change:focus-visible, .hotkey-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .hotkey-footer { display: flex; align-items: center; gap: 9px; min-height: 32px; margin: 5px 2px 0; }
+    .hotkey-status { min-width: 0; flex: 1; color: var(--muted); font-size: 9.5px; line-height: 1.25; }
   </style>
 </head>
 <body>
@@ -161,7 +183,23 @@
       <h2 class="section-title">Oynatıcı</h2>
       <div class="control-list">
         <label class="row" for="t-auto-theater"><span>Otomatik tiyatro modu</span><input type="checkbox" id="t-auto-theater" /></label>
+        <label class="row" for="t-rewind-controls"><span>Geri / ileri sarma</span><input type="checkbox" id="t-rewind-controls" /></label>
+        <label class="row" for="t-live-catchup"><span>Canlıya yetişme</span><input type="checkbox" id="t-live-catchup" /></label>
+        <label class="row" for="t-quality-lock"><span>En yüksek kalite</span><input type="checkbox" id="t-quality-lock" /></label>
+        <label class="row" for="t-screenshot"><span>Ekran görüntüsü</span><input type="checkbox" id="t-screenshot" /></label>
+        <label class="row" for="t-speed-controls"><span>Hız kontrolleri</span><input type="checkbox" id="t-speed-controls" /></label>
       </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Kısayollar</h2>
+      <div class="hotkey-list">
+        <div class="hotkey-row" data-hotkey-action="rewind"><input class="hotkey-enabled" type="checkbox" id="hk-rewind-enabled" aria-label="10 sn geri kısayolunu etkinleştir" /><span>10 sn geri</span><kbd class="key-chip" id="hk-rewind-key">←</kbd><button class="hotkey-change" id="hk-rewind-change" type="button">Değiştir</button></div>
+        <div class="hotkey-row" data-hotkey-action="forward"><input class="hotkey-enabled" type="checkbox" id="hk-forward-enabled" aria-label="10 sn ileri kısayolunu etkinleştir" /><span>10 sn ileri</span><kbd class="key-chip" id="hk-forward-key">→</kbd><button class="hotkey-change" id="hk-forward-change" type="button">Değiştir</button></div>
+        <div class="hotkey-row" data-hotkey-action="screenshot"><input class="hotkey-enabled" type="checkbox" id="hk-screenshot-enabled" aria-label="Ekran görüntüsü kısayolunu etkinleştir" /><span>Ekran görüntüsü</span><kbd class="key-chip" id="hk-screenshot-key">S</kbd><button class="hotkey-change" id="hk-screenshot-change" type="button">Değiştir</button></div>
+        <div class="hotkey-row" data-hotkey-action="goLive"><input class="hotkey-enabled" type="checkbox" id="hk-goLive-enabled" aria-label="Canlıya dön kısayolunu etkinleştir" /><span>Canlıya dön</span><kbd class="key-chip" id="hk-goLive-key">L</kbd><button class="hotkey-change" id="hk-goLive-change" type="button">Değiştir</button></div>
+      </div>
+      <div class="hotkey-footer"><span class="hotkey-status" id="hotkey-status" role="status" aria-live="polite"></span><button class="hotkey-reset" id="hotkey-reset" type="button">Varsayılana dön</button></div>
     </section>
 
     <div class="hint">Değişiklik anında uygulanır; kanal yeniden yüklenince de korunur.</div>

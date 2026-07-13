@@ -3,7 +3,7 @@ import { Lifecycle } from './shared/lifecycle';
 import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
 import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
-import { featureFlags, setFeatureFlag } from './chat/feature-flags';
+import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus } from './status';
 import {
   ActivePinnedMessageState,
@@ -25,6 +25,7 @@ import {
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
 import { RemovedMessagesPanel } from './chat/removed-panel';
 import { FooterToggleButton } from './chat/footer-toggle';
+import { NavbarSettingsButton } from './chat/navbar-settings';
 import { RenderQueue } from './chat/render-queue';
 import { ScrollFollowController, trimMessageWindow, decideScrollFollow } from './chat/dom-window';
 import { ChatHistoryBackfill } from './chat/history';
@@ -36,9 +37,19 @@ import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
 import { initRewindControls } from './player/rewind-controls';
-import { initSpeedControls } from './player/speed-controls';
+import { deactivateSpeedControls, initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
 import { initAutoTheater, syncAutoTheaterFlag } from './player/auto-theater';
+import { shareNativeBarMountManager } from './player/native-bar';
+import {
+  HOTKEY_ACTIONS,
+  getHotkeyBindings,
+  loadHotkeyBindings,
+  resetHotkeyBindings,
+  updateHotkeyBinding,
+  type HotkeyAction,
+  type HotkeyBinding,
+} from './player/hotkey-registry';
 import { SidebarRefreshController } from './sidebar/sidebar-refresh';
 
 const STYLE_ID = 'kickflow-styles';
@@ -59,9 +70,28 @@ const BOOLEAN_FLAG_KEYS = [
   'showModeChanges',
   'showSidebarRefresh',
   'autoTheater',
+  'rewindControls',
+  'liveCatchup',
+  'qualityLock',
+  'screenshot',
+  'speedControls',
 ] as const;
 
 type BooleanFlagKey = (typeof BOOLEAN_FLAG_KEYS)[number];
+
+const PLAYER_FEATURE_KEYS = [
+  'rewindControls',
+  'liveCatchup',
+  'qualityLock',
+  'screenshot',
+  'speedControls',
+] as const;
+
+type PlayerFeatureFlagKey = (typeof PLAYER_FEATURE_KEYS)[number];
+
+function isPlayerFeatureFlagKey(key: string): key is PlayerFeatureFlagKey {
+  return (PLAYER_FEATURE_KEYS as readonly string[]).includes(key);
+}
 
 function isBooleanFlagKey(key: string): key is BooleanFlagKey {
   return (BOOLEAN_FLAG_KEYS as readonly string[]).includes(key);
@@ -649,6 +679,37 @@ function ensureStyles(): void {
     .kickflow-panel__settings-hint {
       margin: 9px 2px 1px; color: #747b84; font-size: 9.5px; text-align: center;
     }
+    .kickflow-panel__hotkeys {
+      flex: none; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
+      background: #13171b;
+    }
+    .kickflow-panel__hotkey-row {
+      display: grid; grid-template-columns: 34px minmax(0,1fr) auto auto;
+      align-items: center; gap: 7px; min-height: 38px; padding: 4px 7px;
+      border-bottom: 1px solid rgba(255,255,255,0.055);
+    }
+    .kickflow-panel__hotkey-row:last-child { border-bottom: 0; }
+    .kickflow-panel__hotkey-label { overflow: hidden; color: #dfe2e4; white-space: nowrap; text-overflow: ellipsis; }
+    .kickflow-panel__hotkey-enabled { transform: scale(.88); transform-origin: left center; }
+    .kickflow-panel__hotkey-chip {
+      min-width: 30px; padding: 3px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
+      background: #090b0d; color: #f4f5f5; font: 700 10px/1.2 'Inter','Segoe UI',system-ui,sans-serif;
+      text-align: center; box-shadow: inset 0 -1px 0 rgba(255,255,255,.06);
+    }
+    .kickflow-panel__hotkey-change,
+    .kickflow-panel__hotkey-reset {
+      appearance: none; border: 1px solid rgba(255,255,255,.12); border-radius: 6px;
+      background: #1a1e23; color: #cfd3d7; cursor: pointer; font: 650 9.5px/1 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-panel__hotkey-change { min-width: 54px; height: 25px; padding: 0 7px; }
+    .kickflow-panel__hotkey-change:hover,
+    .kickflow-panel__hotkey-reset:hover { border-color: rgba(83,252,24,.45); color: #fff; }
+    .kickflow-panel__hotkey-change--capturing { border-color: #53fc18; color: #53fc18; }
+    .kickflow-panel__hotkey-footer { display: flex; align-items: center; gap: 8px; min-height: 31px; margin-top: 5px; }
+    .kickflow-panel__hotkey-status { min-width: 0; flex: 1; color: #9298a1; font-size: 9px; line-height: 1.25; }
+    .kickflow-panel__hotkey-reset { flex: none; height: 24px; padding: 0 8px; }
+    .kickflow-panel__hotkey-change:focus-visible,
+    .kickflow-panel__hotkey-reset:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
 
     /* --- Footer toggle button: injected into Kick's own chat footer, next to its send/gear
        cluster (see footer-toggle.ts). Sized to match Kick's neighboring icon buttons. --- */
@@ -668,6 +729,19 @@ function ensureStyles(): void {
       font-size: 9px; font-weight: 800; line-height: 1;
       display: flex; align-items: center; justify-content: center;
     }
+
+    /* Real-navbar first-child injection: one compact KickFlow mark, no dropdown or React clone. */
+    .kickflow-navbar-settings {
+      appearance: none; width: 34px; height: 34px; padding: 0; margin: 0; border: 1px solid rgba(255,255,255,.10);
+      border-radius: 9px; background: rgba(255,255,255,.055); color: #53fc18; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      font: 950 17px/1 'Arial Black','Segoe UI',system-ui,sans-serif; letter-spacing: -.08em;
+      text-shadow: 0 0 8px rgba(83,252,24,.18); transition: background .14s ease, border-color .14s ease, transform .09s ease;
+    }
+    .kickflow-navbar-settings:hover { background: rgba(83,252,24,.10); border-color: rgba(83,252,24,.35); }
+    .kickflow-navbar-settings:active { transform: scale(.94); }
+    .kickflow-navbar-settings--active { background: rgba(83,252,24,.13); border-color: rgba(83,252,24,.45); }
+    .kickflow-navbar-settings:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
 
     /* --- Player controls, injected inline into Kick's native control bar. Global classes
        (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
@@ -796,6 +870,7 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   augmenter = new NativeChatAugmenter(lifecycle, store);
   const panel = new RemovedMessagesPanel(lifecycle, store);
   new FooterToggleButton(lifecycle, panel);
+  new NavbarSettingsButton(lifecycle, panel);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
 
   resolveChannel(slug).then((resolved) => {
@@ -863,6 +938,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   });
   const panel = new RemovedMessagesPanel(lifecycle, store);
   new FooterToggleButton(lifecycle, panel);
+  new NavbarSettingsButton(lifecycle, panel);
 
   const mount = new ChatOverlayMount(lifecycle);
   let activated = false;
@@ -993,9 +1069,43 @@ export function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   }
 }
 
+const playerFeatureInitializers: Record<PlayerFeatureFlagKey, (lifecycle: Lifecycle) => void> = {
+  rewindControls: initRewindControls,
+  liveCatchup: initLiveCatchup,
+  qualityLock: initQualityLock,
+  screenshot: initScreenshot,
+  speedControls: initSpeedControls,
+};
+
+let playerSessionLifecycle: Lifecycle | null = null;
+const playerFeatureLifecycles = new Map<PlayerFeatureFlagKey, Lifecycle>();
+
+function syncPlayerFeature(key: PlayerFeatureFlagKey): void {
+  const session = playerSessionLifecycle;
+  const active = playerFeatureLifecycles.get(key);
+  if (!featureFlags[key] || !session || session.isDisposed) {
+    active?.dispose();
+    playerFeatureLifecycles.delete(key);
+    return;
+  }
+  if (active && !active.isDisposed) return;
+
+  const featureLifecycle = new Lifecycle();
+  playerFeatureLifecycles.set(key, featureLifecycle);
+  shareNativeBarMountManager(featureLifecycle, session);
+  playerFeatureInitializers[key](featureLifecycle);
+}
+
+function disposePlayerFeatures(): void {
+  for (const lifecycle of playerFeatureLifecycles.values()) lifecycle.dispose();
+  playerFeatureLifecycles.clear();
+  playerSessionLifecycle = null;
+}
+
 /** Fully independent of chat readiness — gated only on the video element, not on
- * #chatroom-messages (which can legitimately take a while, or never resolve). */
-function initPlayerQolSession(lifecycle: Lifecycle): void {
+ * #chatroom-messages (which can legitimately take a while, or never resolve). Each owner-facing
+ * player flag owns a child lifecycle, making live OFF a real teardown rather than a CSS hide. */
+export function initPlayerQolSession(lifecycle: Lifecycle): void {
   if (!getVideoElement()) {
     logger.debug('bootstrap: #video-player not present yet, player QoL module waiting');
   }
@@ -1004,15 +1114,13 @@ function initPlayerQolSession(lifecycle: Lifecycle): void {
     SELECTORS.videoPlayer,
     lifecycle,
     () => {
-      initQualityLock(lifecycle);
+      playerSessionLifecycle = lifecycle;
+      lifecycle.add(() => {
+        if (playerSessionLifecycle === lifecycle) disposePlayerFeatures();
+      });
       initAutoTheater(lifecycle);
       initRewindHotkeys(lifecycle);
-      // Mount order determines native-bar left-to-right order (see native-bar.ts): rewind
-      // controls right after LIVE, then the catch-up indicator/toggle after that.
-      initRewindControls(lifecycle);
-      initLiveCatchup(lifecycle);
-      initSpeedControls(lifecycle);
-      initScreenshot(lifecycle);
+      for (const key of PLAYER_FEATURE_KEYS) syncPlayerFeature(key);
     },
     { resolve: getVideoElement },
   );
@@ -1079,6 +1187,7 @@ function stopSession(): void {
 function teardownZombie(): void {
   window.removeEventListener('popstate', onPopstate);
   window.removeEventListener('kickflow:locationchange', handlePotentialNavigation);
+  window.removeEventListener('kickflow:setFlag', onWindowFlagChange);
   if (navPollId !== null) {
     window.clearInterval(navPollId);
     navPollId = null;
@@ -1088,7 +1197,14 @@ function teardownZombie(): void {
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.querySelector('.kickflow-panel')?.remove();
   document.getElementById('kickflow-footer-toggle')?.remove();
+  document.getElementById('kickflow-navbar-settings')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
+}
+
+/** Named so extension-reload zombie teardown can remove the page-event route too. */
+function onWindowFlagChange(event: Event): void {
+  const detail = (event as CustomEvent<{ key: string; value: boolean | string }>).detail;
+  if (detail && typeof detail.key === 'string') applyFlagChange(detail.key, detail.value);
 }
 
 function handlePotentialNavigation(): void {
@@ -1117,10 +1233,12 @@ function handlePotentialNavigation(): void {
 export function applyFlagChange(key: string, value: boolean | string): void {
   if (isBooleanFlagKey(key) && typeof value === 'boolean') {
     setFeatureFlag(key, value);
+    if (key === 'speedControls' && !value) deactivateSpeedControls();
     if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
     if (key === 'debugLogging') setDebugLogging(value);
     if (key === 'showPinnedMessage') refreshActivePinnedMessage?.();
     if (key === 'autoTheater') syncAutoTheaterFlag();
+    if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
     if (key === 'showSidebarRefresh') {
       if (value) {
         if (currentLifecycle) initSidebarRefreshSession(currentLifecycle);
@@ -1141,19 +1259,7 @@ export function applyFlagChange(key: string, value: boolean | string): void {
   }
 }
 
-export function getPopupFeatureFlags(): {
-  chatMode: 'native' | 'own';
-  showDeletedMessages: boolean;
-  preserveBansInline: boolean;
-  debugLogging: boolean;
-  showSubscriptions: boolean;
-  showGiftedSubs: boolean;
-  showHostRaid: boolean;
-  showPinnedMessage: boolean;
-  showModeChanges: boolean;
-  showSidebarRefresh: boolean;
-  autoTheater: boolean;
-} {
+export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
   return {
     chatMode: featureFlags.chatMode,
     showDeletedMessages: featureFlags.showDeletedMessages,
@@ -1166,6 +1272,11 @@ export function getPopupFeatureFlags(): {
     showModeChanges: featureFlags.showModeChanges,
     showSidebarRefresh: featureFlags.showSidebarRefresh,
     autoTheater: featureFlags.autoTheater,
+    rewindControls: featureFlags.rewindControls,
+    liveCatchup: featureFlags.liveCatchup,
+    qualityLock: featureFlags.qualityLock,
+    screenshot: featureFlags.screenshot,
+    speedControls: featureFlags.speedControls,
   };
 }
 
@@ -1201,7 +1312,23 @@ function installStatusBridge(): void {
         deletedCount: countUniqueStatusMessages('.kickflow-deleted'),
         ...getActiveNativeChatGhostStats(),
         flags: getPopupFeatureFlags(),
+        hotkeys: getHotkeyBindings(),
       });
+      return;
+    }
+    if (
+      msg.type === 'kickflow:setHotkey' &&
+      HOTKEY_ACTIONS.includes(msg.action as HotkeyAction) &&
+      msg.patch && typeof msg.patch === 'object'
+    ) {
+      const patch: Partial<HotkeyBinding> = {};
+      if (typeof msg.patch.enabled === 'boolean') patch.enabled = msg.patch.enabled;
+      if (typeof msg.patch.key === 'string') patch.key = msg.patch.key;
+      sendResponse(updateHotkeyBinding(msg.action as HotkeyAction, patch));
+      return;
+    }
+    if (msg.type === 'kickflow:resetHotkeys') {
+      sendResponse({ ok: true, bindings: resetHotkeyBindings() });
       return;
     }
     if (
@@ -1227,10 +1354,7 @@ function installStatusBridge(): void {
   // In-panel gear (removed-panel.ts) dispatches this instead of a chrome.runtime message — same
   // applyFlagChange mutator, so featureFlags stays the one source of truth either way. Registered
   // once here (installStatusBridge runs once from main()), never per-session.
-  window.addEventListener('kickflow:setFlag', (event) => {
-    const detail = (event as CustomEvent<{ key: string; value: boolean | string }>).detail;
-    if (detail && typeof detail.key === 'string') applyFlagChange(detail.key, detail.value);
-  });
+  window.addEventListener('kickflow:setFlag', onWindowFlagChange);
 }
 
 /** Load flag overrides the user set via the popup, applied before the first session starts so
@@ -1248,6 +1372,11 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showModeChanges',
     'kf_flag_showSidebarRefresh',
     'kf_flag_autoTheater',
+    'kf_flag_rewindControls',
+    'kf_flag_liveCatchup',
+    'kf_flag_qualityLock',
+    'kf_flag_screenshot',
+    'kf_flag_speedControls',
   ]);
   if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
   if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
@@ -1260,6 +1389,11 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
+  if (typeof saved.kf_flag_rewindControls === 'boolean') setFeatureFlag('rewindControls', saved.kf_flag_rewindControls);
+  if (typeof saved.kf_flag_liveCatchup === 'boolean') setFeatureFlag('liveCatchup', saved.kf_flag_liveCatchup);
+  if (typeof saved.kf_flag_qualityLock === 'boolean') setFeatureFlag('qualityLock', saved.kf_flag_qualityLock);
+  if (typeof saved.kf_flag_screenshot === 'boolean') setFeatureFlag('screenshot', saved.kf_flag_screenshot);
+  if (typeof saved.kf_flag_speedControls === 'boolean') setFeatureFlag('speedControls', saved.kf_flag_speedControls);
 }
 
 function installNavigationHooks(): void {
@@ -1279,7 +1413,7 @@ function installNavigationHooks(): void {
 }
 
 async function main(): Promise<void> {
-  await applySavedFlags();
+  await Promise.all([applySavedFlags(), loadHotkeyBindings()]);
   setDebugLogging(featureFlags.debugLogging);
   installStatusBridge();
   installNavigationHooks();

@@ -27,6 +27,19 @@ const statusResponse = {
     showHostRaid: false,
     showPinnedMessage: true,
     showModeChanges: false,
+    showSidebarRefresh: true,
+    autoTheater: false,
+    rewindControls: true,
+    liveCatchup: true,
+    qualityLock: true,
+    screenshot: true,
+    speedControls: true,
+  },
+  hotkeys: {
+    rewind: { enabled: true, key: 'ArrowLeft' },
+    forward: { enabled: true, key: 'ArrowRight' },
+    screenshot: { enabled: true, key: 's' },
+    goLive: { enabled: true, key: 'l' },
   },
 };
 
@@ -113,5 +126,45 @@ describe('popup event display toggles', () => {
         value: false,
       });
     }
+  });
+
+  it('hydrates and sends all newly toggleable player features', async () => {
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+
+    for (const [id, key] of [
+      ['t-rewind-controls', 'rewindControls'],
+      ['t-live-catchup', 'liveCatchup'],
+      ['t-quality-lock', 'qualityLock'],
+      ['t-screenshot', 'screenshot'],
+      ['t-speed-controls', 'speedControls'],
+    ] as const) {
+      const checkbox = document.getElementById(id) as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+      sendMessage.mockClear();
+      checkbox.checked = false;
+      checkbox.dispatchEvent(new Event('change'));
+      await flushAsyncWork();
+      expect(sendMessage).toHaveBeenCalledWith(7, { type: 'kickflow:setFlag', key, value: false });
+    }
+  });
+
+  it('captures the next key for a hotkey rebind and sends it live', async () => {
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+    sendMessage.mockClear();
+
+    document.getElementById('hk-screenshot-change')?.click();
+    const event = new KeyboardEvent('keydown', { key: 'P', bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    await flushAsyncWork();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(sendMessage).toHaveBeenCalledWith(7, {
+      type: 'kickflow:setHotkey',
+      action: 'screenshot',
+      patch: { key: 'p' },
+    });
+    expect(document.getElementById('hotkey-status')?.textContent).toBe('Kısayol kaydedildi.');
   });
 });

@@ -11,6 +11,7 @@ import {
   subscribePlayerState,
 } from './player-state';
 import type { Lifecycle } from '../shared/lifecycle';
+import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 
 const CONTROLS_ID = 'kickflow-catchup-controls';
 
@@ -22,6 +23,16 @@ const CAUGHT_UP_THRESHOLD_SECONDS = 1.5;
 // boundaries during rebuffering; never drive catch-up behavior from those readings.
 const MAX_PLAUSIBLE_BEHIND_SECONDS = 12 * 60 * 60;
 const LIVE_DURATION_SENTINEL_SECONDS = 2 ** 30;
+
+let activeGoLive: (() => void) | null = null;
+
+/** Invokes the currently mounted live-catchup controller. False means the feature/player is
+ * inactive, so a bound key must remain unconsumed and let Kick handle it normally. */
+export function goLiveNow(): boolean {
+  if (!activeGoLive) return false;
+  activeGoLive();
+  return true;
+}
 
 export type CatchupAction =
   | { kind: 'none' }
@@ -122,6 +133,13 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   let liveButtonEl: HTMLButtonElement | null = null;
   let lastLiveLabel = '';
 
+  const updateHotkeyTitle = (): void => {
+    if (!liveButtonEl) return;
+    const binding = getHotkeyBinding('goLive');
+    liveButtonEl.title = `Canlı yayına dön${binding.enabled ? ` (${formatHotkeyKey(binding.key)})` : ''}`;
+  };
+  lifecycle.add(subscribeHotkeyBindings(updateHotkeyTitle));
+
   // Live detection must NOT depend on the control bar: Kick auto-hides it (and its go-to-live
   // button) when the mouse leaves the player, and `findLiveButton()` would then go null and
   // wrongly flip us to "not live", stopping catch-up (owner-observed 2026-07-10). Latch live
@@ -203,6 +221,10 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     findLiveButton()?.click();
     if (getPlayerState().mode === 'auto') resetAutoPlaybackRate();
   };
+  activeGoLive = goLive;
+  lifecycle.add(() => {
+    if (activeGoLive === goLive) activeGoLive = null;
+  });
 
   const onTimeUpdate = (event: Event): void => {
     const current = event.currentTarget;
@@ -306,8 +328,8 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     const live = document.createElement('button');
     live.type = 'button';
     live.className = 'kickflow-player-btn kickflow-player-btn--live';
-    live.title = 'Canlı yayına dön';
     liveButtonEl = live;
+    updateHotkeyTitle();
     lastLiveLabel = '';
     setLiveButtonState(null);
 

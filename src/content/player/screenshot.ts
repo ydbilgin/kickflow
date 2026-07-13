@@ -2,6 +2,7 @@ import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
 import type { Lifecycle } from '../shared/lifecycle';
+import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 
 const CONTROLS_ID = 'kickflow-screenshot-controls';
 
@@ -42,7 +43,7 @@ function screenshotFilename(): string {
  * `<video>` is NOT cross-origin-tainted (verified live 2026-07-04: drawImage + toBlob
  * succeed), so this needs no extra permissions. Silently no-ops if no frame is decoded yet
  * (videoWidth 0) or if a future CORS change taints the canvas. */
-function captureFrame(video: HTMLVideoElement): void {
+export function captureFrame(video: HTMLVideoElement): void {
   if (!video.videoWidth || !video.videoHeight) {
     logger.debug('screenshot: no decoded frame yet, ignoring');
     return;
@@ -71,6 +72,18 @@ function captureFrame(video: HTMLVideoElement): void {
   }
 }
 
+/** Shared by the camera button and the rebindable hotkey. Resolves the video at action time so
+ * a React player swap cannot leave either path capturing a detached element. */
+export function captureScreenshot(): boolean {
+  const video = getVideoElement();
+  if (!video) {
+    logger.warn('screenshot: #video-player not found at capture time');
+    return false;
+  }
+  captureFrame(video);
+  return true;
+}
+
 /** Mounts a camera button into the native control bar (after the rewind/catch-up controls);
  * click captures the current frame as a PNG download. */
 export function initScreenshot(lifecycle: Lifecycle): void {
@@ -80,6 +93,14 @@ export function initScreenshot(lifecycle: Lifecycle): void {
     return;
   }
 
+  let buttonEl: HTMLButtonElement | null = null;
+  const updateHotkeyTitle = (): void => {
+    if (!buttonEl) return;
+    const binding = getHotkeyBinding('screenshot');
+    buttonEl.title = `Ekran görüntüsü al${binding.enabled ? ` (${formatHotkeyKey(binding.key)})` : ''}`;
+  };
+  lifecycle.add(subscribeHotkeyBindings(updateHotkeyTitle));
+
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
     group.className = 'kickflow-player-group';
@@ -88,20 +109,16 @@ export function initScreenshot(lifecycle: Lifecycle): void {
     button.type = 'button';
     button.className = 'kickflow-player-btn';
     button.append(createCameraIcon());
-    button.title = 'Ekran görüntüsü al (kareyi PNG indir)';
     button.setAttribute('aria-label', 'Ekran görüntüsü al');
+    buttonEl = button;
+    updateHotkeyTitle();
 
     // Plain listener (not Lifecycle-routed) — see rewind-controls.ts: native-bar.ts rebuilds
     // this button on control-bar re-render, so a plain listener is GC'd with the node.
     // Resolve the video FRESH at click time: Kick can swap the <video> on an in-channel player
     // re-render, which would leave the init-time reference pointing at a stale detached node.
     button.addEventListener('click', () => {
-      const current = getVideoElement();
-      if (!current) {
-        logger.warn('screenshot: #video-player not found at capture time');
-        return;
-      }
-      captureFrame(current);
+      captureScreenshot();
     });
 
     group.append(button);
