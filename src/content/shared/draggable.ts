@@ -3,9 +3,11 @@
  * mouseup AND when `element` dispatches `kickflow:dismiss` (so a removed/rebuilt element can't
  * leak listeners). Returns a disposer that also removes the mousedown handler. */
 export function makeDraggable(element: HTMLElement, handle: HTMLElement, ignoreSelector?: string): () => void {
+  let stopActiveDrag: (() => void) | null = null;
   const onMouseDown = (event: MouseEvent): void => {
     if (event.button !== 0) return;
     if (ignoreSelector && (event.target as HTMLElement).closest(ignoreSelector)) return;
+    stopActiveDrag?.();
     event.preventDefault();
     const rect = element.getBoundingClientRect();
     const offsetX = event.clientX - rect.left;
@@ -22,11 +24,16 @@ export function makeDraggable(element: HTMLElement, handle: HTMLElement, ignoreS
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', stop);
       element.removeEventListener('kickflow:dismiss', stop);
+      if (stopActiveDrag === stop) stopActiveDrag = null;
     };
+    stopActiveDrag = stop;
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', stop);
     element.addEventListener('kickflow:dismiss', stop);
   };
   handle.addEventListener('mousedown', onMouseDown);
-  return () => handle.removeEventListener('mousedown', onMouseDown);
+  return () => {
+    stopActiveDrag?.();
+    handle.removeEventListener('mousedown', onMouseDown);
+  };
 }

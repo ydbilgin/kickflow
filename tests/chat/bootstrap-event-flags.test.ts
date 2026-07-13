@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
-import { ChatIntegrityStore, type PinnedMessage } from '../../src/content/chat/message-store';
+import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage, type PinnedMessage } from '../../src/content/chat/message-store';
+import { buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
+import { configureUserCardSession, openUserCard } from '../../src/content/chat/user-card';
+import { Lifecycle } from '../../src/content/shared/lifecycle';
 
 type BootstrapModule = typeof import('../../src/content/bootstrap');
 
@@ -261,5 +264,82 @@ describe('bootstrap event display flags', () => {
       showPinnedMessage: true,
       showModeChanges: false,
     });
+  });
+
+  it('deduplicates popup moderation counts across list, ghost, and panel copies', () => {
+    document.body.innerHTML = `
+      <div class="kickflow-preserved kickflow-banned" data-message-id="same"></div>
+      <div class="kickflow-preserved kickflow-banned" data-kickflow-mid="same"></div>
+      <div class="kickflow-preserved kickflow-banned" data-kickflow-ghost-mid="same"></div>
+      <div class="kickflow-preserved kickflow-deleted" data-kickflow-ghost-mid="deleted"></div>
+    `;
+
+    expect(bootstrap.countUniqueStatusMessages('.kickflow-preserved')).toBe(2);
+    expect(bootstrap.countUniqueStatusMessages('.kickflow-banned')).toBe(1);
+    expect(bootstrap.countUniqueStatusMessages('.kickflow-deleted')).toBe(1);
+    document.body.replaceChildren();
+  });
+
+  it('keeps a normally retained Mode-A row when its preservation expires', () => {
+    const registry = new ChatDomRegistry();
+    let store!: ChatIntegrityStore;
+    store = new ChatIntegrityStore({
+      onPreservedEvicted: (message) => bootstrap.reconcileOwnPreservedEviction(message, store, registry),
+    });
+    const message: ChatMessage = {
+      id: 'ttl-row', chatroomId: 1, content: 'still retained', type: 'message', createdAt: '',
+      sender: { id: 7, username: 'alice', slug: 'alice', identity: { color: '', badges: [], badgesV2: [] } },
+      preserved: false,
+    };
+    store.addMessage(message);
+    store.markMessageDeleted(message.id, { deletedBy: 'mod' });
+    const row = buildMessageElement(message);
+    registry.register(row, message);
+    document.body.append(row);
+
+    store.sweepExpiredPreserved(Date.now() + 10 * 60 * 1000 + 1);
+
+    expect(store.getMessageById(message.id)).toBe(message);
+    expect(row.isConnected).toBe(true);
+    expect(row.classList.contains('kickflow-preserved')).toBe(false);
+    expect(row.querySelector('.kickflow-status-label, .kickflow-mod-label')).toBeNull();
+    expect(registry.getElementForMessageId(message.id)).toBe(row);
+    row.remove();
+  });
+
+  it('configures user cards and clears prior subscriber-badge assets in native mode', async () => {
+    const priorMode = featureFlags.chatMode;
+    featureFlags.chatMode = 'native';
+    document.body.innerHTML = '<div id="chatroom-messages"><div class="no-scrollbar"></div></div>';
+    setSubscriberBadges([{ months: 1, src: 'https://files.kick.com/old-channel-badge.png' }]);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 404 } as Response);
+    const lifecycle = new Lifecycle();
+
+    try {
+      bootstrap.initChatIntegrity('current-channel', lifecycle);
+      const subscriber = buildMessageElement({
+        id: 'subscriber', chatroomId: 1, content: 'hello', type: 'message', createdAt: '',
+        sender: {
+          id: 8, username: 'subscriber', slug: 'subscriber',
+          identity: { color: '', badges: [{ type: 'subscriber', count: 12 }], badgesV2: [] },
+        },
+        preserved: false,
+      });
+      expect(subscriber.querySelector('.kickflow-badge-icon')).toBeNull();
+      expect(subscriber.querySelector('.kickflow-badge-role')).not.toBeNull();
+
+      await openUserCard('alice', 'Alice', 10, 10);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://kick.com/api/v2/channels/current-channel/users/alice',
+        { headers: { accept: 'application/json' } },
+      );
+    } finally {
+      lifecycle.dispose();
+      configureUserCardSession(null);
+      setSubscriberBadges([]);
+      featureFlags.chatMode = priorMode;
+      fetchSpy.mockRestore();
+      document.body.replaceChildren();
+    }
   });
 });

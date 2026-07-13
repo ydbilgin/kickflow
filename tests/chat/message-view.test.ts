@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appendBadges, appendParsedContent, buildMessageElement, buildPinnedMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
+import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, buildPinnedMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { ROLE_BADGE_ASSETS } from '../../src/content/chat/badge-assets';
 import type { ChatMessage, PinnedMessage } from '../../src/content/chat/message-store';
 
@@ -335,6 +335,26 @@ describe('message-view safe rendering', () => {
     expect(reply?.querySelector('.kickflow-message__reply-label')?.textContent).toBe(' isimli kullanıcıya yanıt veriyor');
     expect(reply?.querySelector('script')).toBeNull();
     expect(row.firstElementChild).toBe(reply);
+  });
+
+  it('reconciles an existing deleted label when a later ban upgrades the message', () => {
+    const item = message('alice', undefined, {
+      preserved: true,
+      preservedReason: 'deleted',
+      preservedMeta: { aiModerated: false, deletedBy: 'delete-mod' },
+    });
+    const row = buildMessageElement(item);
+    expect(row.classList.contains('kickflow-deleted')).toBe(true);
+
+    item.preservedReason = 'banned';
+    item.preservedMeta = { ...item.preservedMeta, permanent: true, bannedBy: 'ban-mod' };
+    applyPreservedMarking(row, item);
+
+    expect(row.classList.contains('kickflow-deleted')).toBe(false);
+    expect(row.classList.contains('kickflow-banned')).toBe(true);
+    expect(row.querySelectorAll('.kickflow-status-label')).toHaveLength(1);
+    expect(row.querySelector('.kickflow-status-label')?.textContent).toBe('banlandı');
+    expect(row.querySelector('.kickflow-mod-label')?.textContent).toBe('· ban-mod');
   });
 
   it('renders an authentic Kick SVG for a moderator role badge, with a tooltip', () => {

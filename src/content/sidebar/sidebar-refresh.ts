@@ -9,6 +9,8 @@ const REQUEST_STAGGER_MS = 250;
 const OBSERVER_DEBOUNCE_MS = 150;
 const REQUEST_MAX_ATTEMPTS = 3;
 const REQUEST_RETRY_BASE_MS = 800;
+const CHANNEL_SLUG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
+const UUID_LIKE_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 
 interface SidebarChannelData {
   isLive: boolean;
@@ -19,11 +21,19 @@ interface ChannelResponse {
   livestream?: { is_live?: boolean; viewer_count?: number } | null;
 }
 
+class HttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
+
 export function getSidebarChannelSlug(row: HTMLAnchorElement): string | null {
-  const href = row.getAttribute('href');
+  const href = row.getAttribute('href')?.trim();
   if (!href) return null;
-  const slug = href.replace(/^\/+/, '');
-  return slug || null;
+  const match = href.match(/^\/?([^/?#]+)\/?(?:[?#].*)?$/);
+  const slug = match?.[1];
+  if (!slug || !CHANNEL_SLUG_PATTERN.test(slug) || UUID_LIKE_PATTERN.test(slug)) return null;
+  return slug;
 }
 
 export function formatViewerCount(viewerCount: number): string {
@@ -33,6 +43,7 @@ export function formatViewerCount(viewerCount: number): string {
 /** Keeps Kick's React-owned followed-channel rows fresh without replacing their DOM. */
 export class SidebarRefreshController {
   private readonly cache = new Map<string, SidebarChannelData>();
+  private readonly notFoundSlugs = new Set<string>();
   private readonly observer = new MutationObserver(() => this.scheduleCachedReapply());
   private observerTimer: number | null = null;
   private refreshInProgress = false;
@@ -87,13 +98,14 @@ export class SidebarRefreshController {
 
   private async refreshRow(row: HTMLAnchorElement): Promise<void> {
     const slug = getSidebarChannelSlug(row);
-    if (!slug) return;
+    if (!slug || this.notFoundSlugs.has(slug)) return;
     try {
       const data = await this.fetchChannel(slug);
       if (!data || this.disposed) return;
       this.cache.set(slug, data);
       this.patchRow(row, data);
     } catch (error) {
+      if (error instanceof HttpStatusError && error.status === 404) this.notFoundSlugs.add(slug);
       logger.warn('sidebar-refresh: failed to refresh', slug, error);
     }
   }
@@ -112,11 +124,11 @@ export class SidebarRefreshController {
           }
           return { isLive: json.livestream.is_live, viewerCount: json.livestream.viewer_count };
         }
-        lastError = new Error(`HTTP ${response.status}`);
+        lastError = new HttpStatusError(response.status);
         if (response.status !== 429 && response.status < 500) throw lastError;
       } catch (error) {
         lastError = error;
-        if (error instanceof Error && /^HTTP [1-4](?!29)/.test(error.message)) throw error;
+        if (error instanceof HttpStatusError && error.status !== 429 && error.status < 500) throw error;
       }
       if (attempt < REQUEST_MAX_ATTEMPTS - 1) await this.delay(REQUEST_RETRY_BASE_MS * 2 ** attempt);
     }
@@ -126,10 +138,17 @@ export class SidebarRefreshController {
   private patchRow(row: HTMLAnchorElement, data: SidebarChannelData): void {
     const count = row.querySelector<HTMLElement>(VIEWER_COUNT_SELECTOR);
     if (count) {
-      count.title = String(data.viewerCount);
-      count.textContent = formatViewerCount(data.viewerCount);
+      const title = String(data.viewerCount);
+      const formatted = formatViewerCount(data.viewerCount);
+      // textContent replaces a text node and therefore emits childList mutations even when the
+      // value is unchanged. Idempotent writes keep our observer's cached-reapply pass from
+      // scheduling itself forever every 150ms.
+      if (count.title !== title) count.title = title;
+      if (count.textContent !== formatted) count.textContent = formatted;
     }
-    row.querySelector<HTMLElement>(LIVE_DOT_SELECTOR)?.setAttribute('data-kickflow-live', String(data.isLive));
+    const dot = row.querySelector<HTMLElement>(LIVE_DOT_SELECTOR);
+    const live = String(data.isLive);
+    if (dot?.getAttribute('data-kickflow-live') !== live) dot?.setAttribute('data-kickflow-live', live);
   }
 
   private scheduleCachedReapply(): void {

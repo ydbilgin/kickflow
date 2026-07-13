@@ -37,6 +37,21 @@ describe('user-card', () => {
     expect(JSON.stringify(model).toLowerCase()).not.toContain('level');
   });
 
+  it('renders only HTTPS Kick-hosted profile images', () => {
+    const model = {
+      username: 'Alice', slug: 'alice', profilePic: 'https://files.kick.com/avatar.png', role: null,
+      verified: false, bio: null, followers: null, createdAt: '-', followingSince: '-',
+      subscribedFor: '-', badges: [],
+    };
+
+    expect(buildUserCardElement(model).querySelector<HTMLImageElement>('.kickflow-user-card__avatar')?.src)
+      .toBe('https://files.kick.com/avatar.png');
+    expect(buildUserCardElement({ ...model, profilePic: 'https://tracker.example/avatar.png' })
+      .querySelector('.kickflow-user-card__avatar')).toBeNull();
+    expect(buildUserCardElement({ ...model, profilePic: 'data:image/svg+xml,<svg></svg>' })
+      .querySelector('.kickflow-user-card__avatar')).toBeNull();
+  });
+
   it('fetches and renders card fields for left-click popovers', async () => {
     configureUserCardSession('channel');
     vi.stubGlobal('fetch', vi.fn(async () => ({

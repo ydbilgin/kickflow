@@ -34,6 +34,42 @@ describe('ChatIntegrityStore', () => {
     expect(store.getMessageById('same')).toBeUndefined();
   });
 
+  it('releases empty per-user queues as unique chatters leave the global ring', () => {
+    const store = new ChatIntegrityStore();
+    for (let i = 0; i < GLOBAL_CAPACITY + 1; i++) {
+      store.addMessage(message(`unique-${i}`, 10_000 + i));
+    }
+
+    const queues = (store as unknown as { perUserQueues: Map<number, unknown> }).perUserQueues;
+    expect(queues.size).toBe(GLOBAL_CAPACITY);
+    expect(queues.has(10_000)).toBe(false);
+  });
+
+  it('does not resurrect an explicitly removed message when history replays its id', () => {
+    const store = new ChatIntegrityStore();
+    const original = message('deleted', 7);
+    store.addMessage(original);
+    store.removeMessage(original.id);
+
+    expect(store.getMessageById(original.id)).toBeUndefined();
+    expect(store.addMessage(message('deleted', 7))).toBe(false);
+    expect(store.getMessageById(original.id)).toBeUndefined();
+  });
+
+  it('applies a live delete that arrives before the initial history copy', () => {
+    const store = new ChatIntegrityStore();
+    expect(store.markMessageDeleted('history-race', { deletedBy: 'mod', aiModerated: false })).toBeUndefined();
+
+    const delayedHistoryCopy = message('history-race', 7);
+    expect(store.addMessage(delayedHistoryCopy)).toBe(true);
+    expect(store.getMessageById(delayedHistoryCopy.id)).toMatchObject({
+      preserved: true,
+      preservedReason: 'deleted',
+      preservedMeta: { deletedBy: 'mod', aiModerated: false },
+    });
+    expect(store.getPreserved()).toContain(delayedHistoryCopy);
+  });
+
   it('stores host events for normal trimming but never indexes, bans, or preserves them as user messages', () => {
     const store = new ChatIntegrityStore();
     const event = message('host:1:user:1', 7);

@@ -212,6 +212,29 @@ describe('NativeChatAugmenter', () => {
     expect(row.querySelector('.kickflow-original-content')?.textContent).toContain('deleted');
   });
 
+  it('can clear a mounted native row immediately after preservation expires', () => {
+    installChat(['m1']);
+    let augmenter!: NativeChatAugmenter;
+    const store = new ChatIntegrityStore({
+      onPreservedEvicted: (expired) => {
+        augmenter.forgetGhost(expired.id);
+        augmenter.markById(expired.id);
+      },
+    });
+    store.addMessage(message('m1'));
+    store.markMessageDeleted('m1');
+    augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+    augmenter.markById('m1');
+    const row = document.querySelector<HTMLElement>('[data-kickflow-mid="m1"]');
+    expect(row?.classList.contains('kickflow-preserved')).toBe(true);
+
+    store.sweepExpiredPreserved(Date.now() + 10 * 60 * 1000 + 1);
+
+    expect(row?.classList.contains('kickflow-preserved')).toBe(false);
+    expect(row?.querySelector('.kickflow-original-content')).toBeNull();
+    expect(row?.querySelector('.kickflow-status-label')).toBeNull();
+  });
+
   it('does not keep appending injected content while the observer settles', async () => {
     installChat(['m1']);
     const store = new ChatIntegrityStore();
@@ -274,5 +297,24 @@ describe('NativeChatAugmenter', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('disconnects from a detached chat root while waiting for a replacement', async () => {
+    const list = installChat([]);
+    const root = document.getElementById('chatroom-messages');
+    const lifecycle = new FakeLifecycle();
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1'));
+    store.markUserBanned(7);
+    new NativeChatAugmenter(lifecycle as unknown as Lifecycle, store);
+
+    root?.remove();
+    lifecycle.intervals[0]?.handler();
+    const detachedRow = makeRow('m1');
+    list.append(detachedRow);
+    await flushObserver();
+
+    expect(detachedRow.querySelector('.kickflow-original-content')).toBeNull();
+    lifecycle.disposers.forEach((dispose) => dispose());
   });
 });

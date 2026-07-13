@@ -5,6 +5,8 @@ import { openInNewTab, wireNewTabGestures } from '../shared/new-tab';
 import type { ChatBadge } from './message-store';
 
 const SAFE_SLUG_RE = /^[a-zA-Z0-9_-]+$/;
+const TRUSTED_IMAGE_HOST = 'kick.com';
+const TRUSTED_IMAGE_HOST_SUFFIX = '.kick.com';
 const CARD_CLASS = 'kickflow-user-card';
 const FIELD_CLASS = 'kickflow-user-card__field';
 
@@ -69,6 +71,18 @@ export function configureUserCardSession(slug: string | null): void {
 
 export function isSafeKickSlug(slug: string): boolean {
   return SAFE_SLUG_RE.test(slug);
+}
+
+function trustedProfileImageUrl(value: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  if (url.hostname !== TRUSTED_IMAGE_HOST && !url.hostname.endsWith(TRUSTED_IMAGE_HOST_SUFFIX)) return null;
+  return url;
 }
 
 function normalizeBadge(raw: UserCardRawBadge): ChatBadge {
@@ -219,10 +233,11 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
 
   const header = document.createElement('div');
   header.className = 'kickflow-user-card__header';
-  if (model.profilePic) {
+  const profilePic = model.profilePic ? trustedProfileImageUrl(model.profilePic) : null;
+  if (profilePic) {
     const img = document.createElement('img');
     img.className = 'kickflow-user-card__avatar';
-    img.src = model.profilePic;
+    img.src = profilePic.href;
     img.alt = '';
     img.loading = 'lazy';
     header.appendChild(img);

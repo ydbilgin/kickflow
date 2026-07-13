@@ -76,14 +76,20 @@ type ApplyResult = 'set' | 'already' | 'skip';
 
 /** One attempt: reveal bar → open the gear menu → if (and only if) real quality radios
  * appeared, click the highest pure-resolution option, else abort with no side effect. */
-async function applyHighestQualityOnce(): Promise<ApplyResult> {
+async function applyHighestQualityOnce(isDisposed: () => boolean): Promise<ApplyResult> {
+  if (isDisposed()) return 'skip';
   revealControlBar();
   await sleep(60);
+  if (isDisposed()) return 'skip';
   const gear = findQualityGear();
   if (!gear) return 'skip';
 
   press(gear);
   await sleep(MENU_RENDER_MS);
+  if (isDisposed()) {
+    closeMenu();
+    return 'skip';
+  }
 
   const radios = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
   if (radios.length === 0) {
@@ -111,6 +117,10 @@ async function applyHighestQualityOnce(): Promise<ApplyResult> {
     closeMenu();
     return 'already';
   }
+  if (isDisposed()) {
+    closeMenu();
+    return 'skip';
+  }
   press(best);
   await sleep(60);
   closeMenu();
@@ -123,7 +133,7 @@ async function applyWithRetries(isDisposed: () => boolean): Promise<void> {
     // run would keep revealing/clicking the NEW channel's player menu — racing the fresh
     // session's own quality-lock and causing spurious menu flashes.
     if (isDisposed()) return;
-    const result = await applyHighestQualityOnce().catch(() => 'skip' as ApplyResult);
+    const result = await applyHighestQualityOnce(isDisposed).catch(() => 'skip' as ApplyResult);
     if (isDisposed()) return;
     if (result === 'set' || result === 'already') {
       logger.debug('quality-lock:', result, `(attempt ${attempt})`);

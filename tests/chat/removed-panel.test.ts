@@ -206,6 +206,23 @@ describe('RemovedMessagesPanel', () => {
     expect(document.querySelector('.kickflow-panel')).toBeNull();
   });
 
+  it('repopulates unchanged rows when its body-level section is externally removed', () => {
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    const item = message('self-heal', 7);
+    store.addMessage(item);
+    store.markMessageDeleted(item.id);
+    const panel = new RemovedMessagesPanel(lifecycle, store);
+    panel.toggle();
+    expect(document.querySelector('.kickflow-ghost-row')?.textContent).toContain('self-heal');
+
+    document.querySelector('.kickflow-panel')?.remove();
+    panel.render();
+
+    expect(document.querySelector('.kickflow-ghost-row')?.textContent).toContain('self-heal');
+    lifecycle.dispose();
+  });
+
   describe('whole-header drag', () => {
     it('a mousedown on the header background repositions it to explicit left/top (drag-anchor switch fires)', () => {
       const lifecycle = new Lifecycle();

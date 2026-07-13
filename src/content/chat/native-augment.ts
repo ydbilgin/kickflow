@@ -132,7 +132,13 @@ export class NativeChatAugmenter {
 
   private attachToCurrentChat(): void {
     const root = document.querySelector<HTMLElement>(CHAT_ROOT_SELECTOR);
-    if (!root || root === this.observedRoot) return;
+    if (!root) {
+      // A collapsed/unmounted chat can stay absent for a long time. Do not retain and keep
+      // observing its detached React subtree while the 1s attach loop waits for a new root.
+      if (this.observedRoot) this.disconnectObserver();
+      return;
+    }
+    if (root === this.observedRoot) return;
 
     this.disconnectObserver();
     this.observedRoot = root;

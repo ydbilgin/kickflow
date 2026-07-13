@@ -267,6 +267,11 @@ export interface ChatIntegrityStoreOptions {
   onPreservedEvicted?: (message: ChatMessage) => void;
 }
 
+interface PendingDelete {
+  id: string;
+  meta: PreservedMeta;
+}
+
 export class ChatIntegrityStore {
   readonly messageById = new Map<string, ChatMessage>();
   readonly messagesByUserId = new Map<number, Set<string>>();
@@ -278,13 +283,22 @@ export class ChatIntegrityStore {
   // LimitedQueue) AND age (PRESERVED_TTL_MS, via sweepExpiredPreserved).
   private readonly preserved = new LimitedQueue<ChatMessage>(PRESERVED_CAPACITY);
   private readonly perUserQueues = new Map<number, LimitedQueue<ChatMessage>>();
+  // When showDeletedMessages is off, the row leaves messageById so a pending render is dropped.
+  // Keep a bounded id tombstone so a reconnect/history replay cannot resurrect it, and so an old
+  // object still draining from the ordinary rings can never collide with a replacement id.
+  private readonly removedMessageIds = new Set<string>();
+  private readonly removedMessageIdOrder = new LimitedQueue<string>(GLOBAL_CAPACITY);
+  // A live delete can race the initial history response. Retain its metadata until that message
+  // arrives so the stale history snapshot is born preserved instead of flashing as a normal row.
+  private readonly pendingDeletedById = new Map<string, PendingDelete>();
+  private readonly pendingDeleteOrder = new LimitedQueue<PendingDelete>(GLOBAL_CAPACITY);
   private nextSeq = 1;
 
   constructor(private readonly options: ChatIntegrityStoreOptions = {}) {}
 
   /** Adds a message once. The boolean lets callers avoid queueing a duplicate id for render. */
   addMessage(message: ChatMessage): boolean {
-    if (this.messageById.has(message.id)) return false;
+    if (this.messageById.has(message.id) || this.removedMessageIds.has(message.id)) return false;
     message.seq ??= this.nextSeq++;
     this.messageById.set(message.id, message);
     if (!message.systemEvent) {
@@ -301,6 +315,11 @@ export class ChatIntegrityStore {
 
     const evictedGlobally = this.global.push(message);
     if (evictedGlobally) this.forget(evictedGlobally);
+    const pendingDelete = this.pendingDeletedById.get(message.id);
+    if (pendingDelete && !message.systemEvent) {
+      this.pendingDeletedById.delete(message.id);
+      this.preserveMessage(message, 'deleted', pendingDelete.meta);
+    }
     return true;
   }
 
@@ -322,7 +341,13 @@ export class ChatIntegrityStore {
     const ids = this.messagesByUserId.get(message.sender.id);
     if (ids) {
       ids.delete(message.id);
-      if (ids.size === 0) this.messagesByUserId.delete(message.sender.id);
+      if (ids.size === 0) {
+        this.messagesByUserId.delete(message.sender.id);
+        // A one-message chatter can leave the global ring while their per-user queue still
+        // retains the same object. Keeping that now-unreachable queue forever makes this map
+        // grow with every unique chatter in a long-running channel session.
+        this.perUserQueues.delete(message.sender.id);
+      }
     }
   }
 
@@ -353,14 +378,27 @@ export class ChatIntegrityStore {
    * showDeletedMessages is off and KickFlow must mimic native row removal itself. */
   removeMessage(messageId: string): void {
     const message = this.messageById.get(messageId);
-    if (!message || message.preserved) return;
+    if (message?.preserved) return;
+    this.rememberRemovedMessageId(messageId);
+    this.pendingDeletedById.delete(messageId);
+    if (!message) return;
     this.messageById.delete(messageId);
     if (message.systemEvent) return;
     const ids = this.messagesByUserId.get(message.sender.id);
     if (ids) {
       ids.delete(messageId);
-      if (ids.size === 0) this.messagesByUserId.delete(message.sender.id);
+      if (ids.size === 0) {
+        this.messagesByUserId.delete(message.sender.id);
+        this.perUserQueues.delete(message.sender.id);
+      }
     }
+  }
+
+  private rememberRemovedMessageId(messageId: string): void {
+    if (this.removedMessageIds.has(messageId)) return;
+    this.removedMessageIds.add(messageId);
+    const evicted = this.removedMessageIdOrder.push(messageId);
+    if (evicted) this.removedMessageIds.delete(evicted);
   }
 
   isPreservedBanned(messageId: string): boolean {
@@ -382,9 +420,27 @@ export class ChatIntegrityStore {
 
   markMessageDeleted(messageId: string, meta: PreservedMeta = {}): ChatMessage | undefined {
     const message = this.messageById.get(messageId);
-    if (!message || message.systemEvent) return undefined;
+    if (!message) {
+      this.rememberPendingDelete(messageId, meta);
+      return undefined;
+    }
+    if (message.systemEvent) return undefined;
     this.preserveMessage(message, 'deleted', meta);
     return message;
+  }
+
+  private rememberPendingDelete(messageId: string, meta: PreservedMeta): void {
+    const existing = this.pendingDeletedById.get(messageId);
+    if (existing) {
+      existing.meta = this.mergePreservedMeta(existing.meta, meta);
+      return;
+    }
+    const pending: PendingDelete = { id: messageId, meta: this.mergePreservedMeta(undefined, meta) };
+    this.pendingDeletedById.set(messageId, pending);
+    const evicted = this.pendingDeleteOrder.push(pending);
+    if (evicted && this.pendingDeletedById.get(evicted.id) === evicted) {
+      this.pendingDeletedById.delete(evicted.id);
+    }
   }
 
   private preserveMessage(message: ChatMessage, reason: PreservedReason, meta: PreservedMeta = {}): void {
@@ -481,6 +537,10 @@ export class ChatIntegrityStore {
     this.perUserQueues.clear();
     this.global.clear();
     this.preserved.clear();
+    this.removedMessageIds.clear();
+    this.removedMessageIdOrder.clear();
+    this.pendingDeletedById.clear();
+    this.pendingDeleteOrder.clear();
     this.nextSeq = 1;
   }
 }

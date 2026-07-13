@@ -30,7 +30,7 @@ import { ScrollFollowController, trimMessageWindow, decideScrollFollow } from '.
 import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
-import { buildPinnedMessageElement, setSubscriberBadges } from './chat/message-view';
+import { buildPinnedMessageElement, clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
 import { NativePinMirror } from './chat/native-pin-mirror';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
@@ -743,9 +743,17 @@ function ensureStyles(): void {
 }
 
 function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+  setSubscriberBadges([]);
+  configureUserCardSession(slug);
+  lifecycle.add(() => configureUserCardSession(null));
   let augmenter: NativeChatAugmenter | null = null;
   const store = new ChatIntegrityStore({
-    onPreservedEvicted: (message) => augmenter?.forgetGhost(message.id),
+    onPreservedEvicted: (message) => {
+      augmenter?.forgetGhost(message.id);
+      // A mounted native row must lose its stale strike/status immediately when the preserved
+      // TTL/cap releases it; forgetGhost only covers rows that Kick removed from the list.
+      augmenter?.markById(message.id);
+    },
   });
   augmenter = new NativeChatAugmenter(lifecycle, store);
   const panel = new RemovedMessagesPanel(lifecycle, store);
@@ -788,18 +796,32 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   });
 }
 
+/** Reconciles a Mode-A row after preservation expires or its 50-entry cap evicts it. A message
+ * still held by the ordinary retention rings remains a normal chat row; only an object already
+ * outside those rings is removed from the DOM. Exported for the integration regression test. */
+export function reconcileOwnPreservedEviction(
+  message: ChatMessage,
+  store: ChatIntegrityStore,
+  registry: ChatDomRegistry,
+): void {
+  const element = registry.getElementForMessageId(message.id);
+  if (!element) return;
+  if (store.getMessageById(message.id) === message) {
+    clearPreservedMarking(element);
+    return;
+  }
+  registry.forget(element);
+  element.remove();
+}
+
 function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+  setSubscriberBadges([]);
   configureUserCardSession(slug);
   lifecycle.add(() => configureUserCardSession(null));
 
   const registry = new ChatDomRegistry();
   const store = new ChatIntegrityStore({
-    onPreservedEvicted: (message: ChatMessage) => {
-      const element = registry.getElementForMessageId(message.id);
-      if (!element) return;
-      registry.forget(element);
-      element.remove();
-    },
+    onPreservedEvicted: (message: ChatMessage) => reconcileOwnPreservedEviction(message, store, registry),
   });
   const panel = new RemovedMessagesPanel(lifecycle, store);
   new FooterToggleButton(lifecycle, panel);
@@ -1105,6 +1127,21 @@ export function getPopupFeatureFlags(): {
   };
 }
 
+/** Counts logical messages rather than DOM copies. The same preserved id can appear in the own/
+ * native list, an inline ghost, and the always-mounted removed panel at the same time. */
+export function countUniqueStatusMessages(selector: string): number {
+  const ids = new Set<string>();
+  let anonymous = 0;
+  document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
+    const id = element.dataset.messageId
+      ?? element.dataset.kickflowMid
+      ?? element.dataset.kickflowGhostMid;
+    if (id) ids.add(id);
+    else anonymous++;
+  });
+  return ids.size + anonymous;
+}
+
 /** Popup ↔ content-script bridge: report status + apply flag toggles. activeTab grants the
  * popup access on open. Flags persist to chrome.storage.local so a toggle survives a reload. */
 function installStatusBridge(): void {
@@ -1117,9 +1154,9 @@ function installStatusBridge(): void {
         messageCount: ownList
           ? ownList.querySelectorAll('.kickflow-message').length
           : document.querySelectorAll('#chatroom-messages [data-index]').length,
-        preservedCount: document.querySelectorAll('.kickflow-preserved').length,
-        bannedCount: document.querySelectorAll('.kickflow-banned').length,
-        deletedCount: document.querySelectorAll('.kickflow-deleted').length,
+        preservedCount: countUniqueStatusMessages('.kickflow-preserved'),
+        bannedCount: countUniqueStatusMessages('.kickflow-banned'),
+        deletedCount: countUniqueStatusMessages('.kickflow-deleted'),
         ...getActiveNativeChatGhostStats(),
         flags: getPopupFeatureFlags(),
       });

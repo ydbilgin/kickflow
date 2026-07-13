@@ -47,6 +47,29 @@ describe('sidebar refresh', () => {
     expect(getSidebarChannelSlug(row)).toBe('jahrein');
   });
 
+  it('rejects UUID-like and non-channel hrefs before fetching', async () => {
+    vi.useFakeTimers();
+    const [uuidRow, normalRow] = mount(2);
+    uuidRow.setAttribute('href', '/e2209b9b4e164395a4e6b22bf321a0b6');
+    normalRow.setAttribute('href', '/normal_slug-2');
+    const fetchMock = vi.fn().mockResolvedValue(response());
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+
+    await flush();
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(getSidebarChannelSlug(uuidRow)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('https://kick.com/api/v2/channels/normal_slug-2', {
+      headers: { accept: 'application/json' },
+    });
+    normalRow.setAttribute('href', '/categories/games');
+    expect(getSidebarChannelSlug(normalRow)).toBeNull();
+    lifecycle.dispose();
+  });
+
   it('patches the native viewer count and live indicator after a successful fetch', async () => {
     const [row] = mount();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(true, 2275)));
@@ -60,10 +83,12 @@ describe('sidebar refresh', () => {
     lifecycle.dispose();
   });
 
-  it('leaves native values unchanged and warns when a row request fails', async () => {
+  it('leaves native values unchanged and does not retry or re-warn a 404 row', async () => {
+    vi.useFakeTimers();
     const [row] = mount();
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+    vi.stubGlobal('fetch', fetchMock);
     const lifecycle = new Lifecycle();
     new SidebarRefreshController(lifecycle);
     await flush();
@@ -71,6 +96,11 @@ describe('sidebar refresh', () => {
     expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('11002');
     expect(row.querySelector('span[title]')?.textContent).toBe('11\u00a0B');
     expect(warn).toHaveBeenCalledWith('sidebar-refresh: failed to refresh', 'jahrein', expect.any(Error));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
     lifecycle.dispose();
   });
 
@@ -126,6 +156,23 @@ describe('sidebar refresh', () => {
     expect(replacement.querySelector('span[title]')?.textContent).toBe('500');
     expect(replacement.querySelector('div.rounded-full.h-2.w-2')?.getAttribute('data-kickflow-live')).toBe('false');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    lifecycle.dispose();
+  });
+
+  it('does not let its own cached DOM patch create a perpetual observer loop', async () => {
+    vi.useFakeTimers();
+    mount();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(false, 500)));
+    const timeout = vi.spyOn(window, 'setTimeout');
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    // One observer debounce follows the initial changed text node; the idempotent cached pass
+    // does not mutate it again and schedule another.
+    expect(timeout).toHaveBeenCalledTimes(1);
     lifecycle.dispose();
   });
 

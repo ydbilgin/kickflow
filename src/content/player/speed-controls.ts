@@ -282,6 +282,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
   });
 
   void ensurePlayerStateLoaded().then(() => {
+    if (lifecycle.isDisposed) return;
     const playerState = getPlayerState();
     const current = getVideoElement();
     if (current && playerState.mode === 'manual') {

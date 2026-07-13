@@ -206,6 +206,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     section.append(header, settings, body);
     document.body.appendChild(section);
     this.section = section;
+    // The body is new even if the store signature is unchanged. Force this render to populate
+    // it; otherwise an externally removed panel self-heals as an empty shell on the next tick.
+    this.lastSig = '';
     this.disposeDrag?.();
     // Whole-header drag (owner request 3) — not just a grip. The ⚙/× buttons and settings
     // controls are excluded via DRAG_IGNORE_SELECTOR so they stay clickable.

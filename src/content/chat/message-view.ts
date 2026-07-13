@@ -348,7 +348,11 @@ export function deleteAttribution(meta: PreservedMeta): string | null {
  *    event arrived.
  */
 export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): void {
-  if (!message.preserved || row.classList.contains(PRESERVED_CLASS)) return;
+  if (!message.preserved) return;
+  // A later moderation event can enrich metadata or upgrade a single-message delete to a
+  // user ban. Reconcile the existing annotation instead of treating PRESERVED_CLASS as proof
+  // that the row is current; otherwise Mode A can remain labelled "silindi" after the ban.
+  clearPreservedMarking(row);
   row.classList.add(PRESERVED_CLASS);
   const meta = message.preservedMeta ?? {};
 
@@ -370,6 +374,13 @@ export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): v
     appendStatusLabel(row, 'silindi', 'deleted');
     appendModLabel(row, deleteAttribution(meta));
   }
+}
+
+/** Removes only KickFlow's preservation annotation, leaving the original safe-rendered row
+ * intact. Used when a retained Mode-A message reaches the preservation TTL/cap. */
+export function clearPreservedMarking(row: HTMLElement): void {
+  row.classList.remove(PRESERVED_CLASS, BANNED_CLASS, TIMEOUT_CLASS, DELETED_CLASS);
+  row.querySelectorAll('.kickflow-status-label, .kickflow-mod-label').forEach((node) => node.remove());
 }
 
 function appendReplyContext(row: HTMLElement, message: ChatMessage): void {

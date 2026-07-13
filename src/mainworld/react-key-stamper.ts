@@ -88,7 +88,7 @@ export function initReactKeyStamper(root: Document | HTMLElement = document): Re
   let observedList: HTMLElement | null = null;
   let listObserver: MutationObserver | null = null;
   let bodyObserver: MutationObserver | null = null;
-  const delayedPasses: number[] = [];
+  const delayedPasses = new Set<number>();
 
   const restampCurrentList = (): void => {
     if (!observedList) return;
@@ -103,8 +103,18 @@ export function initReactKeyStamper(root: Document | HTMLElement = document): Re
 
   const scheduleDelayedRestamps = (): void => {
     for (const delayMs of [100, 1000]) {
-      delayedPasses.push(window.setTimeout(restampCurrentList, delayMs));
+      const timeoutId = window.setTimeout(() => {
+        delayedPasses.delete(timeoutId);
+        restampCurrentList();
+      }, delayMs);
+      delayedPasses.add(timeoutId);
     }
+  };
+
+  const detachObservedList = (): void => {
+    listObserver?.disconnect();
+    listObserver = null;
+    observedList = null;
   };
 
   const observeList = (list: HTMLElement): void => {
@@ -128,12 +138,26 @@ export function initReactKeyStamper(root: Document | HTMLElement = document): Re
 
   const attachToCurrentList = (): void => {
     const list = root.querySelector<HTMLElement>(CHAT_LIST_SELECTOR);
-    if (list) observeList(list);
+    if (list) {
+      observeList(list);
+    } else if (observedList) {
+      // Chat collapse/unmount can leave the list absent indefinitely. Stop the per-list observer
+      // and release the detached React subtree until a replacement appears.
+      detachObservedList();
+    }
   };
 
   attachToCurrentList();
 
-  bodyObserver = new MutationObserverCtor(() => attachToCurrentList());
+  bodyObserver = new MutationObserverCtor((records) => {
+    const currentWasDetached = observedList !== null && !observedList.isConnected;
+    const couldIntroduceList = observedList === null && records.some((record) =>
+      Array.from(record.addedNodes).some((node) => node instanceof Element && (
+        node.matches(CHAT_LIST_SELECTOR) || node.querySelector(CHAT_LIST_SELECTOR) !== null
+      )),
+    );
+    if (currentWasDetached || couldIntroduceList) attachToCurrentList();
+  });
   if (observerRoot) {
     bodyObserver.observe(observerRoot, { childList: true, subtree: true });
   }
@@ -145,13 +169,12 @@ export function initReactKeyStamper(root: Document | HTMLElement = document): Re
   return {
     restampCurrentList,
     teardown(): void {
-      listObserver?.disconnect();
+      detachObservedList();
       bodyObserver?.disconnect();
       window.clearInterval(intervalId);
       delayedPasses.forEach((timeoutId) => window.clearTimeout(timeoutId));
-      listObserver = null;
+      delayedPasses.clear();
       bodyObserver = null;
-      observedList = null;
     },
   };
 }
