@@ -414,13 +414,14 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
   row.appendChild(reply);
 }
 
-/** Sticky Mode A pin banner. Public payload values are rendered only through textContent or the
- * same parsed-content/badge helpers as ordinary chat messages. */
+/** Sticky Mode A pin banner. Structured payloads use the ordinary safe text/badge parsers; the
+ * native-mirror path deep-clones already-rendered DOM nodes and never converts markup to a string. */
 export function buildPinnedMessageElement(
   pin: PinnedMessage,
   collapsed: boolean,
   onDismiss: (pinId: string) => void,
   onToggleCollapse: () => void,
+  preRenderedContent?: Node,
 ): HTMLElement {
   const banner = document.createElement('section');
   banner.className = PINNED_MESSAGE_CLASS;
@@ -457,10 +458,23 @@ export function buildPinnedMessageElement(
   dismiss.setAttribute('aria-label', 'Bu sabitlenmiş mesajı kapat');
   dismiss.textContent = '×';
   dismiss.addEventListener('click', () => onDismiss(pin.message.id));
-  header.append(title, actor, collapse, dismiss);
+  header.appendChild(title);
+  if (pin.pinnedBy.username.trim()) header.appendChild(actor);
+  header.append(collapse, dismiss);
 
   const body = document.createElement('div');
   body.className = `${PINNED_MESSAGE_CLASS}__body`;
+  const content = document.createElement('span');
+  content.className = `${PINNED_MESSAGE_CLASS}__content`;
+  if (preRenderedContent) {
+    // Native-pin mirroring passes a detached template cloned from Kick's already-rendered DOM.
+    // Clone again because collapse/expand rebuilds the banner and appending consumes fragments.
+    content.appendChild(preRenderedContent.cloneNode(true));
+    body.appendChild(content);
+    banner.append(header, body);
+    return banner;
+  }
+
   const badges = document.createElement('span');
   badges.className = `${PINNED_MESSAGE_CLASS}__badges`;
   appendBadges(badges, mergeIdentityBadges(pin.message.sender.identity));
@@ -473,8 +487,6 @@ export function buildPinnedMessageElement(
   const separator = document.createElement('span');
   separator.className = `${PINNED_MESSAGE_CLASS}__separator`;
   separator.textContent = ': ';
-  const content = document.createElement('span');
-  content.className = `${PINNED_MESSAGE_CLASS}__content`;
   appendParsedContent(content, pin.message.content);
   body.append(badges, username, separator, content);
 

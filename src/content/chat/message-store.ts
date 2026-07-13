@@ -91,6 +91,13 @@ export class ActivePinnedMessageState {
     return true;
   }
 
+  /** Replace same-id metadata without resetting that pin's dismissal/collapse state. */
+  updateActive(pin: PinnedMessage): boolean {
+    if (this.activePin?.message.id !== pin.message.id) return false;
+    this.activePin = pin;
+    return true;
+  }
+
   toggleCollapsed(): void {
     this.collapsed = !this.collapsed;
   }
@@ -112,6 +119,14 @@ export class ActivePinnedMessageState {
 
   getActive(): PinnedMessage | null {
     return this.activePin;
+  }
+
+  clearActive(): boolean {
+    if (!this.activePin && this.dismissedPinId === null && !this.collapsed) return false;
+    this.activePin = null;
+    this.dismissedPinId = null;
+    this.collapsed = false;
+    return true;
   }
 }
 

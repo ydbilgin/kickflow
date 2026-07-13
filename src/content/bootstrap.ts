@@ -31,6 +31,7 @@ import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
 import { buildPinnedMessageElement, setSubscriberBadges } from './chat/message-view';
+import { NativePinMirror } from './chat/native-pin-mirror';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -190,16 +191,20 @@ export function createSystemEventCallbacks(
 
 export interface PinnedMessageController {
   onPinnedMessage: (pin: PinnedMessage) => void;
+  setMirroredPinnedMessage: (pin: PinnedMessage, content: Node) => void;
+  clearPinnedMessage: () => void;
   refresh: () => void;
 }
 
-/** Own-mode pin controller: Pusher ingestion is flag-gated, while refresh lets a live global
- * toggle hide/show the current non-dismissed pin without changing its per-id dismiss state. */
+/** Own-mode pin controller: structured/Pusher ingestion remains flag-gated for compatibility.
+ * Native DOM mirroring always retains current state, so refresh can apply a live global toggle
+ * without losing a pin created while the flag was off or changing its per-id dismiss state. */
 export function createPinnedMessageController(
   host: HTMLElement,
   onShow: () => void = () => undefined,
 ): PinnedMessageController {
   const state = new ActivePinnedMessageState();
+  let preRenderedContent: Node | null = null;
   const refresh = (): void => {
     const pin = featureFlags.showPinnedMessage ? state.getVisible() : null;
     if (!pin) {
@@ -218,6 +223,7 @@ export function createPinnedMessageController(
         state.toggleCollapsed();
         refresh();
       },
+      preRenderedContent ?? undefined,
     );
     host.replaceChildren(element);
     host.style.display = '';
@@ -227,6 +233,17 @@ export function createPinnedMessageController(
   return {
     onPinnedMessage: (pin) => {
       if (!featureFlags.showPinnedMessage || !state.setActive(pin)) return;
+      preRenderedContent = null;
+      refresh();
+    },
+    setMirroredPinnedMessage: (pin, content) => {
+      if (!state.setActive(pin)) state.updateActive(pin);
+      preRenderedContent = content.cloneNode(true);
+      refresh();
+    },
+    clearPinnedMessage: () => {
+      state.clearActive();
+      preRenderedContent = null;
       refresh();
     },
     refresh,
@@ -436,6 +453,7 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
+    html.kickflow-chat-active [data-kickflow-native-pin-hidden] { display: none !important; }
     [data-kickflow-live="true"] { background: #22c55e !important; }
     [data-kickflow-live="false"] { background: #6b7280 !important; }
     .kickflow-scroll-pill {
@@ -794,6 +812,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     mount.activate();
     setStatus({ active: true, reason: 'aktif — sabitlenmiş mesaj gösteriliyor' });
   });
+  new NativePinMirror(lifecycle, pinnedMessageController);
   refreshActivePinnedMessage = pinnedMessageController.refresh;
   lifecycle.add(() => {
     if (refreshActivePinnedMessage === pinnedMessageController.refresh) refreshActivePinnedMessage = null;
@@ -889,7 +908,6 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       onSubscription: systemEventCallbacks.onSubscription,
       onChannelSubscription: systemEventCallbacks.onChannelSubscription,
       onHost: systemEventCallbacks.onHost,
-      onPinnedMessage: pinnedMessageController.onPinnedMessage,
       onChatroomUpdated: systemEventCallbacks.onChatroomUpdated,
       onUserBanned: (payload) => {
         setStatus({ lastBanAt: Date.now() });
@@ -907,7 +925,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   });
 }
 
-function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+export function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   if (featureFlags.chatMode === 'own') {
     initOwnChatIntegrity(slug, lifecycle);
   } else {
