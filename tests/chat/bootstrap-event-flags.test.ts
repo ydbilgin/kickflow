@@ -266,6 +266,20 @@ describe('bootstrap event display flags', () => {
     });
   });
 
+  it('persists, loads, and reports the auto-theater flag through the shared flag path', async () => {
+    storageSet.mockClear();
+    featureFlags.autoTheater = false;
+
+    bootstrap.applyFlagChange('autoTheater', true);
+    expect(featureFlags.autoTheater).toBe(true);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_autoTheater: true });
+    expect(bootstrap.getPopupFeatureFlags().autoTheater).toBe(true);
+
+    storageGet.mockResolvedValue({ kf_flag_autoTheater: false });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.autoTheater).toBe(false);
+  });
+
   it('deduplicates popup moderation counts across list, ghost, and panel copies', () => {
     document.body.innerHTML = `
       <div class="kickflow-preserved kickflow-banned" data-message-id="same"></div>

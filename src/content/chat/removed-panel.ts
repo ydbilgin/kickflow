@@ -64,6 +64,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private pinnedMessageCheckbox: HTMLInputElement | null = null;
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private sidebarRefreshCheckbox: HTMLInputElement | null = null;
+  private autoTheaterCheckbox: HTMLInputElement | null = null;
 
   constructor(
     lifecycle: Lifecycle,
@@ -216,7 +217,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     return section;
   }
 
-  /** Quick-settings section — the same three owner-facing flags the Chrome popup exposes, so bans
+  /** Quick-settings section — the same owner-facing flags the Chrome popup exposes, so bans
    * + settings live in one on-page surface. Built once (kept in the DOM, visibility toggled by the
    * gear) — controls dispatch `kickflow:setFlag`, which bootstrap.ts's single `applyFlagChange`
    * mutator applies (same side effects as the popup path: reconcile / session restart / persist). */
@@ -225,7 +226,10 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     settings.className = PANEL_SETTINGS_CLASS;
     settings.style.display = this.showSettings ? '' : 'none';
 
+    const modeCard = document.createElement('div');
+    modeCard.className = 'kickflow-panel__settings-mode';
     const modeLabel = document.createElement('label');
+    modeLabel.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--mode';
     const modeText = document.createElement('span');
     modeText.textContent = 'Chat modu';
     const modeSelect = document.createElement('select');
@@ -239,90 +243,69 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     modeSelect.value = featureFlags.chatMode;
     modeSelect.addEventListener('change', () => dispatchFlag('chatMode', modeSelect.value));
     modeLabel.append(modeText, modeSelect);
+    modeCard.append(modeLabel);
     this.chatModeSelect = modeSelect;
 
-    const deletedLabel = document.createElement('label');
-    const deletedText = document.createElement('span');
-    deletedText.textContent = 'Silinenleri göster';
-    const deletedCheckbox = document.createElement('input');
-    deletedCheckbox.type = 'checkbox';
-    deletedCheckbox.checked = featureFlags.showDeletedMessages;
-    deletedCheckbox.addEventListener('change', () => dispatchFlag('showDeletedMessages', deletedCheckbox.checked));
-    deletedLabel.append(deletedText, deletedCheckbox);
+    const chatTitle = document.createElement('div');
+    chatTitle.className = 'kickflow-panel__settings-title';
+    chatTitle.textContent = 'Sohbet';
+
+    const { label: deletedLabel, checkbox: deletedCheckbox } = this.buildSettingsToggle(
+      'Silinenleri göster', 'showDeletedMessages', featureFlags.showDeletedMessages,
+    );
     this.showDeletedCheckbox = deletedCheckbox;
 
-    const banLabel = document.createElement('label');
-    const banText = document.createElement('span');
-    banText.textContent = 'Ban satır-içi';
-    const banCheckbox = document.createElement('input');
-    banCheckbox.type = 'checkbox';
-    banCheckbox.checked = featureFlags.preserveBansInline;
-    banCheckbox.addEventListener('change', () => dispatchFlag('preserveBansInline', banCheckbox.checked));
-    banLabel.append(banText, banCheckbox);
+    const { label: banLabel, checkbox: banCheckbox } = this.buildSettingsToggle(
+      'Ban satır-içi', 'preserveBansInline', featureFlags.preserveBansInline,
+    );
     this.banInlineCheckbox = banCheckbox;
 
-    const subscriptionsLabel = document.createElement('label');
-    const subscriptionsText = document.createElement('span');
-    subscriptionsText.textContent = 'Abonelikler';
-    const subscriptionsCheckbox = document.createElement('input');
-    subscriptionsCheckbox.type = 'checkbox';
-    subscriptionsCheckbox.checked = featureFlags.showSubscriptions;
-    subscriptionsCheckbox.addEventListener('change', () => dispatchFlag('showSubscriptions', subscriptionsCheckbox.checked));
-    subscriptionsLabel.append(subscriptionsText, subscriptionsCheckbox);
+    const { label: subscriptionsLabel, checkbox: subscriptionsCheckbox } = this.buildSettingsToggle(
+      'Abonelikler', 'showSubscriptions', featureFlags.showSubscriptions,
+    );
     this.subscriptionsCheckbox = subscriptionsCheckbox;
 
-    const giftedSubsLabel = document.createElement('label');
-    const giftedSubsText = document.createElement('span');
-    giftedSubsText.textContent = 'Hediye abonelikler';
-    const giftedSubsCheckbox = document.createElement('input');
-    giftedSubsCheckbox.type = 'checkbox';
-    giftedSubsCheckbox.checked = featureFlags.showGiftedSubs;
-    giftedSubsCheckbox.addEventListener('change', () => dispatchFlag('showGiftedSubs', giftedSubsCheckbox.checked));
-    giftedSubsLabel.append(giftedSubsText, giftedSubsCheckbox);
+    const { label: giftedSubsLabel, checkbox: giftedSubsCheckbox } = this.buildSettingsToggle(
+      'Hediye abonelikler', 'showGiftedSubs', featureFlags.showGiftedSubs,
+    );
     this.giftedSubsCheckbox = giftedSubsCheckbox;
 
-    const hostRaidLabel = document.createElement('label');
-    const hostRaidText = document.createElement('span');
-    hostRaidText.textContent = 'Host / Raid';
-    const hostRaidCheckbox = document.createElement('input');
-    hostRaidCheckbox.type = 'checkbox';
-    hostRaidCheckbox.checked = featureFlags.showHostRaid;
-    hostRaidCheckbox.addEventListener('change', () => dispatchFlag('showHostRaid', hostRaidCheckbox.checked));
-    hostRaidLabel.append(hostRaidText, hostRaidCheckbox);
+    const { label: hostRaidLabel, checkbox: hostRaidCheckbox } = this.buildSettingsToggle(
+      'Host / Raid', 'showHostRaid', featureFlags.showHostRaid,
+    );
     this.hostRaidCheckbox = hostRaidCheckbox;
 
-    const pinnedMessageLabel = document.createElement('label');
-    const pinnedMessageText = document.createElement('span');
-    pinnedMessageText.textContent = 'Sabitlenmiş mesaj';
-    const pinnedMessageCheckbox = document.createElement('input');
-    pinnedMessageCheckbox.type = 'checkbox';
-    pinnedMessageCheckbox.checked = featureFlags.showPinnedMessage;
-    pinnedMessageCheckbox.addEventListener('change', () => dispatchFlag('showPinnedMessage', pinnedMessageCheckbox.checked));
-    pinnedMessageLabel.append(pinnedMessageText, pinnedMessageCheckbox);
+    const { label: pinnedMessageLabel, checkbox: pinnedMessageCheckbox } = this.buildSettingsToggle(
+      'Sabitlenmiş mesaj', 'showPinnedMessage', featureFlags.showPinnedMessage,
+    );
     this.pinnedMessageCheckbox = pinnedMessageCheckbox;
 
-    const modeChangesLabel = document.createElement('label');
-    const modeChangesText = document.createElement('span');
-    modeChangesText.textContent = 'Mod değişiklikleri';
-    const modeChangesCheckbox = document.createElement('input');
-    modeChangesCheckbox.type = 'checkbox';
-    modeChangesCheckbox.checked = featureFlags.showModeChanges;
-    modeChangesCheckbox.addEventListener('change', () => dispatchFlag('showModeChanges', modeChangesCheckbox.checked));
-    modeChangesLabel.append(modeChangesText, modeChangesCheckbox);
+    const { label: modeChangesLabel, checkbox: modeChangesCheckbox } = this.buildSettingsToggle(
+      'Mod değişiklikleri', 'showModeChanges', featureFlags.showModeChanges,
+    );
     this.modeChangesCheckbox = modeChangesCheckbox;
 
-    const sidebarRefreshLabel = document.createElement('label');
-    const sidebarRefreshText = document.createElement('span');
-    sidebarRefreshText.textContent = 'Sidebar yenileme';
-    const sidebarRefreshCheckbox = document.createElement('input');
-    sidebarRefreshCheckbox.type = 'checkbox';
-    sidebarRefreshCheckbox.checked = featureFlags.showSidebarRefresh;
-    sidebarRefreshCheckbox.addEventListener('change', () => dispatchFlag('showSidebarRefresh', sidebarRefreshCheckbox.checked));
-    sidebarRefreshLabel.append(sidebarRefreshText, sidebarRefreshCheckbox);
+    const { label: sidebarRefreshLabel, checkbox: sidebarRefreshCheckbox } = this.buildSettingsToggle(
+      'Sidebar yenileme', 'showSidebarRefresh', featureFlags.showSidebarRefresh,
+    );
     this.sidebarRefreshCheckbox = sidebarRefreshCheckbox;
 
+    const playerTitle = document.createElement('div');
+    playerTitle.className = 'kickflow-panel__settings-title';
+    playerTitle.textContent = 'Oynatıcı';
+
+    const { label: autoTheaterLabel, checkbox: autoTheaterCheckbox } = this.buildSettingsToggle(
+      'Otomatik tiyatro modu', 'autoTheater', featureFlags.autoTheater,
+    );
+    this.autoTheaterCheckbox = autoTheaterCheckbox;
+
+    const hint = document.createElement('p');
+    hint.className = 'kickflow-panel__settings-hint';
+    hint.textContent = 'Değişiklikler anında uygulanır.';
+
     settings.append(
-      modeLabel,
+      modeCard,
+      chatTitle,
       deletedLabel,
       banLabel,
       subscriptionsLabel,
@@ -331,8 +314,29 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       pinnedMessageLabel,
       modeChangesLabel,
       sidebarRefreshLabel,
+      playerTitle,
+      autoTheaterLabel,
+      hint,
     );
     return settings;
+  }
+
+  private buildSettingsToggle(
+    labelText: string,
+    key: string,
+    checked: boolean,
+  ): { label: HTMLLabelElement; checkbox: HTMLInputElement } {
+    const label = document.createElement('label');
+    label.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--toggle';
+    const text = document.createElement('span');
+    text.textContent = labelText;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'kickflow-panel__settings-toggle';
+    checkbox.checked = checked;
+    checkbox.addEventListener('change', () => dispatchFlag(key, checkbox.checked));
+    label.append(text, checkbox);
+    return { label, checkbox };
   }
 
   private updateSettingsVisibility(): void {
@@ -368,6 +372,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     if (this.sidebarRefreshCheckbox && this.sidebarRefreshCheckbox.checked !== featureFlags.showSidebarRefresh) {
       this.sidebarRefreshCheckbox.checked = featureFlags.showSidebarRefresh;
+    }
+    if (this.autoTheaterCheckbox && this.autoTheaterCheckbox.checked !== featureFlags.autoTheater) {
+      this.autoTheaterCheckbox.checked = featureFlags.autoTheater;
     }
   }
 
@@ -432,6 +439,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.hostRaidCheckbox = null;
     this.pinnedMessageCheckbox = null;
     this.modeChangesCheckbox = null;
+    this.sidebarRefreshCheckbox = null;
+    this.autoTheaterCheckbox = null;
   }
 
   private dispose(): void {

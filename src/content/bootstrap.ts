@@ -38,6 +38,7 @@ import { initRewindHotkeys } from './player/rewind-hotkeys';
 import { initRewindControls } from './player/rewind-controls';
 import { initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
+import { initAutoTheater, syncAutoTheaterFlag } from './player/auto-theater';
 import { SidebarRefreshController } from './sidebar/sidebar-refresh';
 
 const STYLE_ID = 'kickflow-styles';
@@ -57,6 +58,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showPinnedMessage',
   'showModeChanges',
   'showSidebarRefresh',
+  'autoTheater',
 ] as const;
 
 type BooleanFlagKey = (typeof BOOLEAN_FLAG_KEYS)[number];
@@ -569,24 +571,24 @@ function ensureStyles(): void {
        Whole header drags; ⚙ settings + × close live at its right edge. --- */
     .kickflow-panel {
       position: fixed; right: 14px; bottom: 84px; z-index: 2147483000;
-      width: 330px; max-height: 60vh; display: flex; flex-direction: column;
-      border-radius: 12px; background: rgba(18,19,23,0.98);
-      border: 1px solid rgba(255,255,255,0.10);
-      box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+      width: 350px; max-height: 78vh; display: flex; flex-direction: column;
+      border-radius: 13px; background: rgba(9,11,13,0.985);
+      border: 1px solid rgba(255,255,255,0.09);
+      box-shadow: 0 18px 54px rgba(0,0,0,0.56);
       font-family: 'Inter','Segoe UI',system-ui,sans-serif;
       overflow: hidden;
     }
     .kickflow-panel__header {
-      display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+      display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 9px 11px;
       cursor: move; user-select: none;
-      background: rgba(255,255,255,0.03);
-      border-bottom: 1px solid rgba(255,255,255,0.07);
+      background: #111418;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
     }
     .kickflow-panel__accent {
       width: 7px; height: 7px; border-radius: 50%; flex: none;
       background: #53fc18; box-shadow: 0 0 6px rgba(83,252,24,0.7);
     }
-    .kickflow-panel__title { font-weight: 800; font-size: 12px; letter-spacing: 0.02em; }
+    .kickflow-panel__title { color: #f4f5f5; font-weight: 800; font-size: 12px; letter-spacing: 0.01em; }
     .kickflow-panel__count {
       background: rgba(233,17,60,0.9); color: #fff; border-radius: 999px;
       padding: 0 6px; font-size: 10px; font-weight: 800; line-height: 1.6;
@@ -599,17 +601,53 @@ function ensureStyles(): void {
       font-size: 13px; line-height: 1;
       transition: background .14s ease, color .14s ease;
     }
-    .kickflow-panel__btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .kickflow-panel__btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
     .kickflow-panel__close { font-size: 16px; }
-    .kickflow-panel__body { flex: 1; overflow: auto; padding: 6px 10px 9px; }
+    .kickflow-panel__body { flex: 1 1 92px; min-height: 72px; overflow: auto; padding: 7px 11px 10px; }
     .kickflow-panel__settings {
-      padding: 8px 11px; border-top: 1px solid rgba(255,255,255,0.07);
-      display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: #efeff1;
+      flex: 0 1 auto; min-height: 0; overflow-y: auto;
+      padding: 10px 11px 9px; border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex; flex-direction: column; gap: 0; font-size: 11px; color: #efeff1;
+      background: #0c0f12;
     }
-    .kickflow-panel__settings label { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
+    .kickflow-panel__settings-mode {
+      margin-bottom: 12px; padding: 8px 9px; border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px; background: #13171b;
+    }
+    .kickflow-panel__settings-title {
+      display: flex; align-items: center; gap: 7px; margin: 5px 2px 6px;
+      color: #9298a1; font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+    }
+    .kickflow-panel__settings-title::after { content: ''; height: 1px; flex: 1; background: rgba(255,255,255,0.08); }
+    .kickflow-panel__settings-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer;
+    }
+    .kickflow-panel__settings-row--mode { min-height: 28px; font-weight: 650; }
+    .kickflow-panel__settings-row--toggle {
+      min-height: 32px; padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.055);
+      color: #dfe2e4;
+    }
+    .kickflow-panel__settings-row--toggle:hover { background: rgba(255,255,255,0.025); }
     .kickflow-panel__settings select {
-      background: #1c1c20; color: #efeff1; border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 5px; padding: 3px 6px; font-size: 11px;
+      min-width: 104px; height: 27px; padding: 0 7px;
+      background: #1a1e23; color: #efeff1; border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 6px; font-size: 10.5px; cursor: pointer;
+    }
+    .kickflow-panel__settings-toggle {
+      appearance: none; position: relative; flex: 0 0 auto; width: 34px; height: 19px; margin: 0;
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 999px; background: #2b3036;
+      cursor: pointer; transition: background .16s ease, border-color .16s ease;
+    }
+    .kickflow-panel__settings-toggle::after {
+      content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+      background: #a7adb4; box-shadow: 0 1px 2px rgba(0,0,0,.45); transition: transform .16s ease, background .16s ease;
+    }
+    .kickflow-panel__settings-toggle:checked { border-color: #53fc18; background: #53fc18; }
+    .kickflow-panel__settings-toggle:checked::after { background: #071006; transform: translateX(15px); }
+    .kickflow-panel__settings-toggle:focus-visible,
+    .kickflow-panel__settings select:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
+    .kickflow-panel__settings-hint {
+      margin: 9px 2px 1px; color: #747b84; font-size: 9.5px; text-align: center;
     }
 
     /* --- Footer toggle button: injected into Kick's own chat footer, next to its send/gear
@@ -967,6 +1005,7 @@ function initPlayerQolSession(lifecycle: Lifecycle): void {
     lifecycle,
     () => {
       initQualityLock(lifecycle);
+      initAutoTheater(lifecycle);
       initRewindHotkeys(lifecycle);
       // Mount order determines native-bar left-to-right order (see native-bar.ts): rewind
       // controls right after LIVE, then the catch-up indicator/toggle after that.
@@ -1081,6 +1120,7 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
     if (key === 'debugLogging') setDebugLogging(value);
     if (key === 'showPinnedMessage') refreshActivePinnedMessage?.();
+    if (key === 'autoTheater') syncAutoTheaterFlag();
     if (key === 'showSidebarRefresh') {
       if (value) {
         if (currentLifecycle) initSidebarRefreshSession(currentLifecycle);
@@ -1112,6 +1152,7 @@ export function getPopupFeatureFlags(): {
   showPinnedMessage: boolean;
   showModeChanges: boolean;
   showSidebarRefresh: boolean;
+  autoTheater: boolean;
 } {
   return {
     chatMode: featureFlags.chatMode,
@@ -1124,6 +1165,7 @@ export function getPopupFeatureFlags(): {
     showPinnedMessage: featureFlags.showPinnedMessage,
     showModeChanges: featureFlags.showModeChanges,
     showSidebarRefresh: featureFlags.showSidebarRefresh,
+    autoTheater: featureFlags.autoTheater,
   };
 }
 
@@ -1205,6 +1247,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showPinnedMessage',
     'kf_flag_showModeChanges',
     'kf_flag_showSidebarRefresh',
+    'kf_flag_autoTheater',
   ]);
   if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
   if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
@@ -1216,6 +1259,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showPinnedMessage === 'boolean') setFeatureFlag('showPinnedMessage', saved.kf_flag_showPinnedMessage);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
+  if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
 }
 
 function installNavigationHooks(): void {

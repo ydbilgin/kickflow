@@ -28,6 +28,7 @@ interface StatusResponse {
     showPinnedMessage: boolean;
     showModeChanges: boolean;
     showSidebarRefresh: boolean;
+    autoTheater: boolean;
   };
 }
 
@@ -85,6 +86,7 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-pinned-message') as HTMLInputElement)).checked = res.flags.showPinnedMessage;
   (($('t-mode-changes') as HTMLInputElement)).checked = res.flags.showModeChanges;
   (($('t-sidebar-refresh') as HTMLInputElement)).checked = res.flags.showSidebarRefresh;
+  (($('t-auto-theater') as HTMLInputElement)).checked = res.flags.autoTheater;
   (($('t-chat-mode') as HTMLSelectElement)).value = res.flags.chatMode;
 }
 
@@ -101,12 +103,12 @@ async function refresh(): Promise<void> {
 }
 
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showPinnedMessage' | 'showModeChanges' | 'showSidebarRefresh',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showPinnedMessage' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater',
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showPinnedMessage' | 'showModeChanges' | 'showSidebarRefresh' | 'chatMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showPinnedMessage' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'chatMode',
   value: boolean | 'native' | 'own'
 ): Promise<void> {
   const id = await activeTabId();
@@ -128,6 +130,7 @@ $('t-host-raid').addEventListener('change', (e) => setFlag('showHostRaid', (e.ta
 $('t-pinned-message').addEventListener('change', (e) => setFlag('showPinnedMessage', (e.target as HTMLInputElement).checked));
 $('t-mode-changes').addEventListener('change', (e) => setFlag('showModeChanges', (e.target as HTMLInputElement).checked));
 $('t-sidebar-refresh').addEventListener('change', (e) => setFlag('showSidebarRefresh', (e.target as HTMLInputElement).checked));
+$('t-auto-theater').addEventListener('change', (e) => setFlag('autoTheater', (e.target as HTMLInputElement).checked));
 $('t-chat-mode').addEventListener('change', (e) => setFlag('chatMode', (e.target as HTMLSelectElement).value as 'native' | 'own'));
 
 void refresh();

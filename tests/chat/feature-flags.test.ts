@@ -13,4 +13,8 @@ describe('feature-flags', () => {
     expect(featureFlags.showPinnedMessage).toBe(true);
     expect(featureFlags.showModeChanges).toBe(true);
   });
+
+  it('keeps automatic theater mode opt-in', () => {
+    expect(featureFlags.autoTheater).toBe(false);
+  });
 });

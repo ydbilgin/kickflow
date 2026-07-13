@@ -298,6 +298,7 @@ describe('RemovedMessagesPanel', () => {
       const originalHostRaid = featureFlags.showHostRaid;
       const originalPinnedMessage = featureFlags.showPinnedMessage;
       const originalModeChanges = featureFlags.showModeChanges;
+      const originalAutoTheater = featureFlags.autoTheater;
       featureFlags.chatMode = 'own';
       featureFlags.showDeletedMessages = false;
       featureFlags.preserveBansInline = false;
@@ -306,6 +307,7 @@ describe('RemovedMessagesPanel', () => {
       featureFlags.showHostRaid = false;
       featureFlags.showPinnedMessage = true;
       featureFlags.showModeChanges = false;
+      featureFlags.autoTheater = true;
 
       try {
         const lifecycle = new Lifecycle();
@@ -325,6 +327,7 @@ describe('RemovedMessagesPanel', () => {
         const hostRaidCheckbox = settingsControl(section, 'Host / Raid') as HTMLInputElement;
         const pinnedMessageCheckbox = settingsControl(section, 'Sabitlenmiş mesaj') as HTMLInputElement;
         const modeChangesCheckbox = settingsControl(section, 'Mod değişiklikleri') as HTMLInputElement;
+        const autoTheaterCheckbox = settingsControl(section, 'Otomatik tiyatro modu') as HTMLInputElement;
         expect(modeSelect.value).toBe('own');
         expect(deletedCheckbox.checked).toBe(false);
         expect(banCheckbox.checked).toBe(false);
@@ -333,6 +336,7 @@ describe('RemovedMessagesPanel', () => {
         expect(hostRaidCheckbox.checked).toBe(false);
         expect(pinnedMessageCheckbox.checked).toBe(true);
         expect(modeChangesCheckbox.checked).toBe(false);
+        expect(autoTheaterCheckbox.checked).toBe(true);
 
         lifecycle.dispose();
       } finally {
@@ -344,6 +348,7 @@ describe('RemovedMessagesPanel', () => {
         featureFlags.showHostRaid = originalHostRaid;
         featureFlags.showPinnedMessage = originalPinnedMessage;
         featureFlags.showModeChanges = originalModeChanges;
+        featureFlags.autoTheater = originalAutoTheater;
       }
     });
 
@@ -431,6 +436,7 @@ describe('RemovedMessagesPanel', () => {
       ['Host / Raid', 'showHostRaid'],
       ['Sabitlenmiş mesaj', 'showPinnedMessage'],
       ['Mod değişiklikleri', 'showModeChanges'],
+      ['Otomatik tiyatro modu', 'autoTheater'],
     ] as const)('toggling "%s" dispatches kickflow:setFlag with {key: %s, value}', (label, key) => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();

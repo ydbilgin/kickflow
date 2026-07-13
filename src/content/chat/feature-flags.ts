@@ -23,6 +23,9 @@ export interface FeatureFlags {
   showModeChanges: boolean;
   /** Refresh native followed-channel sidebar viewer counts and live indicators. */
   showSidebarRefresh: boolean;
+  /** Automatically enter Kick's theater layout when a channel/video loads. Opt-in because it
+   * changes the page layout rather than only augmenting it. */
+  autoTheater: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
 }
@@ -38,6 +41,7 @@ export const featureFlags: FeatureFlags = {
   showPinnedMessage: true,
   showModeChanges: true,
   showSidebarRefresh: true,
+  autoTheater: false,
   modLogPanel: false,
 };
 

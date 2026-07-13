@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="KickFlow">
+  <rect x="5" y="5" width="118" height="118" rx="27" fill="#101316"/>
+  <rect x="6.5" y="6.5" width="115" height="115" rx="25.5" fill="none" stroke="#273029" stroke-width="3"/>
+  <path fill="#53fc18" d="M29 25h20v28h10l22-28h25L76 62l33 41H83L59 73H49v30H29z"/>
+</svg>

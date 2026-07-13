@@ -5,71 +5,165 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>KickFlow</title>
   <style>
-    :root { color-scheme: dark; }
+    :root {
+      color-scheme: dark;
+      --accent: #53fc18;
+      --bg: #090b0d;
+      --surface: #111418;
+      --surface-raised: #171a1f;
+      --line: rgba(255,255,255,.08);
+      --text: #f4f5f5;
+      --muted: #9298a1;
+    }
     * { box-sizing: border-box; }
+    html { background: var(--bg); }
     body {
-      width: 280px; margin: 0; padding: 12px 14px;
-      background: #0e0e10; color: #efeff1;
-      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; font-size: 13px; line-height: 1.4;
+      width: 352px; margin: 0; padding: 0 14px 14px;
+      background: var(--bg); color: var(--text);
+      font-family: Inter, 'Segoe UI', system-ui, sans-serif; font-size: 12px; line-height: 1.35;
     }
-    .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .brand { font-weight: 800; letter-spacing: 0.02em; }
-    .brand .kf { color: #53fc18; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; background: #6d6d6d; margin-left: auto; box-shadow: 0 0 6px rgba(0,0,0,0.5); }
-    .dot--active { background: #53fc18; box-shadow: 0 0 7px rgba(83,252,24,0.7); }
-    .dot--native { background: #ffb020; box-shadow: 0 0 7px rgba(255,176,32,0.7); }
-    .dot--off { background: #6d6d6d; }
-    #reason { font-size: 12px; color: #cfcfd4; margin-bottom: 10px; min-height: 16px; }
-    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 10px; }
-    .stat { display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding: 2px 0; }
-    .stat .k { color: #adadb8; }
-    .stat .v { font-weight: 700; font-variant-numeric: tabular-nums; }
-    .stat .v.ember { color: #e9113c; }
-    .stat .v.ochre { color: #c98a2b; }
-    .stat .v.green { color: #53fc18; }
-    .toggles { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; }
-    .row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
-    .row label { color: #dcdce1; }
-    .hint { color: #7a7a85; font-size: 10.5px; margin-top: 8px; }
-    input[type=checkbox] { width: 16px; height: 16px; accent-color: #53fc18; cursor: pointer; }
+    .head {
+      position: sticky; top: 0; z-index: 2;
+      display: flex; align-items: center; gap: 10px; height: 58px;
+      background: linear-gradient(180deg, var(--bg) 76%, rgba(9,11,13,0));
+    }
+    .brand-icon { width: 28px; height: 28px; border-radius: 7px; display: block; }
+    .brand-wrap { min-width: 0; }
+    .brand { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+    .brand .kf { color: var(--accent); }
+    .tagline { margin-top: 1px; color: var(--muted); font-size: 10px; }
+    .dot {
+      width: 9px; height: 9px; border-radius: 50%; background: #5f646b; margin-left: auto;
+      box-shadow: 0 0 0 4px rgba(255,255,255,.035);
+    }
+    .dot--active { background: var(--accent); box-shadow: 0 0 0 4px rgba(83,252,24,.10); }
+    .dot--native { background: #ffb020; box-shadow: 0 0 0 4px rgba(255,176,32,.10); }
+    .dot--off { background: #5f646b; }
+    .mode-card {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin: 1px 0 14px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px;
+      background: var(--surface);
+    }
+    .mode-copy strong { display: block; font-size: 11.5px; }
+    .mode-copy span { display: block; margin-top: 2px; color: var(--muted); font-size: 9.5px; }
     select {
-      min-width: 96px; height: 24px; border: 1px solid rgba(255,255,255,0.14); border-radius: 5px;
-      background: #18181b; color: #efeff1; font: inherit; cursor: pointer;
+      appearance: none; min-width: 104px; height: 30px; padding: 0 28px 0 10px;
+      border: 1px solid rgba(255,255,255,.12); border-radius: 7px;
+      background: var(--surface-raised) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%239298a1' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 9px center;
+      color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
     }
+    select:focus-visible, input[type=checkbox]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .section { margin-top: 14px; }
+    .section-title {
+      display: flex; align-items: center; gap: 7px; margin: 0 2px 8px;
+      color: #b6bbc2; font-size: 9.5px; font-weight: 800; letter-spacing: .10em; text-transform: uppercase;
+    }
+    .section-title::after { content: ''; height: 1px; flex: 1; background: var(--line); }
+    .status-card { padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+    #reason { min-height: 16px; margin: -3px 2px 10px; color: #aeb4bb; font-size: 10.5px; }
+    .stats { margin-top: 0; }
+    .identity-grid, .counter-grid { display: grid; gap: 6px; }
+    .identity-grid { grid-template-columns: 1.35fr 1fr .8fr; }
+    .counter-grid { grid-template-columns: repeat(4, 1fr); margin-top: 6px; }
+    .stat {
+      min-width: 0; padding: 7px 7px 6px; border-radius: 7px;
+      background: var(--surface-raised); border: 1px solid rgba(255,255,255,.045);
+    }
+    .stat .k { display: block; overflow: hidden; color: var(--muted); font-size: 8.5px; white-space: nowrap; text-overflow: ellipsis; }
+    .stat .v {
+      display: block; margin-top: 2px; overflow: hidden; color: #f4f5f5; font-size: 11px; font-weight: 750;
+      font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis;
+    }
+    .stat .v.ember { color: #ff6685; }
+    .stat .v.ochre { color: #f4bd62; }
+    .stat .v.green { color: var(--accent); }
+    .toggles { display: block; }
+    .control-list { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+    .row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      min-height: 36px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,.055);
+      cursor: pointer;
+    }
+    .row:last-child { border-bottom: 0; }
+    .row:hover { background: rgba(255,255,255,.025); }
+    .row > span { color: #dde0e3; font-size: 11px; }
+    input[type=checkbox] {
+      appearance: none; position: relative; flex: 0 0 auto; width: 34px; height: 19px; margin: 0;
+      border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: #2b3036;
+      cursor: pointer; transition: background .16s ease, border-color .16s ease;
+    }
+    input[type=checkbox]::after {
+      content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+      background: #a7adb4; box-shadow: 0 1px 2px rgba(0,0,0,.45); transition: transform .16s ease, background .16s ease;
+    }
+    input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
+    input[type=checkbox]:checked::after { background: #071006; transform: translateX(15px); }
+    .hint { margin: 10px 3px 0; color: #747b84; font-size: 9.5px; text-align: center; }
   </style>
 </head>
 <body>
-  <div class="head">
-    <span class="brand"><span class="kf">Kick</span>Flow</span>
-    <span id="dot" class="dot dot--off"></span>
-  </div>
+  <header class="head">
+    <img class="brand-icon" src="icons/icon-32.png" alt="" />
+    <div class="brand-wrap">
+      <div class="brand"><span class="kf">Kick</span>Flow</div>
+      <div class="tagline">Kick deneyimi, sadeleştirilmiş.</div>
+    </div>
+    <span id="dot" class="dot dot--off" title="Bağlantı durumu"></span>
+  </header>
+
   <div id="reason">durum okunuyor…</div>
 
-  <div id="stats" class="stats">
-    <div class="stat"><span class="k">kanal</span><span class="v" id="slug">—</span></div>
-    <div class="stat"><span class="k">chatroom id</span><span class="v" id="chatroomId">—</span></div>
-    <div class="stat"><span class="k">Pusher</span><span class="v" id="pusher">—</span></div>
-    <div class="stat"><span class="k">mesaj</span><span class="v" id="messages">0</span></div>
-    <div class="stat"><span class="k">korunmuş</span><span class="v green" id="preserved">0</span></div>
-    <div class="stat"><span class="k">ban</span><span class="v ember" id="banned">0</span></div>
-    <div class="stat"><span class="k">silme</span><span class="v ochre" id="deleted">0</span></div>
-    <div class="stat"><span class="k">ghost inline</span><span class="v ember" id="ghostAnchored">0</span></div>
-    <div class="stat"><span class="k">ghost bekleyen</span><span class="v ochre" id="ghostPending">0</span></div>
-    <div class="stat"><span class="k">ghost evict</span><span class="v" id="ghostEvicted">0</span></div>
-    <div class="stat"><span class="k">son ban</span><span class="v" id="lastBan">—</span></div>
-  </div>
-
   <div id="toggles" class="toggles">
-    <div class="row"><label for="t-chat-mode">Chat modu</label><select id="t-chat-mode"><option value="native">Native</option><option value="own">Own</option></select></div>
-    <div class="row"><label for="t-deleted">Silinen mesajları göster</label><input type="checkbox" id="t-deleted" /></div>
-    <div class="row"><label for="t-bans-inline">Banları inline koru</label><input type="checkbox" id="t-bans-inline" /></div>
-    <div class="row"><label for="t-subscriptions">Abonelikler</label><input type="checkbox" id="t-subscriptions" /></div>
-    <div class="row"><label for="t-gifted-subs">Hediye abonelikler</label><input type="checkbox" id="t-gifted-subs" /></div>
-    <div class="row"><label for="t-host-raid">Host / Raid</label><input type="checkbox" id="t-host-raid" /></div>
-    <div class="row"><label for="t-pinned-message">Sabitlenmiş mesaj</label><input type="checkbox" id="t-pinned-message" /></div>
-    <div class="row"><label for="t-mode-changes">Mod değişiklikleri</label><input type="checkbox" id="t-mode-changes" /></div>
-    <div class="row"><label for="t-sidebar-refresh">Sidebar yenileme</label><input type="checkbox" id="t-sidebar-refresh" /></div>
-    <div class="row"><label for="t-debug">Debug log (F12)</label><input type="checkbox" id="t-debug" /></div>
+    <div class="mode-card">
+      <div class="mode-copy"><strong>Sohbet görünümü</strong><span>Kick veya KickFlow listesi</span></div>
+      <select id="t-chat-mode" aria-label="Chat modu"><option value="native">Native</option><option value="own">KickFlow</option></select>
+    </div>
+
+    <section class="section">
+      <h2 class="section-title">Durum / İstatistik</h2>
+      <div class="status-card">
+        <div id="stats" class="stats">
+          <div class="identity-grid">
+            <div class="stat"><span class="k">Kanal</span><span class="v" id="slug">—</span></div>
+            <div class="stat"><span class="k">Chatroom ID</span><span class="v" id="chatroomId">—</span></div>
+            <div class="stat"><span class="k">Pusher</span><span class="v" id="pusher">—</span></div>
+          </div>
+          <div class="counter-grid">
+            <div class="stat"><span class="k">Mesaj</span><span class="v" id="messages">0</span></div>
+            <div class="stat"><span class="k">Korunmuş</span><span class="v green" id="preserved">0</span></div>
+            <div class="stat"><span class="k">Ban</span><span class="v ember" id="banned">0</span></div>
+            <div class="stat"><span class="k">Silme</span><span class="v ochre" id="deleted">0</span></div>
+            <div class="stat"><span class="k">Ghost inline</span><span class="v ember" id="ghostAnchored">0</span></div>
+            <div class="stat"><span class="k">Ghost bekleyen</span><span class="v ochre" id="ghostPending">0</span></div>
+            <div class="stat"><span class="k">Ghost evict</span><span class="v" id="ghostEvicted">0</span></div>
+            <div class="stat"><span class="k">Son ban</span><span class="v" id="lastBan">—</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Sohbet</h2>
+      <div class="control-list">
+        <label class="row" for="t-deleted"><span>Silinen mesajları göster</span><input type="checkbox" id="t-deleted" /></label>
+        <label class="row" for="t-bans-inline"><span>Banları satır içinde koru</span><input type="checkbox" id="t-bans-inline" /></label>
+        <label class="row" for="t-subscriptions"><span>Abonelikler</span><input type="checkbox" id="t-subscriptions" /></label>
+        <label class="row" for="t-gifted-subs"><span>Hediye abonelikler</span><input type="checkbox" id="t-gifted-subs" /></label>
+        <label class="row" for="t-host-raid"><span>Host / Raid</span><input type="checkbox" id="t-host-raid" /></label>
+        <label class="row" for="t-pinned-message"><span>Sabitlenmiş mesaj</span><input type="checkbox" id="t-pinned-message" /></label>
+        <label class="row" for="t-mode-changes"><span>Mod değişiklikleri</span><input type="checkbox" id="t-mode-changes" /></label>
+        <label class="row" for="t-sidebar-refresh"><span>Sidebar yenileme</span><input type="checkbox" id="t-sidebar-refresh" /></label>
+        <label class="row" for="t-debug"><span>Debug günlüğü (F12)</span><input type="checkbox" id="t-debug" /></label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Oynatıcı</h2>
+      <div class="control-list">
+        <label class="row" for="t-auto-theater"><span>Otomatik tiyatro modu</span><input type="checkbox" id="t-auto-theater" /></label>
+      </div>
+    </section>
+
     <div class="hint">Değişiklik anında uygulanır; kanal yeniden yüklenince de korunur.</div>
   </div>
 
