@@ -4,7 +4,7 @@ import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
 import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
-import { getStatus, setStatus, resetStatus } from './status';
+import { getStatus, setStatus, resetStatus, type KickFlowStatusSnapshot } from './status';
 import {
   ActivePinnedMessageState,
   ChatDomRegistry,
@@ -597,119 +597,258 @@ function ensureStyles(): void {
     .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.7; }
     .kickflow-ghost-empty { color: #8b8b93; font-size: 11px; text-align: center; padding: 22px 10px; opacity: 0.9; }
 
-    /* --- "Kaldırılanlar" panel: hidden by default, opened via the footer toggle button.
-       Whole header drags; ⚙ settings + × close live at its right edge. --- */
+    /* --- KickFlow settings dashboard: one shared body-level modal for navbar + footer. --- */
+    @keyframes kickflow-dashboard-in {
+      from { opacity: 0; transform: scale(.98); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    @keyframes kickflow-hotkey-capture {
+      0%, 100% { opacity: .62; transform: scale(.985); }
+      50% { opacity: 1; transform: scale(1); }
+    }
     .kickflow-panel {
-      position: fixed; right: 14px; bottom: 84px; z-index: 2147483000;
-      width: 350px; max-height: 78vh; display: flex; flex-direction: column;
-      border-radius: 13px; background: rgba(9,11,13,0.985);
-      border: 1px solid rgba(255,255,255,0.09);
-      box-shadow: 0 18px 54px rgba(0,0,0,0.56);
+      position: fixed; inset: 0; z-index: 2147483000;
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+      background: oklch(0.12 0.01 150 / 0.55); color: oklch(0.95 0.006 150);
       font-family: 'Inter','Segoe UI',system-ui,sans-serif;
-      overflow: hidden;
+      line-height: 1.4; overscroll-behavior: contain;
     }
+    .kickflow-panel, .kickflow-panel * { box-sizing: border-box; }
+    .kickflow-panel__shell {
+      width: min(760px, 92vw); height: min(620px, 82vh); max-height: 82vh;
+      display: grid; grid-template-columns: 202px minmax(0, 1fr); overflow: hidden;
+      border: 1px solid oklch(0.30 0.01 150); border-radius: 14px;
+      background: oklch(0.17 0.012 150);
+      box-shadow: 0 24px 70px oklch(0.08 0.008 150 / .64);
+      animation: kickflow-dashboard-in 180ms cubic-bezier(.16,1,.3,1) both;
+    }
+    .kickflow-panel__rail {
+      min-width: 0; display: flex; flex-direction: column; padding: 25px 16px 17px;
+      border-right: 1px solid oklch(0.30 0.01 150);
+      background: oklch(0.20 0.012 150);
+    }
+    .kickflow-panel__wordmark {
+      padding: 0 10px; color: oklch(0.95 0.006 150);
+      font-size: 18px; font-weight: 800; letter-spacing: -.035em;
+    }
+    .kickflow-panel__rail-caption {
+      margin: 20px 10px 8px; color: oklch(0.65 0.01 150);
+      font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    }
+    .kickflow-panel__nav { display: flex; flex-direction: column; gap: 4px; }
+    .kickflow-panel__nav-item {
+      appearance: none; width: 100%; min-height: 38px; padding: 0 12px; border: 0; border-radius: 9px;
+      background: transparent; color: oklch(0.74 0.01 150); cursor: pointer;
+      font: 600 13px/1 'Inter','Segoe UI',system-ui,sans-serif; text-align: left;
+      transition: background-color 140ms ease, color 140ms ease;
+    }
+    .kickflow-panel__nav-item:hover { background: oklch(0.26 0.01 150); color: oklch(0.90 0.008 150); }
+    .kickflow-panel__nav-item--active,
+    .kickflow-panel__nav-item--active:hover {
+      background: oklch(0.86 0.24 145 / .11); color: oklch(0.86 0.24 145);
+    }
+    .kickflow-panel__version {
+      margin: auto 10px 0; color: oklch(0.56 0.01 150); font-size: 10px; font-variant-numeric: tabular-nums;
+    }
+    .kickflow-panel__main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
     .kickflow-panel__header {
-      display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 9px 11px;
-      cursor: move; user-select: none;
-      background: #111418;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
+      flex: none; display: flex; align-items: center; min-height: 65px; padding: 0 25px 0 30px;
+      background: oklch(0.17 0.012 150); border-bottom: 1px solid oklch(0.30 0.01 150);
     }
-    .kickflow-panel__accent {
-      width: 7px; height: 7px; border-radius: 50%; flex: none;
-      background: #53fc18; box-shadow: 0 0 6px rgba(83,252,24,0.7);
+    .kickflow-panel__title {
+      min-width: 0; flex: 1; margin: 0; color: oklch(0.95 0.006 150);
+      font-size: 18px; font-weight: 700; letter-spacing: -.015em;
     }
-    .kickflow-panel__title { color: #f4f5f5; font-weight: 800; font-size: 12px; letter-spacing: 0.01em; }
     .kickflow-panel__count {
-      background: rgba(233,17,60,0.9); color: #fff; border-radius: 999px;
-      padding: 0 6px; font-size: 10px; font-weight: 800; line-height: 1.6;
+      min-width: 22px; margin-left: 8px; padding: 2px 7px; border-radius: 999px;
+      background: oklch(0.25 0.012 150); color: oklch(0.76 0.01 150);
+      font-size: 10px; font-weight: 700; line-height: 1.4; text-align: center;
     }
-    .kickflow-panel__spacer { flex: 1; }
     .kickflow-panel__btn {
-      appearance: none; width: 22px; height: 22px; padding: 0; margin: 0; border: 0;
-      border-radius: 6px; background: transparent; color: #b5b5be; cursor: pointer;
+      appearance: none; width: 32px; height: 32px; padding: 0; margin: 0; border: 0;
+      border-radius: 8px; background: transparent; color: oklch(0.68 0.01 150); cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
-      font-size: 13px; line-height: 1;
-      transition: background .14s ease, color .14s ease;
+      font-size: 20px; font-weight: 400; line-height: 1;
+      transition: background-color 140ms ease, color 140ms ease;
     }
-    .kickflow-panel__btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
-    .kickflow-panel__close { font-size: 16px; }
-    .kickflow-panel__body { flex: 1 1 92px; min-height: 72px; overflow: auto; padding: 7px 11px 10px; }
+    .kickflow-panel__btn:hover { background: oklch(0.24 0.01 150); color: oklch(0.95 0.006 150); }
     .kickflow-panel__settings {
-      flex: 0 1 auto; min-height: 0; overflow-y: auto;
-      padding: 10px 11px 9px; border-bottom: 1px solid rgba(255,255,255,0.08);
-      display: flex; flex-direction: column; gap: 0; font-size: 11px; color: #efeff1;
-      background: #0c0f12;
+      min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 30px 30px;
+      scrollbar-color: oklch(0.34 0.01 150) transparent; scrollbar-width: thin;
     }
-    .kickflow-panel__settings-mode {
-      margin-bottom: 12px; padding: 8px 9px; border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 8px; background: #13171b;
+    .kickflow-panel__section { padding-top: 22px; }
+    .kickflow-panel__section[hidden] { display: none !important; }
+    .kickflow-panel__section-intro {
+      max-width: 480px; margin: 0 0 28px; color: oklch(0.70 0.01 150); font-size: 12px; line-height: 1.55;
     }
+    .kickflow-panel__group { margin-top: 28px; }
+    .kickflow-panel__section-intro + .kickflow-panel__group { margin-top: 0; }
     .kickflow-panel__settings-title {
-      display: flex; align-items: center; gap: 7px; margin: 5px 2px 6px;
-      color: #9298a1; font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+      display: flex; align-items: center; margin: 0 0 8px; color: oklch(0.78 0.01 150);
+      font-size: 12px; font-weight: 700; letter-spacing: .01em;
     }
-    .kickflow-panel__settings-title::after { content: ''; height: 1px; flex: 1; background: rgba(255,255,255,0.08); }
+    .kickflow-panel__stats {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; margin: 0;
+      border-top: 1px solid oklch(0.30 0.01 150);
+    }
+    .kickflow-panel__stat {
+      min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      min-height: 39px; border-bottom: 1px solid oklch(0.27 0.01 150);
+    }
+    .kickflow-panel__stat dt { color: oklch(0.66 0.01 150); font-size: 11px; }
+    .kickflow-panel__stat dd {
+      min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0; overflow: hidden;
+      color: oklch(0.91 0.007 150); font-size: 12px; font-weight: 650;
+      font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis;
+    }
+    .kickflow-panel__stat dd.kickflow-panel__stat-value--missing {
+      color: oklch(0.58 0.01 150); font-weight: 500;
+    }
+    .kickflow-panel__live-dot {
+      display: inline-block; width: 7px; height: 7px; flex: none; border-radius: 50%; background: oklch(0.45 0.01 150);
+    }
+    .kickflow-panel__live-dot--connected { background: oklch(0.86 0.24 145); }
     .kickflow-panel__settings-row {
       display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer;
     }
-    .kickflow-panel__settings-row--mode { min-height: 28px; font-weight: 650; }
-    .kickflow-panel__settings-row--toggle {
-      min-height: 32px; padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.055);
-      color: #dfe2e4;
+    .kickflow-panel__settings-row--mode {
+      min-height: 58px; padding: 10px 0; border-top: 1px solid oklch(0.30 0.01 150);
+      border-bottom: 1px solid oklch(0.27 0.01 150);
     }
-    .kickflow-panel__settings-row--toggle:hover { background: rgba(255,255,255,0.025); }
+    .kickflow-panel__settings-row--toggle {
+      min-height: 59px; padding: 10px 0; border-bottom: 1px solid oklch(0.27 0.01 150);
+      border-radius: 7px;
+    }
+    .kickflow-panel__settings-row--toggle:first-child { border-top: 1px solid oklch(0.30 0.01 150); }
+    .kickflow-panel__settings-row--toggle:hover { background: oklch(0.20 0.01 150); }
+    .kickflow-panel__settings-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-right: 12px; }
+    .kickflow-panel__settings-label { color: oklch(0.92 0.007 150); font-size: 14px; font-weight: 500; }
+    .kickflow-panel__settings-description {
+      overflow: hidden; color: oklch(0.66 0.01 150); font-size: 12px; line-height: 1.35;
+      white-space: nowrap; text-overflow: ellipsis;
+    }
     .kickflow-panel__settings select {
-      min-width: 104px; height: 27px; padding: 0 7px;
-      background: #1a1e23; color: #efeff1; border: 1px solid rgba(255,255,255,0.13);
-      border-radius: 6px; font-size: 10.5px; cursor: pointer;
+      min-width: 132px; height: 36px; padding: 0 10px;
+      background: oklch(0.22 0.012 150); color: oklch(0.93 0.007 150);
+      border: 1px solid oklch(0.34 0.01 150); border-radius: 8px;
+      font: 600 12px/1 'Inter','Segoe UI',system-ui,sans-serif; cursor: pointer;
     }
     .kickflow-panel__settings-toggle {
-      appearance: none; position: relative; flex: 0 0 auto; width: 34px; height: 19px; margin: 0;
-      border: 1px solid rgba(255,255,255,0.12); border-radius: 999px; background: #2b3036;
-      cursor: pointer; transition: background .16s ease, border-color .16s ease;
+      appearance: none; position: relative; flex: 0 0 auto; width: 38px; height: 22px; margin: 0;
+      border: 1px solid oklch(0.38 0.01 150); border-radius: 999px; background: oklch(0.28 0.012 150);
+      cursor: pointer; transition: background-color 160ms ease, border-color 160ms ease;
     }
     .kickflow-panel__settings-toggle::after {
-      content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
-      background: #a7adb4; box-shadow: 0 1px 2px rgba(0,0,0,.45); transition: transform .16s ease, background .16s ease;
+      content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%;
+      background: oklch(0.72 0.01 150); box-shadow: 0 1px 2px oklch(0.08 0.008 150 / .42);
+      transition: transform 160ms ease, background-color 160ms ease;
     }
-    .kickflow-panel__settings-toggle:checked { border-color: #53fc18; background: #53fc18; }
-    .kickflow-panel__settings-toggle:checked::after { background: #071006; transform: translateX(15px); }
+    .kickflow-panel__settings-toggle:checked { border-color: oklch(0.86 0.24 145); background: oklch(0.86 0.24 145); }
+    .kickflow-panel__settings-toggle:checked::after { background: oklch(0.18 0.012 150); transform: translateX(16px); }
     .kickflow-panel__settings-toggle:focus-visible,
-    .kickflow-panel__settings select:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
+    .kickflow-panel__settings select:focus-visible,
+    .kickflow-panel__nav-item:focus-visible,
+    .kickflow-panel__btn:focus-visible { outline: 2px solid oklch(0.86 0.24 145); outline-offset: 2px; }
     .kickflow-panel__settings-hint {
-      margin: 9px 2px 1px; color: #747b84; font-size: 9.5px; text-align: center;
+      margin: 15px 0 0; color: oklch(0.58 0.01 150); font-size: 11px; text-align: right;
     }
     .kickflow-panel__hotkeys {
-      flex: none; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
-      background: #13171b;
+      border-top: 1px solid oklch(0.30 0.01 150);
     }
     .kickflow-panel__hotkey-row {
-      display: grid; grid-template-columns: 34px minmax(0,1fr) auto auto;
-      align-items: center; gap: 7px; min-height: 38px; padding: 4px 7px;
-      border-bottom: 1px solid rgba(255,255,255,0.055);
+      display: grid; grid-template-columns: minmax(0,1fr) auto auto 38px;
+      align-items: center; gap: 10px; min-height: 60px;
+      border-bottom: 1px solid oklch(0.27 0.01 150);
     }
-    .kickflow-panel__hotkey-row:last-child { border-bottom: 0; }
-    .kickflow-panel__hotkey-label { overflow: hidden; color: #dfe2e4; white-space: nowrap; text-overflow: ellipsis; }
-    .kickflow-panel__hotkey-enabled { transform: scale(.88); transform-origin: left center; }
+    .kickflow-panel__hotkey-label {
+      overflow: hidden; color: oklch(0.92 0.007 150); font-size: 14px; font-weight: 500;
+      white-space: nowrap; text-overflow: ellipsis;
+    }
     .kickflow-panel__hotkey-chip {
-      min-width: 30px; padding: 3px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
-      background: #090b0d; color: #f4f5f5; font: 700 10px/1.2 'Inter','Segoe UI',system-ui,sans-serif;
-      text-align: center; box-shadow: inset 0 -1px 0 rgba(255,255,255,.06);
+      min-width: 42px; padding: 6px 9px; border: 1px solid oklch(0.86 0.24 145 / .32); border-radius: 7px;
+      background: oklch(0.86 0.24 145 / .08); color: oklch(0.86 0.24 145);
+      font: 700 11px/1.2 ui-monospace,'SFMono-Regular',Consolas,monospace; text-align: center;
+    }
+    .kickflow-panel__hotkey-chip--capturing {
+      min-width: 94px; animation: kickflow-hotkey-capture 1.1s ease-in-out infinite;
     }
     .kickflow-panel__hotkey-change,
     .kickflow-panel__hotkey-reset {
-      appearance: none; border: 1px solid rgba(255,255,255,.12); border-radius: 6px;
-      background: #1a1e23; color: #cfd3d7; cursor: pointer; font: 650 9.5px/1 'Inter','Segoe UI',system-ui,sans-serif;
+      appearance: none; border: 1px solid oklch(0.34 0.01 150); border-radius: 7px;
+      background: transparent; color: oklch(0.72 0.01 150); cursor: pointer;
+      font: 600 11px/1 'Inter','Segoe UI',system-ui,sans-serif;
+      transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
     }
-    .kickflow-panel__hotkey-change { min-width: 54px; height: 25px; padding: 0 7px; }
+    .kickflow-panel__hotkey-change { min-width: 68px; height: 31px; padding: 0 10px; }
     .kickflow-panel__hotkey-change:hover,
-    .kickflow-panel__hotkey-reset:hover { border-color: rgba(83,252,24,.45); color: #fff; }
-    .kickflow-panel__hotkey-change--capturing { border-color: #53fc18; color: #53fc18; }
-    .kickflow-panel__hotkey-footer { display: flex; align-items: center; gap: 8px; min-height: 31px; margin-top: 5px; }
-    .kickflow-panel__hotkey-status { min-width: 0; flex: 1; color: #9298a1; font-size: 9px; line-height: 1.25; }
-    .kickflow-panel__hotkey-reset { flex: none; height: 24px; padding: 0 8px; }
+    .kickflow-panel__hotkey-reset:hover { background: oklch(0.22 0.01 150); color: oklch(0.92 0.007 150); }
+    .kickflow-panel__hotkey-change--capturing { border-color: oklch(0.86 0.24 145 / .55); color: oklch(0.86 0.24 145); }
+    .kickflow-panel__hotkey-footer { display: flex; align-items: center; gap: 12px; min-height: 42px; margin-top: 10px; }
+    .kickflow-panel__hotkey-status { min-width: 0; flex: 1; color: oklch(0.66 0.01 150); font-size: 11px; line-height: 1.35; }
+    .kickflow-panel__hotkey-reset { flex: none; height: 32px; padding: 0 11px; }
     .kickflow-panel__hotkey-change:focus-visible,
-    .kickflow-panel__hotkey-reset:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
+    .kickflow-panel__hotkey-reset:focus-visible { outline: 2px solid oklch(0.86 0.24 145); outline-offset: 2px; }
+    .kickflow-panel__group--removed { padding-bottom: 4px; }
+    .kickflow-panel__body {
+      max-height: 152px; overflow: auto; border-top: 1px solid oklch(0.30 0.01 150);
+      border-bottom: 1px solid oklch(0.27 0.01 150); padding: 7px 0;
+      scrollbar-color: oklch(0.34 0.01 150) transparent; scrollbar-width: thin;
+    }
+    .kickflow-panel .kickflow-ghost-row {
+      padding: 5px 2px; color: oklch(0.84 0.009 150); opacity: 1; font-size: 12px;
+    }
+    .kickflow-panel .kickflow-ghost-row__time { color: oklch(0.66 0.01 150); }
+    .kickflow-panel .kickflow-status-label {
+      background: oklch(0.25 0.012 150); color: oklch(0.80 0.01 150);
+    }
+    .kickflow-panel .kickflow-mod-label { color: oklch(0.66 0.01 150); opacity: 1; }
+    .kickflow-panel .kickflow-ghost-empty { color: oklch(0.60 0.01 150); padding: 18px 8px; font-size: 11px; }
+    .kickflow-panel__about-mark {
+      margin-top: 28px; color: oklch(0.95 0.006 150); font-size: 28px; font-weight: 800; letter-spacing: -.045em;
+    }
+    .kickflow-panel__about-copy {
+      max-width: 430px; margin: 10px 0 30px; color: oklch(0.70 0.01 150); font-size: 13px; line-height: 1.6;
+    }
+    .kickflow-panel__about-facts { max-width: 430px; margin: 0; border-top: 1px solid oklch(0.30 0.01 150); }
+    .kickflow-panel__about-facts > div {
+      display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 44px;
+      border-bottom: 1px solid oklch(0.27 0.01 150);
+    }
+    .kickflow-panel__about-facts dt { color: oklch(0.66 0.01 150); font-size: 12px; }
+    .kickflow-panel__about-facts dd { margin: 0; color: oklch(0.90 0.007 150); font-size: 12px; font-weight: 600; }
+    @media (max-width: 640px) {
+      .kickflow-panel { padding: 12px; }
+      .kickflow-panel__shell {
+        width: min(94vw, 600px); height: 82vh; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr);
+      }
+      .kickflow-panel__rail {
+        padding: 14px 16px 12px; border-right: 0; border-bottom: 1px solid oklch(0.30 0.01 150);
+      }
+      .kickflow-panel__wordmark { padding: 0 4px; font-size: 16px; }
+      .kickflow-panel__rail-caption, .kickflow-panel__version { display: none; }
+      .kickflow-panel__nav {
+        flex-direction: row; gap: 6px; margin-top: 11px; overflow-x: auto; overscroll-behavior-inline: contain;
+        scrollbar-width: none;
+      }
+      .kickflow-panel__nav::-webkit-scrollbar { display: none; }
+      .kickflow-panel__nav-item { width: auto; min-height: 32px; flex: 0 0 auto; padding: 0 12px; border-radius: 999px; white-space: nowrap; }
+      .kickflow-panel__header { min-height: 56px; padding: 0 18px; }
+      .kickflow-panel__settings { padding: 0 18px 24px; }
+      .kickflow-panel__section { padding-top: 18px; }
+      .kickflow-panel__section-intro { margin-bottom: 22px; }
+      .kickflow-panel__hotkey-row { gap: 8px; }
+      .kickflow-panel__settings-description { max-width: 300px; }
+    }
+    @media (max-width: 430px) {
+      .kickflow-panel__stats { grid-template-columns: 1fr; }
+      .kickflow-panel__settings-description { max-width: 205px; }
+      .kickflow-panel__hotkey-chip { min-width: 36px; padding-inline: 7px; }
+      .kickflow-panel__hotkey-chip--capturing { min-width: 82px; }
+      .kickflow-panel__hotkey-change { min-width: 62px; padding-inline: 7px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .kickflow-panel__shell, .kickflow-panel__hotkey-chip--capturing { animation: none; }
+    }
 
     /* --- Footer toggle button: injected into Kick's own chat footer, next to its send/gear
        cluster (see footer-toggle.ts). Sized to match Kick's neighboring icon buttons. --- */
@@ -868,7 +1007,7 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     },
   });
   augmenter = new NativeChatAugmenter(lifecycle, store);
-  const panel = new RemovedMessagesPanel(lifecycle, store);
+  const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
@@ -936,7 +1075,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   const store = new ChatIntegrityStore({
     onPreservedEvicted: (message: ChatMessage) => reconcileOwnPreservedEviction(message, store, registry),
   });
-  const panel = new RemovedMessagesPanel(lifecycle, store);
+  const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
 
@@ -1295,22 +1434,30 @@ export function countUniqueStatusMessages(selector: string): number {
   return ids.size + anonymous;
 }
 
+/** Single live counter snapshot consumed by both settings surfaces. Keeping this provider
+ * read-only and on demand avoids a second counter definition drifting from the popup bridge. */
+export function getLiveStatusSnapshot(): KickFlowStatusSnapshot {
+  const ownList = document.getElementById(OWN_LIST_ID);
+  return {
+    ...getStatus(),
+    messageCount: ownList
+      ? ownList.querySelectorAll('.kickflow-message').length
+      : document.querySelectorAll('#chatroom-messages [data-index]').length,
+    preservedCount: countUniqueStatusMessages('.kickflow-preserved'),
+    bannedCount: countUniqueStatusMessages('.kickflow-banned'),
+    deletedCount: countUniqueStatusMessages('.kickflow-deleted'),
+    ...getActiveNativeChatGhostStats(),
+  };
+}
+
 /** Popup ↔ content-script bridge: report status + apply flag toggles. activeTab grants the
  * popup access on open. Flags persist to chrome.storage.local so a toggle survives a reload. */
 function installStatusBridge(): void {
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'kickflow:getStatus') {
-      const ownList = document.getElementById(OWN_LIST_ID);
       sendResponse({
-        ...getStatus(),
-        messageCount: ownList
-          ? ownList.querySelectorAll('.kickflow-message').length
-          : document.querySelectorAll('#chatroom-messages [data-index]').length,
-        preservedCount: countUniqueStatusMessages('.kickflow-preserved'),
-        bannedCount: countUniqueStatusMessages('.kickflow-banned'),
-        deletedCount: countUniqueStatusMessages('.kickflow-deleted'),
-        ...getActiveNativeChatGhostStats(),
+        ...getLiveStatusSnapshot(),
         flags: getPopupFeatureFlags(),
         hotkeys: getHotkeyBindings(),
       });

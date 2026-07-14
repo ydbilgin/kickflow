@@ -14,6 +14,21 @@ export interface KickFlowStatus {
   lastBanAt: number | null;
 }
 
+/** Read-only, on-demand snapshot shared by the popup bridge and the in-page dashboard. Counts
+ * are derived from the currently rendered chat DOM so both surfaces report the same tab state. */
+export interface KickFlowStatusSnapshot extends KickFlowStatus {
+  messageCount: number;
+  preservedCount: number;
+  bannedCount: number;
+  deletedCount: number;
+  ghostAnchored: number;
+  ghostPendingNoAnchor: number;
+  ghostStrip: number;
+  ghostEvicted: number;
+}
+
+export type StatusSnapshotProvider = () => KickFlowStatusSnapshot;
+
 const status: KickFlowStatus = {
   slug: null,
   chatroomId: null,

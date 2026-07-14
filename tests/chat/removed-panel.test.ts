@@ -4,6 +4,29 @@ import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/mes
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { getHotkeyBindings, resetHotkeyBindings } from '../../src/content/player/hotkey-registry';
+import type { KickFlowStatusSnapshot, StatusSnapshotProvider } from '../../src/content/status';
+
+function statusSnapshot(overrides: Partial<KickFlowStatusSnapshot> = {}): KickFlowStatusSnapshot {
+  return {
+    slug: null,
+    chatroomId: null,
+    active: false,
+    reason: 'kanal sayfası değil',
+    pusherConnected: false,
+    lastBanAt: null,
+    messageCount: 0,
+    preservedCount: 0,
+    bannedCount: 0,
+    deletedCount: 0,
+    ghostAnchored: 0,
+    ghostPendingNoAnchor: 0,
+    ghostStrip: 0,
+    ghostEvicted: 0,
+    ...overrides,
+  };
+}
+
+const getTestStatusSnapshot: StatusSnapshotProvider = () => statusSnapshot();
 
 /** Finds a settings row's control by its label text — resilient to row reordering, unlike
  * indexing into querySelectorAll('input')/('select'). */
@@ -11,6 +34,49 @@ function settingsControl(section: HTMLElement, labelText: string): HTMLInputElem
   const labels = Array.from(section.querySelectorAll<HTMLLabelElement>('.kickflow-panel__settings label'));
   const label = labels.find((l) => l.querySelector('span')?.textContent === labelText);
   return label?.querySelector<HTMLInputElement | HTMLSelectElement>('input, select') ?? null;
+}
+
+type TestDashboardSection = 'general' | 'chat' | 'player' | 'hotkeys' | 'about';
+
+function openDashboardSection(
+  panel: RemovedMessagesPanel,
+  key: TestDashboardSection,
+): { modal: HTMLElement; pane: HTMLElement } {
+  panel.showSettings();
+  const modal = document.querySelector<HTMLElement>('.kickflow-panel');
+  expect(modal).not.toBeNull();
+  const navButton = modal!.querySelector<HTMLButtonElement>(`.kickflow-panel__nav-item[data-section="${key}"]`);
+  expect(navButton).not.toBeNull();
+  navButton!.click();
+  const pane = modal!.querySelector<HTMLElement>(`.kickflow-panel__section[data-section="${key}"]`);
+  expect(pane).not.toBeNull();
+  expect(pane!.hidden).toBe(false);
+  expect(navButton!.getAttribute('aria-current')).toBe('page');
+  return { modal: modal!, pane: pane! };
+}
+
+function requiredSettingsControl<T extends HTMLInputElement | HTMLSelectElement>(
+  pane: HTMLElement,
+  labelText: string,
+): T {
+  const control = settingsControl(pane, labelText);
+  expect(control).not.toBeNull();
+  return control as T;
+}
+
+function requiredStatValue(pane: HTMLElement, labelText: string): HTMLElement {
+  const row = Array.from(pane.querySelectorAll<HTMLElement>('.kickflow-panel__stat'))
+    .find((candidate) => candidate.querySelector('dt')?.textContent === labelText);
+  expect(row).not.toBeUndefined();
+  const value = row!.querySelector<HTMLElement>('dd');
+  expect(value).not.toBeNull();
+  return value!;
+}
+
+function requiredElement<T extends Element>(root: ParentNode, selector: string): T {
+  const element = root.querySelector<T>(selector);
+  expect(element).not.toBeNull();
+  return element!;
 }
 
 function message(id: string, userId: number, content = id): ChatMessage {
@@ -39,7 +105,7 @@ describe('RemovedMessagesPanel', () => {
   it('is hidden by default (section present but display:none) even though it already instantiates', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
 
     const section = document.querySelector<HTMLElement>('.kickflow-panel');
     expect(section).not.toBeNull();
@@ -51,7 +117,7 @@ describe('RemovedMessagesPanel', () => {
   it('toggle() opens it (visible) and toggling again closes it', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
 
     panel.toggle();
@@ -68,7 +134,7 @@ describe('RemovedMessagesPanel', () => {
   it('removedCount() reflects the store\'s preserved messages, independent of open state', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     expect(panel.removedCount()).toBe(0);
 
     store.addMessage(message('m1', 1, 'banned text'));
@@ -91,7 +157,7 @@ describe('RemovedMessagesPanel', () => {
     store.addMessage(message('m1', 1, 'banned text'));
     store.markUserBanned(1, { permanent: true, bannedBy: 'mod1' });
 
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.render();
     panel.toggle();
 
@@ -110,7 +176,7 @@ describe('RemovedMessagesPanel', () => {
     store.addMessage(message('m1', 1, 'banned text'));
     store.markUserBanned(1, { permanent: true, bannedBy: 'mod1' });
 
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.render();
     panel.toggle();
 
@@ -136,7 +202,7 @@ describe('RemovedMessagesPanel', () => {
     store.addMessage(message('m1', 1, 'deleted text'));
     store.markMessageDeleted('m1', { deletedBy: 'modname' });
 
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.render();
     panel.toggle();
 
@@ -152,7 +218,7 @@ describe('RemovedMessagesPanel', () => {
     store.addMessage(message('m1', 1, 'deleted text'));
     store.markMessageDeleted('m1', { aiModerated: false });
 
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.render();
     panel.toggle();
     expect(document.querySelector('.kickflow-mod-label')?.textContent).toBe('· mod');
@@ -167,7 +233,7 @@ describe('RemovedMessagesPanel', () => {
   it('shows the empty placeholder once opened with nothing preserved', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.toggle();
 
     const empty = document.querySelector<HTMLElement>('.kickflow-ghost-empty');
@@ -179,17 +245,21 @@ describe('RemovedMessagesPanel', () => {
   it('the × close button calls toggle() (closes)', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.toggle();
     expect(panel.isOpen()).toBe(true);
 
     const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
     const close = section.querySelector<HTMLButtonElement>('.kickflow-panel__close');
     expect(close).not.toBeNull();
-    close?.click();
+    close!.click();
 
     expect(panel.isOpen()).toBe(false);
     expect(section.style.display).toBe('none');
+    expect(document.activeElement).toBe(opener);
     lifecycle.dispose();
   });
 
@@ -199,7 +269,7 @@ describe('RemovedMessagesPanel', () => {
     store.addMessage(message('m1', 1));
     store.markUserBanned(1);
 
-    new RemovedMessagesPanel(lifecycle, store);
+    new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     expect(document.querySelector('.kickflow-panel')).not.toBeNull();
 
     lifecycle.dispose();
@@ -213,7 +283,7 @@ describe('RemovedMessagesPanel', () => {
     const item = message('self-heal', 7);
     store.addMessage(item);
     store.markMessageDeleted(item.id);
-    const panel = new RemovedMessagesPanel(lifecycle, store);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.toggle();
     expect(document.querySelector('.kickflow-ghost-row')?.textContent).toContain('self-heal');
 
@@ -224,71 +294,188 @@ describe('RemovedMessagesPanel', () => {
     lifecycle.dispose();
   });
 
-  describe('whole-header drag', () => {
-    it('a mousedown on the header background repositions it to explicit left/top (drag-anchor switch fires)', () => {
+  describe('dashboard structure and modal interaction', () => {
+    it('builds one labelled modal with all five category panes and switches sections in place', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
-      new RemovedMessagesPanel(lifecycle, store);
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      panel.showSettings();
 
       const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-      const header = section.querySelector<HTMLElement>('.kickflow-panel__header')!;
-      expect(section.style.left).toBe('');
+      const dialog = section.querySelector<HTMLElement>('[role="dialog"]')!;
+      const buttons = Array.from(section.querySelectorAll<HTMLButtonElement>('.kickflow-panel__nav-item'));
 
-      header.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+      expect(dialog.getAttribute('aria-modal')).toBe('true');
+      expect(dialog.getAttribute('aria-labelledby')).toBe('kickflow-dashboard-title');
+      expect(buttons.map((button) => button.textContent)).toEqual(['Genel', 'Sohbet', 'Oynatıcı', 'Kısayollar', 'Hakkında']);
+      expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
+      expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(false);
 
-      expect(section.style.right).toBe('auto');
-      expect(section.style.bottom).toBe('auto');
-      expect(section.style.left).not.toBe('');
-      expect(section.style.top).not.toBe('');
+      buttons.find((button) => button.dataset.section === 'hotkeys')?.click();
+
+      expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Kısayollar');
+      expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(true);
+      expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="hotkeys"]')?.hidden).toBe(false);
+      expect(buttons.find((button) => button.dataset.section === 'hotkeys')?.getAttribute('aria-current')).toBe('page');
       lifecycle.dispose();
     });
 
-    it('a mousedown landing on the ⚙/× buttons or a settings control does NOT trigger the drag-anchor switch', () => {
+    it('renders the exact shared live snapshot counters, including all three ghost values', () => {
+      const lifecycle = new Lifecycle();
+      const snapshot = statusSnapshot({
+        slug: 'snapshot-channel',
+        chatroomId: null,
+        active: true,
+        pusherConnected: true,
+        messageCount: 41,
+        preservedCount: 7,
+        bannedCount: 4,
+        deletedCount: 3,
+        ghostAnchored: 2,
+        ghostPendingNoAnchor: 5,
+        ghostEvicted: 9,
+      });
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), () => snapshot);
+      const general = openDashboardSection(panel, 'general').pane;
+
+      expect(requiredStatValue(general, 'Mesaj').textContent).toBe('41');
+      expect(requiredStatValue(general, 'Korunmuş').textContent).toBe('7');
+      expect(requiredStatValue(general, 'Ban').textContent).toBe('4');
+      expect(requiredStatValue(general, 'Silme').textContent).toBe('3');
+      expect(requiredStatValue(general, 'Ghost inline').textContent).toBe('2');
+      expect(requiredStatValue(general, 'Ghost bekleyen').textContent).toBe('5');
+      expect(requiredStatValue(general, 'Ghost evict').textContent).toBe('9');
+      const missingChatroom = requiredStatValue(general, 'Chatroom ID');
+      expect(missingChatroom.textContent).toBe('—');
+      expect(missingChatroom.classList.contains('kickflow-panel__stat-value--missing')).toBe(true);
+      lifecycle.dispose();
+    });
+
+    it('gives every hotkey change button an action-specific accessible name', () => {
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+      const hotkeys = openDashboardSection(panel, 'hotkeys').pane;
+      const names = Array.from(
+        hotkeys.querySelectorAll<HTMLButtonElement>('.kickflow-panel__hotkey-change'),
+        (button) => button.getAttribute('aria-label'),
+      );
+
+      expect(names).toEqual([
+        '10 sn geri kısayolunu değiştir',
+        '10 sn ileri kısayolunu değiştir',
+        'Ekran görüntüsü kısayolunu değiştir',
+        'Canlıya dön kısayolunu değiştir',
+      ]);
+      expect(new Set(names).size).toBe(4);
+      lifecycle.dispose();
+    });
+
+    it('closes on Escape and returns focus to the element that opened it', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
-      new RemovedMessagesPanel(lifecycle, store);
+      const opener = document.createElement('button');
+      document.body.append(opener);
+      opener.focus();
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      panel.showSettings();
 
+      expect(document.activeElement?.classList.contains('kickflow-panel__close')).toBe(true);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+      expect(panel.isOpen()).toBe(false);
+      expect(document.activeElement).toBe(opener);
+      lifecycle.dispose();
+    });
+
+    it('closes on a backdrop click but not on a click inside the dialog', () => {
+      const lifecycle = new Lifecycle();
+      const store = new ChatIntegrityStore();
+      const opener = document.createElement('button');
+      document.body.append(opener);
+      opener.focus();
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      panel.showSettings();
       const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-      const gear = section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')!;
+      const dialog = section.querySelector<HTMLElement>('.kickflow-panel__shell')!;
 
-      gear.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+      dialog.click();
+      expect(panel.isOpen()).toBe(true);
 
-      expect(section.style.left).toBe('');
-      expect(section.style.right).toBe('');
+      section.click();
+      expect(panel.isOpen()).toBe(false);
+      expect(document.activeElement).toBe(opener);
+
+      lifecycle.dispose();
+    });
+
+    it.each(['Escape', 'backdrop'] as const)(
+      'returns focus to a self-healed launcher replacement after %s close',
+      (closePath) => {
+        const lifecycle = new Lifecycle();
+        const opener = document.createElement('button');
+        opener.id = 'kickflow-footer-toggle';
+        document.body.append(opener);
+        opener.focus();
+        const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+        panel.showSettings();
+
+        const replacement = document.createElement('button');
+        replacement.id = opener.id;
+        opener.replaceWith(replacement);
+        if (closePath === 'Escape') {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        } else {
+          const backdrop = document.querySelector<HTMLElement>('.kickflow-panel');
+          expect(backdrop).not.toBeNull();
+          backdrop!.click();
+        }
+
+        expect(panel.isOpen()).toBe(false);
+        expect(document.activeElement).toBe(replacement);
+        lifecycle.dispose();
+      },
+    );
+
+    it('locks background scrolling and restores exact prior overflow on close and dispose', () => {
+      document.documentElement.style.overflow = 'clip';
+      document.body.style.overflow = 'scroll';
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+
+      panel.showSettings();
+      expect(document.documentElement.style.overflow).toBe('hidden');
+      expect(document.body.style.overflow).toBe('hidden');
+      panel.toggle();
+      expect(document.documentElement.style.overflow).toBe('clip');
+      expect(document.body.style.overflow).toBe('scroll');
+
+      panel.showSettings();
+      lifecycle.dispose();
+      expect(document.documentElement.style.overflow).toBe('clip');
+      expect(document.body.style.overflow).toBe('scroll');
+      document.documentElement.style.overflow = '';
+      document.body.style.overflow = '';
+    });
+
+    it('traps Tab focus inside the open dashboard', () => {
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+      panel.showSettings();
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      const first = section.querySelector<HTMLButtonElement>('.kickflow-panel__nav-item')!;
+      const last = settingsControl(section, 'Chat modu') as HTMLSelectElement;
+
+      last.focus();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+      expect(document.activeElement).toBe(first);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+      expect(document.activeElement).toBe(last);
       lifecycle.dispose();
     });
   });
 
-  describe('quick-settings gear', () => {
-    it('header shows title · count · ⚙ · ×, and the gear reveals/hides the settings section', () => {
-      const lifecycle = new Lifecycle();
-      const store = new ChatIntegrityStore();
-      store.addMessage(message('m1', 1));
-      store.markUserBanned(1);
-
-      new RemovedMessagesPanel(lifecycle, store);
-
-      const section = document.querySelector<HTMLElement>('.kickflow-panel');
-      const header = section?.querySelector('.kickflow-panel__header');
-      const title = header?.querySelector('.kickflow-panel__title');
-      const gear = header?.querySelector<HTMLButtonElement>('.kickflow-panel__gear');
-      const close = header?.querySelector<HTMLButtonElement>('.kickflow-panel__close');
-      expect(title?.textContent).toBe('Kaldırılanlar');
-      expect(gear).not.toBeNull();
-      expect(close).not.toBeNull();
-
-      const settings = section?.querySelector<HTMLElement>('.kickflow-panel__settings');
-      expect(settings).not.toBeNull();
-      expect(settings?.style.display).toBe('none'); // starts hidden
-
-      gear?.click();
-      expect(settings?.style.display).toBe('');
-
-      gear?.click();
-      expect(settings?.style.display).toBe('none');
-
-      lifecycle.dispose();
-    });
+  describe('dashboard settings controls', () => {
 
     it('settings controls reflect the current featureFlags once opened', () => {
       const originalChatMode = featureFlags.chatMode;
@@ -316,19 +503,19 @@ describe('RemovedMessagesPanel', () => {
         store.addMessage(message('m1', 1));
         store.markUserBanned(1);
 
-        new RemovedMessagesPanel(lifecycle, store);
-        const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-        section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
-
-        const modeSelect = settingsControl(section, 'Chat modu') as HTMLSelectElement;
-        const deletedCheckbox = settingsControl(section, 'Silinenleri göster') as HTMLInputElement;
-        const banCheckbox = settingsControl(section, 'Ban satır-içi') as HTMLInputElement;
-        const subscriptionsCheckbox = settingsControl(section, 'Abonelikler') as HTMLInputElement;
-        const giftedSubsCheckbox = settingsControl(section, 'Hediye abonelikler') as HTMLInputElement;
-        const hostRaidCheckbox = settingsControl(section, 'Host / Raid') as HTMLInputElement;
-        const pinnedMessageCheckbox = settingsControl(section, 'Sabitlenmiş mesaj') as HTMLInputElement;
-        const modeChangesCheckbox = settingsControl(section, 'Mod değişiklikleri') as HTMLInputElement;
-        const autoTheaterCheckbox = settingsControl(section, 'Otomatik tiyatro modu') as HTMLInputElement;
+        const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+        const general = openDashboardSection(panel, 'general').pane;
+        const modeSelect = requiredSettingsControl<HTMLSelectElement>(general, 'Chat modu');
+        const chat = openDashboardSection(panel, 'chat').pane;
+        const deletedCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Silinenleri göster');
+        const banCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Ban satır-içi');
+        const subscriptionsCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Abonelikler');
+        const giftedSubsCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Hediye abonelikler');
+        const hostRaidCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Host / Raid');
+        const pinnedMessageCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Sabitlenmiş mesaj');
+        const modeChangesCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Mod değişiklikleri');
+        const player = openDashboardSection(panel, 'player').pane;
+        const autoTheaterCheckbox = requiredSettingsControl<HTMLInputElement>(player, 'Otomatik tiyatro modu');
         expect(modeSelect.value).toBe('own');
         expect(deletedCheckbox.checked).toBe(false);
         expect(banCheckbox.checked).toBe(false);
@@ -363,11 +550,9 @@ describe('RemovedMessagesPanel', () => {
         store.addMessage(message('m1', 1));
         store.markUserBanned(1);
 
-        const panel = new RemovedMessagesPanel(lifecycle, store);
-        const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-        section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
-
-        const subscriptionsCheckbox = settingsControl(section, 'Abonelikler') as HTMLInputElement;
+        const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+        const chat = openDashboardSection(panel, 'chat').pane;
+        const subscriptionsCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Abonelikler');
         expect(subscriptionsCheckbox.checked).toBe(true);
 
         featureFlags.showSubscriptions = false; // simulate a change made through the popup path
@@ -387,10 +572,9 @@ describe('RemovedMessagesPanel', () => {
       store.addMessage(message('m1', 1));
       store.markUserBanned(1);
 
-      new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
-      const checkbox = settingsControl(section, 'Silinenleri göster') as HTMLInputElement;
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      const chat = openDashboardSection(panel, 'chat').pane;
+      const checkbox = requiredSettingsControl<HTMLInputElement>(chat, 'Silinenleri göster');
 
       let received: { key: string; value: unknown } | null = null;
       const listener = (event: Event) => {
@@ -412,10 +596,9 @@ describe('RemovedMessagesPanel', () => {
       store.addMessage(message('m1', 1));
       store.markUserBanned(1);
 
-      new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
-      const checkbox = settingsControl(section, 'Ban satır-içi') as HTMLInputElement;
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      const chat = openDashboardSection(panel, 'chat').pane;
+      const checkbox = requiredSettingsControl<HTMLInputElement>(chat, 'Ban satır-içi');
 
       let received: { key: string; value: unknown } | null = null;
       const listener = (event: Event) => {
@@ -446,10 +629,12 @@ describe('RemovedMessagesPanel', () => {
     ] as const)('toggling "%s" dispatches kickflow:setFlag with {key: %s, value}', (label, key) => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
-      new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
-      const checkbox = settingsControl(section, label) as HTMLInputElement;
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      const playerKeys: readonly string[] = [
+        'autoTheater', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls',
+      ];
+      const pane = openDashboardSection(panel, playerKeys.includes(key) ? 'player' : 'chat').pane;
+      const checkbox = requiredSettingsControl<HTMLInputElement>(pane, label);
 
       let received: { key: string; value: unknown } | null = null;
       const listener = (event: Event) => {
@@ -471,10 +656,9 @@ describe('RemovedMessagesPanel', () => {
       store.addMessage(message('m1', 1));
       store.markUserBanned(1);
 
-      new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
-      const select = settingsControl(section, 'Chat modu') as HTMLSelectElement;
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      const general = openDashboardSection(panel, 'general').pane;
+      const select = requiredSettingsControl<HTMLSelectElement>(general, 'Chat modu');
 
       let received: { key: string; value: unknown } | null = null;
       const listener = (event: Event) => {
@@ -496,17 +680,15 @@ describe('RemovedMessagesPanel', () => {
       store.addMessage(message('m1', 1, 'banned text'));
       store.markUserBanned(1);
 
-      const panel = new RemovedMessagesPanel(lifecycle, store);
-      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
-      section.querySelector<HTMLButtonElement>('.kickflow-panel__gear')?.click();
-      expect(section.querySelector('.kickflow-panel__settings')).not.toBeNull();
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      const { modal, pane } = openDashboardSection(panel, 'general');
+      expect(pane.querySelector('.kickflow-panel__settings-row--mode')).not.toBeNull();
 
       // Past the 10-min preservation TTL, measured from preservation rather than send time.
       store.sweepExpiredPreserved((store.getMessageById('m1')?.preservedAt ?? Date.now()) + 11 * 60 * 1000);
       panel.render();
 
-      const still = document.querySelector<HTMLElement>('.kickflow-panel');
-      expect(still).not.toBeNull();
+      expect(modal.isConnected).toBe(true);
       expect(panel.removedCount()).toBe(0);
       lifecycle.dispose();
       expect(document.querySelector('.kickflow-panel')).toBeNull();
@@ -514,7 +696,7 @@ describe('RemovedMessagesPanel', () => {
 
     it('navbar-style showSettings opens the existing panel directly on settings', () => {
       const lifecycle = new Lifecycle();
-      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore());
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
 
       panel.showSettings();
 
@@ -528,11 +710,17 @@ describe('RemovedMessagesPanel', () => {
     it('captures a rebound key live, prevents collisions, and warns for Kick-native keys', () => {
       resetHotkeyBindings();
       const lifecycle = new Lifecycle();
-      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore());
-      panel.showSettings();
-      const screenshotChange = document.querySelector<HTMLButtonElement>('.kickflow-panel__hotkey-row:nth-child(3) .kickflow-panel__hotkey-change')!;
-      const screenshotChip = document.querySelector<HTMLElement>('.kickflow-panel__hotkey-row:nth-child(3) .kickflow-panel__hotkey-chip')!;
-      const status = document.querySelector<HTMLElement>('.kickflow-panel__hotkey-status')!;
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+      const hotkeys = openDashboardSection(panel, 'hotkeys').pane;
+      const screenshotChange = requiredElement<HTMLButtonElement>(
+        hotkeys,
+        '.kickflow-panel__hotkey-row:nth-child(3) .kickflow-panel__hotkey-change',
+      );
+      const screenshotChip = requiredElement<HTMLElement>(
+        hotkeys,
+        '.kickflow-panel__hotkey-row:nth-child(3) .kickflow-panel__hotkey-chip',
+      );
+      const status = requiredElement<HTMLElement>(hotkeys, '.kickflow-panel__hotkey-status');
 
       screenshotChange.click();
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));

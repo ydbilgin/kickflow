@@ -87,6 +87,30 @@ afterEach(() => {
 });
 
 describe('popup event display toggles', () => {
+  it('gives every hotkey change button an action-specific accessible name', () => {
+    const names = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.hotkey-change'),
+      (button) => button.getAttribute('aria-label'),
+    );
+    expect(names).toEqual([
+      '10 sn geri kısayolunu değiştir',
+      '10 sn ileri kısayolunu değiştir',
+      'Ekran görüntüsü kısayolunu değiştir',
+      'Canlıya dön kısayolunu değiştir',
+    ]);
+    expect(new Set(names).size).toBe(4);
+  });
+
+  it('renders missing status values with the muted em-dash placeholder', async () => {
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+
+    const lastBan = document.getElementById('lastBan');
+    expect(lastBan?.textContent).toBe('—');
+    expect(lastBan?.classList.contains('missing')).toBe(true);
+    expect(document.getElementById('slug')?.classList.contains('missing')).toBe(false);
+  });
+
   it('hydrates all event popup checkboxes from the shared status payload', async () => {
     await import('../../src/popup/popup');
     await flushAsyncWork();

@@ -1,6 +1,6 @@
 // KickFlow popup: reports live status of the content script on the active Kick tab and exposes
 // owner-facing flag toggles. Talks to the content script over chrome.tabs.sendMessage (activeTab grants
-// access on popup open). No inline script (MV3 CSP) — this is built to dist/popup.js.
+// access on popup open). No inline script (MV3 CSP); this is built to dist/popup.js.
 
 import {
   HOTKEY_ACTIONS,
@@ -12,22 +12,9 @@ import {
   type HotkeyBindings,
   type HotkeyUpdateResult,
 } from '../content/player/hotkey-registry';
+import type { KickFlowStatusSnapshot } from '../content/status';
 
-interface StatusResponse {
-  slug: string | null;
-  chatroomId: number | null;
-  active: boolean;
-  reason: string;
-  pusherConnected: boolean;
-  lastBanAt: number | null;
-  messageCount: number;
-  preservedCount: number;
-  bannedCount: number;
-  deletedCount: number;
-  ghostAnchored: number;
-  ghostPendingNoAnchor: number;
-  ghostStrip: number;
-  ghostEvicted: number;
+interface StatusResponse extends KickFlowStatusSnapshot {
   flags: {
     chatMode: 'native' | 'own';
     showDeletedMessages: boolean;
@@ -63,12 +50,19 @@ function setDot(state: 'active' | 'native' | 'off'): void {
   dot.className = 'dot dot--' + state;
 }
 
-function fmtAgo(ms: number | null): string {
-  if (!ms) return '—';
+function fmtAgo(ms: number | null): string | null {
+  if (!ms) return null;
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
   if (s < 60) return s + ' sn önce';
   const m = Math.round(s / 60);
   return m < 60 ? m + ' dk önce' : Math.round(m / 60) + ' sa önce';
+}
+
+function setStatValue(id: string, value: string | number | null): void {
+  const element = $(id);
+  const missing = value === null || value === '';
+  element.textContent = missing ? '—' : String(value);
+  element.classList.toggle('missing', missing);
 }
 
 function setHotkeyStatus(message: string): void {
@@ -105,19 +99,19 @@ function render(res: StatusResponse | null, error?: string): void {
   $('stats').style.display = '';
   $('toggles').style.display = '';
   setDot(res.active ? 'active' : (res.slug ? 'native' : 'off'));
-  $('reason').textContent = res.active ? `✅ KickFlow aktif — ${res.flags.chatMode} chat` : ('○ ' + res.reason);
+  $('reason').textContent = res.active ? `KickFlow aktif · ${res.flags.chatMode} chat` : res.reason.split('\u2014').join('·');
 
-  $('slug').textContent = res.slug || '—';
-  $('chatroomId').textContent = res.chatroomId != null ? String(res.chatroomId) : '—';
-  $('pusher').textContent = res.pusherConnected ? 'bağlı' : 'değil';
-  $('messages').textContent = String(res.messageCount);
-  $('preserved').textContent = String(res.preservedCount);
-  $('banned').textContent = String(res.bannedCount);
-  $('deleted').textContent = String(res.deletedCount);
-  $('ghostAnchored').textContent = String(res.ghostAnchored);
-  $('ghostPending').textContent = String(res.ghostPendingNoAnchor);
-  $('ghostEvicted').textContent = String(res.ghostEvicted);
-  $('lastBan').textContent = fmtAgo(res.lastBanAt);
+  setStatValue('slug', res.slug);
+  setStatValue('chatroomId', res.chatroomId);
+  setStatValue('pusher', res.pusherConnected ? 'bağlı' : 'değil');
+  setStatValue('messages', res.messageCount);
+  setStatValue('preserved', res.preservedCount);
+  setStatValue('banned', res.bannedCount);
+  setStatValue('deleted', res.deletedCount);
+  setStatValue('ghostAnchored', res.ghostAnchored);
+  setStatValue('ghostPending', res.ghostPendingNoAnchor);
+  setStatValue('ghostEvicted', res.ghostEvicted);
+  setStatValue('lastBan', fmtAgo(res.lastBanAt));
 
   (($('t-deleted') as HTMLInputElement)).checked = res.flags.showDeletedMessages;
   (($('t-bans-inline') as HTMLInputElement)).checked = res.flags.preserveBansInline;
@@ -164,7 +158,7 @@ async function setFlag(
   try {
     await chrome.tabs.sendMessage(id, { type: 'kickflow:setFlag', key, value });
   } catch {
-    // tab not a Kick tab — ignore
+    // Tab is not a Kick tab; ignore it.
   }
   void refresh();
 }
@@ -250,7 +244,7 @@ document.addEventListener('keydown', (event) => {
     }
     if (result.bindings) lastHotkeys = result.bindings;
     finishHotkeyCapture(
-      result.nativeConflict ? 'Kaydedildi — Kick’in kendi kısayoluyla çakışabilir.' : 'Kısayol kaydedildi.',
+      result.nativeConflict ? 'Kaydedildi: Kick’in kendi kısayoluyla çakışabilir.' : 'Kısayol kaydedildi.',
     );
   });
 }, true);

@@ -5,6 +5,24 @@ import { NativeChatAugmenter } from '../../src/content/chat/native-augment';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 import { Lifecycle as RealLifecycle } from '../../src/content/shared/lifecycle';
 import type { Lifecycle } from '../../src/content/shared/lifecycle';
+import type { StatusSnapshotProvider } from '../../src/content/status';
+
+const getTestStatusSnapshot: StatusSnapshotProvider = () => ({
+  slug: null,
+  chatroomId: null,
+  active: false,
+  reason: 'kanal sayfası değil',
+  pusherConnected: false,
+  lastBanAt: null,
+  messageCount: 0,
+  preservedCount: 0,
+  bannedCount: 0,
+  deletedCount: 0,
+  ghostAnchored: 0,
+  ghostPendingNoAnchor: 0,
+  ghostStrip: 0,
+  ghostEvicted: 0,
+});
 
 class FakeLifecycle implements Pick<Lifecycle, 'add' | 'setInterval' | 'isDisposed'> {
   readonly disposers: Array<() => void> = [];
@@ -201,7 +219,7 @@ describe('NativeChatAugmenter ghost blocks', () => {
     store.markUserBanned(2, { permanent: true });
     store.markMessageDeleted('deleted1');
     const panelLifecycle = new RealLifecycle();
-    const panel = new RemovedMessagesPanel(panelLifecycle, store);
+    const panel = new RemovedMessagesPanel(panelLifecycle, store, getTestStatusSnapshot);
     panel.render();
     const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
 

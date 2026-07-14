@@ -342,8 +342,9 @@ describe('bootstrap event display flags', () => {
     document.body.replaceChildren();
   });
 
-  it('deduplicates popup moderation counts across list, ghost, and panel copies', () => {
+  it('uses one deduplicated live snapshot for the popup bridge and dashboard provider', () => {
     document.body.innerHTML = `
+      <div id="chatroom-messages"><div data-index="1"></div><div data-index="2"></div></div>
       <div class="kickflow-preserved kickflow-banned" data-message-id="same"></div>
       <div class="kickflow-preserved kickflow-banned" data-kickflow-mid="same"></div>
       <div class="kickflow-preserved kickflow-banned" data-kickflow-ghost-mid="same"></div>
@@ -353,6 +354,30 @@ describe('bootstrap event display flags', () => {
     expect(bootstrap.countUniqueStatusMessages('.kickflow-preserved')).toBe(2);
     expect(bootstrap.countUniqueStatusMessages('.kickflow-banned')).toBe(1);
     expect(bootstrap.countUniqueStatusMessages('.kickflow-deleted')).toBe(1);
+    const snapshot = bootstrap.getLiveStatusSnapshot();
+    expect(snapshot).toMatchObject({
+      messageCount: 2,
+      preservedCount: 2,
+      bannedCount: 1,
+      deletedCount: 1,
+      ghostAnchored: 0,
+      ghostPendingNoAnchor: 0,
+      ghostEvicted: 0,
+    });
+
+    const listener = addMessageListener.mock.calls[0]?.[0] as (
+      message: { type: string },
+      sender: chrome.runtime.MessageSender,
+      sendResponse: (response: unknown) => void,
+    ) => void;
+    expect(listener).toBeTypeOf('function');
+    let bridgeResponse: unknown;
+    listener(
+      { type: 'kickflow:getStatus' },
+      {} as chrome.runtime.MessageSender,
+      (response) => { bridgeResponse = response; },
+    );
+    expect(bridgeResponse).toMatchObject(snapshot);
     document.body.replaceChildren();
   });
 
