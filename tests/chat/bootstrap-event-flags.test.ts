@@ -293,33 +293,43 @@ describe('bootstrap event display flags', () => {
     ]);
   });
 
-  it('applyFlagChange handles and persists all four event boolean keys', () => {
+  it('applyFlagChange handles and persists all event boolean keys, including reserved native polls', () => {
     storageSet.mockClear();
 
     bootstrap.applyFlagChange('showSubscriptions', false);
     bootstrap.applyFlagChange('showGiftedSubs', false);
+    bootstrap.applyFlagChange('showKicks', false);
+    bootstrap.applyFlagChange('showPolls', false);
     bootstrap.applyFlagChange('showHostRaid', false);
     bootstrap.applyFlagChange('showModeChanges', false);
 
     expect(featureFlags.showSubscriptions).toBe(false);
     expect(featureFlags.showGiftedSubs).toBe(false);
+    expect(featureFlags.showKicks).toBe(false);
+    expect(featureFlags.showPolls).toBe(false);
     expect(featureFlags.showHostRaid).toBe(false);
     expect(featureFlags.showModeChanges).toBe(false);
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showSubscriptions: false });
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showGiftedSubs: false });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showKicks: false });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showPolls: false });
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showHostRaid: false });
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showModeChanges: false });
   });
 
-  it('loads all four persisted boolean overrides', async () => {
+  it('loads all persisted event boolean overrides', async () => {
     storageGet.mockResolvedValue({
       kf_flag_showSubscriptions: false,
       kf_flag_showGiftedSubs: true,
+      kf_flag_showKicks: false,
+      kf_flag_showPolls: false,
       kf_flag_showHostRaid: false,
       kf_flag_showModeChanges: true,
     });
     featureFlags.showSubscriptions = true;
     featureFlags.showGiftedSubs = false;
+    featureFlags.showKicks = true;
+    featureFlags.showPolls = true;
     featureFlags.showHostRaid = true;
     featureFlags.showModeChanges = false;
 
@@ -327,19 +337,25 @@ describe('bootstrap event display flags', () => {
 
     expect(featureFlags.showSubscriptions).toBe(false);
     expect(featureFlags.showGiftedSubs).toBe(true);
+    expect(featureFlags.showKicks).toBe(false);
+    expect(featureFlags.showPolls).toBe(false);
     expect(featureFlags.showHostRaid).toBe(false);
     expect(featureFlags.showModeChanges).toBe(true);
   });
 
-  it('includes all four values in the popup status flag payload', () => {
+  it('includes all event values in the popup status flag payload', () => {
     featureFlags.showSubscriptions = false;
     featureFlags.showGiftedSubs = true;
+    featureFlags.showKicks = false;
+    featureFlags.showPolls = true;
     featureFlags.showHostRaid = false;
     featureFlags.showModeChanges = false;
 
     expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
       showSubscriptions: false,
       showGiftedSubs: true,
+      showKicks: false,
+      showPolls: true,
       showHostRaid: false,
       showModeChanges: false,
     });

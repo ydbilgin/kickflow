@@ -9,6 +9,8 @@ describe('feature-flags', () => {
   it('shows event rows by default', () => {
     expect(featureFlags.showSubscriptions).toBe(true);
     expect(featureFlags.showGiftedSubs).toBe(true);
+    expect(featureFlags.showKicks).toBe(true);
+    expect(featureFlags.showPolls).toBe(true);
     expect(featureFlags.showHostRaid).toBe(true);
     expect(featureFlags.showModeChanges).toBe(true);
   });

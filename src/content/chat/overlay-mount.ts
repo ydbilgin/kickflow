@@ -35,10 +35,10 @@ interface LayoutRect {
   readonly bottom: number;
 }
 
-export type NativePinGeometryResolution =
-  | { readonly status: 'none'; readonly pin: null; readonly pinRect: null; readonly ownRect: LayoutRect }
-  | { readonly status: 'valid'; readonly pin: HTMLElement; readonly pinRect: DOMRect; readonly ownRect: LayoutRect }
-  | { readonly status: 'invalid'; readonly pin: HTMLElement | null; readonly pinRect: DOMRect | null; readonly ownRect: null };
+export type NativeEventStackGeometryResolution =
+  | { readonly status: 'none'; readonly eventStack: null; readonly eventStackRect: null; readonly ownRect: LayoutRect }
+  | { readonly status: 'valid'; readonly eventStack: HTMLElement; readonly eventStackRect: DOMRect; readonly ownRect: LayoutRect }
+  | { readonly status: 'invalid'; readonly eventStack: HTMLElement | null; readonly eventStackRect: DOMRect | null; readonly ownRect: null };
 
 function toLayoutRect(left: number, top: number, width: number, height: number): LayoutRect {
   return { left, top, width, height, right: left + width, bottom: top + height };
@@ -48,14 +48,15 @@ function horizontallyIntersects(first: DOMRect, second: DOMRect): boolean {
   return Math.min(first.right, second.right) - Math.max(first.left, second.left) > GEOMETRY_EPSILON_PX;
 }
 
-function spansAnchorWidth(pinRect: DOMRect, anchorRect: DOMRect): boolean {
-  return pinRect.left <= anchorRect.left + GEOMETRY_EPSILON_PX
-    && pinRect.right >= anchorRect.right - GEOMETRY_EPSILON_PX;
+function spansAnchorWidth(eventStackRect: DOMRect, anchorRect: DOMRect): boolean {
+  return eventStackRect.left <= anchorRect.left + GEOMETRY_EPSILON_PX
+    && eventStackRect.right >= anchorRect.right - GEOMETRY_EPSILON_PX;
 }
 
-/** Kick commonly leaves its `.empty:hidden` pin shell mounted between pins. Observe that shell
- * structurally so an in-place empty -> populated transition is noticed before the periodic sync. */
-function findNativePinObservationTarget(anchor: HTMLElement): HTMLElement | null {
+/** Kick commonly leaves its `.empty:hidden` event-stack shell mounted between native events.
+ * Observe that shell structurally so an in-place empty -> populated transition is noticed before
+ * the periodic sync. */
+function findNativeEventStackObservationTarget(anchor: HTMLElement): HTMLElement | null {
   const parent = anchor.parentElement;
   if (!parent) return null;
   for (let sibling = anchor.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
@@ -69,10 +70,11 @@ function findNativePinObservationTarget(anchor: HTMLElement): HTMLElement | null
   return null;
 }
 
-/** Layout-only native-pin resolver. It reads no message content or identity: the only accepted
- * surface is a visible, non-empty preceding `.absolute.w-full` sibling that forms one contiguous
- * band across the selected anchor's top edge. Ambiguous/partial coverage is explicitly invalid. */
-export function resolveNativePinGeometry(anchor: HTMLElement): NativePinGeometryResolution {
+/** Layout-only native-event-stack resolver. It reads no child content or identity and measures no
+ * individual event. The only accepted surface is one visible, non-empty preceding
+ * `.absolute.w-full` sibling whose container rect forms a contiguous band across the selected
+ * anchor's top edge. Ambiguous/partial coverage is explicitly invalid. */
+export function resolveNativeEventStackGeometry(anchor: HTMLElement): NativeEventStackGeometryResolution {
   const anchorRect = anchor.getBoundingClientRect();
   const fullAnchorRect = toLayoutRect(
     anchorRect.left,
@@ -81,42 +83,42 @@ export function resolveNativePinGeometry(anchor: HTMLElement): NativePinGeometry
     anchorRect.height,
   );
   const parent = anchor.parentElement;
-  if (!parent) return { status: 'invalid', pin: null, pinRect: null, ownRect: null };
+  if (!parent) return { status: 'invalid', eventStack: null, eventStackRect: null, ownRect: null };
 
-  const topEdgeCandidates: Array<{ pin: HTMLElement; rect: DOMRect }> = [];
+  const topEdgeCandidates: Array<{ eventStack: HTMLElement; rect: DOMRect }> = [];
   for (let sibling = anchor.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
     if (!(sibling instanceof HTMLElement) || !sibling.matches('.absolute.w-full')) continue;
     if (!sibling.isConnected || sibling.parentElement !== parent || !isCssVisible(sibling)) continue;
-    const pinRect = sibling.getBoundingClientRect();
-    if (pinRect.width <= 0 || pinRect.height <= 0) continue;
-    const overlapsAnchorTop = pinRect.top <= anchorRect.top + GEOMETRY_EPSILON_PX
-      && pinRect.bottom > anchorRect.top + GEOMETRY_EPSILON_PX;
-    if (!overlapsAnchorTop || !horizontallyIntersects(pinRect, anchorRect)) continue;
-    topEdgeCandidates.push({ pin: sibling, rect: pinRect });
+    const eventStackRect = sibling.getBoundingClientRect();
+    if (eventStackRect.width <= 0 || eventStackRect.height <= 0) continue;
+    const overlapsAnchorTop = eventStackRect.top <= anchorRect.top + GEOMETRY_EPSILON_PX
+      && eventStackRect.bottom > anchorRect.top + GEOMETRY_EPSILON_PX;
+    if (!overlapsAnchorTop || !horizontallyIntersects(eventStackRect, anchorRect)) continue;
+    topEdgeCandidates.push({ eventStack: sibling, rect: eventStackRect });
   }
 
   if (topEdgeCandidates.length === 0) {
-    return { status: 'none', pin: null, pinRect: null, ownRect: fullAnchorRect };
+    return { status: 'none', eventStack: null, eventStackRect: null, ownRect: fullAnchorRect };
   }
   if (topEdgeCandidates.length !== 1) {
-    return { status: 'invalid', pin: null, pinRect: null, ownRect: null };
+    return { status: 'invalid', eventStack: null, eventStackRect: null, ownRect: null };
   }
 
-  const [{ pin, rect: pinRect }] = topEdgeCandidates;
-  if (!spansAnchorWidth(pinRect, anchorRect)) {
-    return { status: 'invalid', pin, pinRect, ownRect: null };
+  const [{ eventStack, rect: eventStackRect }] = topEdgeCandidates;
+  if (!spansAnchorWidth(eventStackRect, anchorRect)) {
+    return { status: 'invalid', eventStack, eventStackRect, ownRect: null };
   }
 
-  const reservedBottom = Math.min(Math.max(pinRect.bottom, anchorRect.top), anchorRect.bottom);
+  const reservedBottom = Math.min(Math.max(eventStackRect.bottom, anchorRect.top), anchorRect.bottom);
   const ownTop = reservedBottom;
   const ownHeight = anchorRect.bottom - ownTop;
   if (!(ownHeight > 0)) {
-    return { status: 'invalid', pin, pinRect, ownRect: null };
+    return { status: 'invalid', eventStack, eventStackRect, ownRect: null };
   }
   return {
     status: 'valid',
-    pin,
-    pinRect,
+    eventStack,
+    eventStackRect,
     ownRect: toLayoutRect(anchorRect.left, ownTop, anchorRect.width, ownHeight),
   };
 }
@@ -146,10 +148,10 @@ export class ChatOverlayMount {
   private primaryReady = false;
   private readonly resizeObserver: ResizeObserver;
   private readonly mutationObserver: MutationObserver;
-  private readonly nativePinMutationObserver: MutationObserver;
+  private readonly nativeEventStackMutationObserver: MutationObserver;
   private observedAnchor: HTMLElement | null = null;
-  private observedPin: HTMLElement | null = null;
-  private observedPinParent: HTMLElement | null = null;
+  private observedEventStack: HTMLElement | null = null;
+  private observedEventStackParent: HTMLElement | null = null;
   private availableOwnListRect: LayoutRect | null = null;
   private statusElement: HTMLElement | null = null;
   private disposed = false;
@@ -173,9 +175,9 @@ export class ChatOverlayMount {
 
     const sync = () => this.syncNow();
     this.resizeObserver = new ResizeObserver((entries) => {
-      const pinDriven = entries.length > 0
-        && entries.every((entry) => entry.target === this.observedPin);
-      this.syncNow(!pinDriven);
+      const eventStackDriven = entries.length > 0
+        && entries.every((entry) => entry.target === this.observedEventStack);
+      this.syncNow(!eventStackDriven);
     });
     this.resizeObserver.observe(document.documentElement);
     lifecycle.add(() => this.resizeObserver.disconnect());
@@ -198,8 +200,8 @@ export class ChatOverlayMount {
     });
     lifecycle.add(() => this.mutationObserver.disconnect());
 
-    this.nativePinMutationObserver = new MutationObserver(() => this.syncNow(false));
-    lifecycle.add(() => this.nativePinMutationObserver.disconnect());
+    this.nativeEventStackMutationObserver = new MutationObserver(() => this.syncNow(false));
+    lifecycle.add(() => this.nativeEventStackMutationObserver.disconnect());
 
     lifecycle.addEventListener(window, 'resize', sync);
     lifecycle.addEventListener(window, 'scroll', sync, true);
@@ -306,7 +308,7 @@ export class ChatOverlayMount {
 
     const roots = Array.from(document.querySelectorAll<HTMLElement>(`[id="${OVERLAY_ROOT_ID}"]`));
     const hasVisibleContent = this.hasVisibleOwnRow() || this.hasVisibleStatus();
-    const geometry = this.observedAnchor ? resolveNativePinGeometry(this.observedAnchor) : null;
+    const geometry = this.observedAnchor ? resolveNativeEventStackGeometry(this.observedAnchor) : null;
     const hasPositiveAvailableRect = geometry !== null
       && geometry.status !== 'invalid'
       && geometry.ownRect.height > 0
@@ -341,7 +343,7 @@ export class ChatOverlayMount {
 
     if (!anchor) {
       this.availableOwnListRect = null;
-      this.updateNativePinObservers(null, null);
+      this.updateNativeEventStackObservers(null, null);
       if (this.takeoverState === 'active' || document.documentElement.classList.contains(CHAT_ACTIVE_CLASS)) {
         this.failOpen('anchor-unavailable');
       }
@@ -352,7 +354,7 @@ export class ChatOverlayMount {
 
     if (!this.syncGeometry(anchor)) {
       this.root.style.visibility = 'hidden';
-      this.failOpen('native-pin-geometry-invalid');
+      this.failOpen('native-event-stack-geometry-invalid');
       return;
     }
 
@@ -381,7 +383,7 @@ export class ChatOverlayMount {
     }
 
     if (!this.syncGeometry(anchor)) {
-      this.failOpen('native-pin-geometry-invalid');
+      this.failOpen('native-event-stack-geometry-invalid');
       return;
     }
     this.takeoverState = 'active';
@@ -405,16 +407,16 @@ export class ChatOverlayMount {
     this.observedAnchor = anchor;
   }
 
-  private updateNativePinObservers(parent: HTMLElement | null, pin: HTMLElement | null): void {
-    if (parent === this.observedPinParent && pin === this.observedPin) return;
-    if (this.observedPin) this.resizeObserver.unobserve(this.observedPin);
-    this.nativePinMutationObserver.disconnect();
-    this.observedPinParent = parent;
-    this.observedPin = pin;
-    if (parent) this.nativePinMutationObserver.observe(parent, { childList: true });
-    if (pin) {
-      this.resizeObserver.observe(pin);
-      this.nativePinMutationObserver.observe(pin, {
+  private updateNativeEventStackObservers(parent: HTMLElement | null, eventStack: HTMLElement | null): void {
+    if (parent === this.observedEventStackParent && eventStack === this.observedEventStack) return;
+    if (this.observedEventStack) this.resizeObserver.unobserve(this.observedEventStack);
+    this.nativeEventStackMutationObserver.disconnect();
+    this.observedEventStackParent = parent;
+    this.observedEventStack = eventStack;
+    if (parent) this.nativeEventStackMutationObserver.observe(parent, { childList: true });
+    if (eventStack) {
+      this.resizeObserver.observe(eventStack);
+      this.nativeEventStackMutationObserver.observe(eventStack, {
         childList: true,
         subtree: true,
         attributes: true,
@@ -424,9 +426,9 @@ export class ChatOverlayMount {
   }
 
   private syncGeometry(anchor: HTMLElement): boolean {
-    const geometry = resolveNativePinGeometry(anchor);
-    const pinObservationTarget = geometry.pin ?? findNativePinObservationTarget(anchor);
-    this.updateNativePinObservers(anchor.parentElement, pinObservationTarget);
+    const geometry = resolveNativeEventStackGeometry(anchor);
+    const eventStackObservationTarget = geometry.eventStack ?? findNativeEventStackObservationTarget(anchor);
+    this.updateNativeEventStackObservers(anchor.parentElement, eventStackObservationTarget);
     if (geometry.status === 'invalid' || geometry.ownRect.height <= 0) {
       this.availableOwnListRect = null;
       return false;

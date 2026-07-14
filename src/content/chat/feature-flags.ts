@@ -17,6 +17,10 @@ export interface FeatureFlags {
   showGiftedSubs: boolean;
   /** Show Kicks gift events (paid gifts) in KickFlow's own chat list. */
   showKicks: boolean;
+  /** Reserved default-on native-poll preference. Native polls remain unconditionally visible in
+   * this geometry-only version because hiding only the poll requires a stable poll-root selector;
+   * hiding the event stack would also hide pins, goals, and pinned Kicks. */
+  showPolls: boolean;
   /** Show new host and raid events in KickFlow's own chat list. */
   showHostRaid: boolean;
   /** Show rows describing chatroom mode changes after the initial state snapshot. */
@@ -48,6 +52,7 @@ export const featureFlags: FeatureFlags = {
   showSubscriptions: true,
   showGiftedSubs: true,
   showKicks: true,
+  showPolls: true,
   showHostRaid: true,
   showModeChanges: true,
   showSidebarRefresh: true,

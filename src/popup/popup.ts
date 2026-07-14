@@ -23,6 +23,8 @@ interface StatusResponse extends KickFlowStatusSnapshot {
     showSubscriptions: boolean;
     showGiftedSubs: boolean;
     showKicks: boolean;
+    /** Reserved/default-on; native polls remain visible until a stable poll-only selector exists. */
+    showPolls: boolean;
     showHostRaid: boolean;
     showModeChanges: boolean;
     showSidebarRefresh: boolean;
@@ -145,12 +147,12 @@ async function refresh(): Promise<void> {
 }
 
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls',
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'chatMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'chatMode',
   value: boolean | 'native' | 'own'
 ): Promise<void> {
   const id = await activeTabId();

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatOverlayMount } from '../../src/content/chat/overlay-mount';
+import { ChatOverlayMount, resolveNativeEventStackGeometry } from '../../src/content/chat/overlay-mount';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 
 class FakeResizeObserver {
@@ -104,6 +104,67 @@ interface CapturedChatFixture {
   pin: HTMLElement | null;
 }
 
+interface CapturedEventStackFixture {
+  parent: HTMLElement;
+  anchor: HTMLElement;
+  eventStack: HTMLElement;
+}
+
+function createNativeEvent(kind: 'pin' | 'poll-voting' | 'poll-results'): HTMLElement {
+  if (kind === 'pin') {
+    const pin = document.createElement('aside');
+    pin.dataset.nativeEvent = 'pin';
+    pin.append(document.createElement('button'));
+    return pin;
+  }
+
+  const poll = document.createElement('section');
+  poll.dataset.nativeEvent = kind;
+  poll.setAttribute('aria-label', kind === 'poll-voting' ? 'Native poll voting card' : 'Native poll results card');
+  const title = document.createElement('h3');
+  title.textContent = 'Which map next?';
+  poll.append(title);
+  for (const label of ['Arena', 'Ruins']) {
+    const choice = document.createElement('button');
+    choice.dataset.pollChoice = label.toLowerCase();
+    choice.textContent = kind === 'poll-voting' ? label : `${label} results`;
+    poll.append(choice);
+  }
+  if (kind === 'poll-voting') {
+    const vote = document.createElement('button');
+    vote.dataset.pollAction = 'vote';
+    vote.textContent = 'Vote';
+    poll.append(vote);
+  }
+  const remove = document.createElement('button');
+  remove.dataset.pollAction = 'delete';
+  remove.textContent = 'Delete poll';
+  poll.append(remove);
+  return poll;
+}
+
+function addCapturedEventStackFixture(
+  anchorRect: DOMRect,
+  getStackRect: () => DOMRect,
+  events: ReadonlyArray<'pin' | 'poll-voting' | 'poll-results'>,
+): CapturedEventStackFixture {
+  const parent = document.createElement('section');
+  parent.className = 'relative flex min-h-0 flex-1 flex-col';
+  const eventStack = document.createElement('div');
+  eventStack.className = 'absolute w-full empty:hidden';
+  eventStack.dataset.nativeSurface = 'chatroom-event-stack';
+  eventStack.append(...events.map(createNativeEvent));
+  vi.spyOn(eventStack, 'getBoundingClientRect').mockImplementation(getStackRect);
+  parent.append(eventStack);
+
+  const anchor = document.createElement('div');
+  anchor.id = 'chatroom-messages';
+  vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue(anchorRect);
+  parent.append(anchor);
+  document.body.append(parent);
+  return { parent, anchor, eventStack };
+}
+
 function addCapturedChatFixture(
   anchorRect: DOMRect = rect(),
   getPinRect?: () => DOMRect,
@@ -177,6 +238,80 @@ describe('ChatOverlayMount takeover readiness', () => {
 
     expect(mount.root.style.top).toBe('104px');
     expect(mount.root.style.height).toBe('396px');
+    lifecycle.dispose();
+  });
+
+  it('reserves the event-stack container for a native poll voting card', () => {
+    const { anchor, eventStack } = addCapturedEventStackFixture(
+      rect(320, 480, 10, 20),
+      () => rect(320, 210, 10, 20),
+      ['poll-voting'],
+    );
+    expect(resolveNativeEventStackGeometry(anchor)).toMatchObject({
+      status: 'valid',
+      eventStack,
+      ownRect: { top: 230, height: 270 },
+    });
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+
+    expect(mount.root.style.top).toBe('230px');
+    expect(mount.root.style.height).toBe('270px');
+    lifecycle.dispose();
+  });
+
+  it('recomputes when a native poll expands from voting to taller results', () => {
+    let stackRect = rect(320, 210, 10, 20);
+    const { eventStack } = addCapturedEventStackFixture(
+      rect(320, 480, 10, 20),
+      () => stackRect,
+      ['poll-voting'],
+    );
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    expect(mount.root.style.top).toBe('230px');
+
+    eventStack.replaceChildren(createNativeEvent('poll-results'));
+    stackRect = rect(320, 276, 10, 20);
+    FakeResizeObserver.trigger(eventStack);
+
+    expect(mount.root.style.top).toBe('296px');
+    expect(mount.root.style.height).toBe('204px');
+    lifecycle.dispose();
+  });
+
+  it('reserves the union height of a single event stack containing a pin and poll', () => {
+    addCapturedEventStackFixture(
+      rect(320, 480, 10, 20),
+      () => rect(320, 294, 10, 20),
+      ['pin', 'poll-voting'],
+    );
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+
+    expect(mount.root.style.top).toBe('314px');
+    expect(mount.root.style.height).toBe('186px');
+    lifecycle.dispose();
+  });
+
+  it('removes the whole reserved band when a poll ends and the event stack empties', () => {
+    let stackRect = rect(320, 210, 10, 20);
+    const { eventStack } = addCapturedEventStackFixture(
+      rect(320, 480, 10, 20),
+      () => stackRect,
+      ['poll-voting'],
+    );
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    expect(mount.root.style.top).toBe('230px');
+
+    const removed = Array.from(eventStack.childNodes);
+    eventStack.replaceChildren();
+    stackRect = rect(0, 0, 10, 20);
+    FakeMutationObserver.triggerChildList(eventStack, [], removed);
+
+    expect(mount.root.style.top).toBe('20px');
+    expect(mount.root.style.height).toBe('480px');
     lifecycle.dispose();
   });
 
@@ -287,6 +422,20 @@ describe('ChatOverlayMount takeover readiness', () => {
     lifecycle.dispose();
   });
 
+  it('ignores an unrelated absolute sibling that is not the full-width event stack', () => {
+    const { parent, anchor } = addCapturedChatFixture(rect(320, 480, 10, 20));
+    const unrelated = document.createElement('div');
+    unrelated.className = 'absolute right-0';
+    vi.spyOn(unrelated, 'getBoundingClientRect').mockReturnValue(rect(100, 120, 230, 20));
+    parent.insertBefore(unrelated, anchor);
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+
+    expect(mount.root.style.top).toBe('20px');
+    expect(mount.root.style.height).toBe('480px');
+    lifecycle.dispose();
+  });
+
   it('fails open when a native pin leaves zero own-list height', () => {
     addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 480, 10, 20));
     const lifecycle = new Lifecycle();
@@ -337,6 +486,29 @@ describe('ChatOverlayMount takeover readiness', () => {
     expect(mount.root.style.pointerEvents).toBe('auto');
     expect(Number.parseFloat(mount.root.style.top)).toBeGreaterThanOrEqual(pin!.getBoundingClientRect().bottom);
     expect(Number.parseFloat(mount.root.style.top)).toBeGreaterThanOrEqual(pin!.querySelector('button')!.getBoundingClientRect().bottom);
+    lifecycle.dispose();
+  });
+
+  it('keeps the body root and pointer-active descendants below native poll controls', () => {
+    const stackRect = rect(320, 220, 10, 20);
+    const { eventStack } = addCapturedEventStackFixture(
+      rect(320, 480, 10, 20),
+      () => stackRect,
+      ['poll-voting'],
+    );
+    for (const control of eventStack.querySelectorAll<HTMLElement>('button')) {
+      vi.spyOn(control, 'getBoundingClientRect').mockReturnValue(rect(280, 36, 30, 180));
+    }
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setProbing();
+    mount.setPrimaryReady();
+
+    expect(mount.root.style.pointerEvents).toBe('auto');
+    expect(Number.parseFloat(mount.root.style.top)).toBeGreaterThanOrEqual(stackRect.bottom);
+    for (const control of eventStack.querySelectorAll<HTMLElement>('button')) {
+      expect(Number.parseFloat(mount.root.style.top)).toBeGreaterThanOrEqual(control.getBoundingClientRect().bottom);
+    }
     lifecycle.dispose();
   });
 

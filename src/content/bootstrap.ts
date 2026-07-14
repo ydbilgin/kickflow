@@ -66,6 +66,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showSubscriptions',
   'showGiftedSubs',
   'showKicks',
+  'showPolls',
   'showHostRaid',
   'showModeChanges',
   'showSidebarRefresh',
@@ -1452,6 +1453,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showSubscriptions: featureFlags.showSubscriptions,
     showGiftedSubs: featureFlags.showGiftedSubs,
     showKicks: featureFlags.showKicks,
+    showPolls: featureFlags.showPolls,
     showHostRaid: featureFlags.showHostRaid,
     showModeChanges: featureFlags.showModeChanges,
     showSidebarRefresh: featureFlags.showSidebarRefresh,
@@ -1561,6 +1563,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showSubscriptions',
     'kf_flag_showGiftedSubs',
     'kf_flag_showKicks',
+    'kf_flag_showPolls',
     'kf_flag_showHostRaid',
     'kf_flag_showModeChanges',
     'kf_flag_showSidebarRefresh',
@@ -1578,6 +1581,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showSubscriptions === 'boolean') setFeatureFlag('showSubscriptions', saved.kf_flag_showSubscriptions);
   if (typeof saved.kf_flag_showGiftedSubs === 'boolean') setFeatureFlag('showGiftedSubs', saved.kf_flag_showGiftedSubs);
   if (typeof saved.kf_flag_showKicks === 'boolean') setFeatureFlag('showKicks', saved.kf_flag_showKicks);
+  if (typeof saved.kf_flag_showPolls === 'boolean') setFeatureFlag('showPolls', saved.kf_flag_showPolls);
   if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
