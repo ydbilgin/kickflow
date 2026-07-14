@@ -5,6 +5,7 @@ import {
   normalizeChatroomUpdatedPayload,
   normalizeChannelSubscriptionPayload,
   normalizeDeletePayload,
+  normalizeGiftedSubscriptionsPayload,
   normalizeHostPayload,
   normalizeMessage,
   normalizePinnedMessagePayload,
@@ -300,21 +301,66 @@ describe('pusher-client normalizers', () => {
     expect(normalizeSubscriptionPayload({ chatroom_id: 1, username: 'user', months: 0 })).toBeNull();
   });
 
-  it('normalizes live-captured gifted-subscription payloads using user_ids.length', () => {
+  it('normalizes ChannelSubscriptionEvent as a non-gift subscription observation', () => {
     expect(normalizeChannelSubscriptionPayload({
-      user_ids: [12098355, 12098356],
-      username: '***REMOVED***',
-      channel_id: 15462911,
+      user_ids: [86178773],
+      username: 's4drazam1',
+      channel_id: 26239555,
     })).toEqual({
-      userIds: [12098355, 12098356],
-      username: '***REMOVED***',
-      channelId: 15462911,
-      giftCount: 2,
+      userIds: [86178773],
+      username: 's4drazam1',
+      channelId: 26239555,
     });
 
     expect(normalizeChannelSubscriptionPayload({ user_ids: [], username: 'user', channel_id: 1 })).toBeNull();
     expect(normalizeChannelSubscriptionPayload({ user_ids: [1, '2'], username: 'user', channel_id: 1 })).toBeNull();
     expect(normalizeChannelSubscriptionPayload({ user_ids: [1], username: 2, channel_id: 1 })).toBeNull();
+  });
+
+  it('normalizes a real modern multi-gift payload with explicit gifter, recipients, and count', () => {
+    expect(normalizeGiftedSubscriptionsPayload({
+      chatroom_id: 5389830,
+      correlation_id: '340002752601361',
+      gifted_usernames: [
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      ],
+      gifter_username: '***REMOVED***',
+      gifted_total: 10,
+      gifter_total: 927,
+      chunk_details: null,
+    })).toEqual({
+      chatroomId: 5389830,
+      correlationId: '340002752601361',
+      giftedUsernames: [
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      ],
+      gifterUsername: '***REMOVED***',
+      giftCount: 10,
+    });
+
+    expect(normalizeGiftedSubscriptionsPayload({
+      chatroom_id: 1,
+      correlation_id: '',
+      gifted_usernames: ['recipient'],
+      gifter_username: 'gifter',
+      gifted_total: 1,
+    })).toBeNull();
+    expect(normalizeGiftedSubscriptionsPayload({
+      chatroom_id: 1,
+      correlation_id: 'purchase',
+      gifted_usernames: [],
+      gifter_username: 'gifter',
+      gifted_total: 1,
+    })).toBeNull();
+    expect(normalizeGiftedSubscriptionsPayload({
+      chatroom_id: 1,
+      correlation_id: 'purchase',
+      gifted_usernames: ['recipient'],
+      gifter_username: 'gifter',
+      gifted_total: '1',
+    })).toBeNull();
   });
 
   it('normalizes host payloads with nullable messages and optional viewer counts', () => {
@@ -662,10 +708,46 @@ describe('PusherClient lifecycle', () => {
     client.dispose();
   });
 
-  it('subscribes to chatroom and channel on one socket and routes captured public events', () => {
+  it('suppresses the exact captured ChannelSubscriptionEvent/SubscriptionEvent overlap as one self-sub', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const onSubscription = vi.fn();
-    const onChannelSubscription = vi.fn();
+    const onGiftedSubscriptions = vi.fn();
+    const client = new PusherClient(25951243, 26239555, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onSubscription,
+      onGiftedSubscriptions,
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error('missing fake socket');
+    establishPrimary(socket, 25951243);
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\ChannelSubscriptionEvent',
+        channel: 'channel.26239555',
+        data: '{"user_ids":[86178773],"username":"s4drazam1","channel_id":26239555}',
+      }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\SubscriptionEvent',
+        channel: 'chatrooms.25951243.v2',
+        data: '{"chatroom_id":25951243,"username":"s4drazam1","months":9}',
+      }),
+    }));
+
+    expect(onSubscription).toHaveBeenCalledOnce();
+    expect(onSubscription).toHaveBeenCalledWith({ chatroomId: 25951243, username: 's4drazam1', months: 9 });
+    expect(onGiftedSubscriptions).not.toHaveBeenCalled();
+    client.dispose();
+  });
+
+  it('subscribes to all three product channels and routes a modern gift explicitly', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onSubscription = vi.fn();
+    const onGiftedSubscriptions = vi.fn();
     const onHost = vi.fn();
     const onPinnedMessage = vi.fn();
     const onChatroomUpdated = vi.fn();
@@ -673,7 +755,7 @@ describe('PusherClient lifecycle', () => {
       onMessage: vi.fn(),
       onUserBanned: vi.fn(),
       onSubscription,
-      onChannelSubscription,
+      onGiftedSubscriptions,
       onHost,
       onPinnedMessage,
       onChatroomUpdated,
@@ -689,12 +771,13 @@ describe('PusherClient lifecycle', () => {
     expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
       { event: 'pusher:subscribe', data: { auth: '', channel: 'chatrooms.15250312.v2' } },
       { event: 'pusher:subscribe', data: { auth: '', channel: 'channel.15462911' } },
+      { event: 'pusher:subscribe', data: { auth: '', channel: 'chatroom_15250312' } },
     ]);
 
     socket.dispatchEvent(new MessageEvent('message', {
       data: JSON.stringify({
         event: 'pusher_internal:subscription_succeeded',
-        channel: 'channel.15462911',
+        channel: 'chatroom_15250312',
         data: '{}',
       }),
     }));
@@ -733,14 +816,36 @@ describe('PusherClient lifecycle', () => {
       data: JSON.stringify({
         event: 'App\\Events\\SubscriptionEvent',
         channel: 'chatrooms.15250312.v2',
-        data: JSON.stringify({ chatroom_id: 15250312, username: '***REMOVED***', months: 5 }),
+        data: JSON.stringify({ chatroom_id: 15250312, username: 's4drazam1', months: 9 }),
       }),
     }));
     socket.dispatchEvent(new MessageEvent('message', {
       data: JSON.stringify({
         event: 'App\\Events\\ChannelSubscriptionEvent',
         channel: 'channel.15462911',
-        data: JSON.stringify({ user_ids: [12098355, 12098356], username: '***REMOVED***', channel_id: 15462911 }),
+        data: JSON.stringify({ user_ids: [86178773], username: 's4drazam1', channel_id: 15462911 }),
+      }),
+    }));
+    expect(onSubscription).toHaveBeenCalledOnce();
+    expect(onSubscription).toHaveBeenCalledWith({ chatroomId: 15250312, username: 's4drazam1', months: 9 });
+    expect(onGiftedSubscriptions).not.toHaveBeenCalled();
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'GiftedSubscriptionsEvent',
+        channel: 'chatroom_15250312',
+        data: JSON.stringify({
+          chatroom_id: 15250312,
+          correlation_id: '340002752601361',
+          gifted_usernames: [
+            '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+            '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+          ],
+          gifter_username: '***REMOVED***',
+          gifted_total: 10,
+          gifter_total: 927,
+          chunk_details: null,
+        }),
       }),
     }));
     socket.dispatchEvent(new MessageEvent('message', {
@@ -756,14 +861,16 @@ describe('PusherClient lifecycle', () => {
       }),
     }));
 
-    expect(onSubscription).toHaveBeenCalledOnce();
-    expect(onSubscription).toHaveBeenCalledWith({ chatroomId: 15250312, username: '***REMOVED***', months: 5 });
-    expect(onChannelSubscription).toHaveBeenCalledOnce();
-    expect(onChannelSubscription).toHaveBeenCalledWith({
-      userIds: [12098355, 12098356],
-      username: '***REMOVED***',
-      channelId: 15462911,
-      giftCount: 2,
+    expect(onGiftedSubscriptions).toHaveBeenCalledOnce();
+    expect(onGiftedSubscriptions).toHaveBeenCalledWith({
+      chatroomId: 15250312,
+      correlationId: '340002752601361',
+      giftedUsernames: [
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      ],
+      gifterUsername: '***REMOVED***',
+      giftCount: 10,
     });
     expect(onHost).toHaveBeenCalledOnce();
     expect(onHost).toHaveBeenCalledWith({
@@ -788,14 +895,14 @@ describe('PusherClient lifecycle', () => {
     client.dispose();
   });
 
-  it('logs a channel subscription error and skips gifted-subscription events gracefully', () => {
+  it('logs a gift-channel subscription error and skips modern gift events gracefully', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const onChannelSubscription = vi.fn();
+    const onGiftedSubscriptions = vi.fn();
     const client = new PusherClient(1, 2, {
       onMessage: vi.fn(),
       onUserBanned: vi.fn(),
-      onChannelSubscription,
+      onGiftedSubscriptions,
     });
     client.connect();
     const socket = FakeWebSocket.instances[0];
@@ -807,25 +914,31 @@ describe('PusherClient lifecycle', () => {
     socket.dispatchEvent(new MessageEvent('message', {
       data: JSON.stringify({
         event: 'pusher:subscription_error',
-        channel: 'channel.2',
+        channel: 'chatroom_1',
         data: JSON.stringify({ status: 403, message: 'denied' }),
       }),
     }));
     socket.dispatchEvent(new MessageEvent('message', {
       data: JSON.stringify({
-        event: 'App\\Events\\ChannelSubscriptionEvent',
-        channel: 'channel.2',
-        data: JSON.stringify({ user_ids: [3], username: 'gifter', channel_id: 2 }),
+        event: 'GiftedSubscriptionsEvent',
+        channel: 'chatroom_1',
+        data: JSON.stringify({
+          chatroom_id: 1,
+          correlation_id: 'purchase-1',
+          gifted_usernames: ['recipient'],
+          gifter_username: 'gifter',
+          gifted_total: 1,
+        }),
       }),
     }));
 
     expect(warn).toHaveBeenCalledWith(
       '[KickFlow]',
-      'pusher-client: channel subscription failed; gifted subscriptions disabled',
-      'channel.2',
+      'pusher-client: gift channel subscription failed; gifted subscriptions disabled',
+      'chatroom_1',
       '{"status":403,"message":"denied"}',
     );
-    expect(onChannelSubscription).not.toHaveBeenCalled();
+    expect(onGiftedSubscriptions).not.toHaveBeenCalled();
     client.dispose();
   });
 
@@ -836,7 +949,7 @@ describe('PusherClient lifecycle', () => {
     const client = new PusherClient(1, 2, {
       onMessage: vi.fn(),
       onUserBanned: vi.fn(),
-      onChannelSubscription: vi.fn(),
+      onGiftedSubscriptions: vi.fn(),
     });
     client.connect();
     const socket = FakeWebSocket.instances[0];
@@ -856,8 +969,8 @@ describe('PusherClient lifecycle', () => {
 
     expect(warn).toHaveBeenCalledWith(
       '[KickFlow]',
-      'pusher-client: channel subscription was not confirmed; gifted subscriptions disabled',
-      'channel.2',
+      'pusher-client: gift channel subscription was not confirmed; gifted subscriptions disabled',
+      'chatroom_1',
     );
     client.dispose();
   });

@@ -45,13 +45,19 @@ describe('bootstrap event display flags', () => {
     const store = new ChatIntegrityStore();
     const callbacks = bootstrap.createSystemEventCallbacks((message) => {
       store.addMessage(message);
-    }, 15250312);
+    });
 
     featureFlags.showSubscriptions = false;
     featureFlags.showGiftedSubs = false;
     featureFlags.showHostRaid = false;
     callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 5 });
-    callbacks.onChannelSubscription({ channelId: 15462911, username: 'gifter', userIds: [1, 2], giftCount: 2 });
+    callbacks.onGiftedSubscriptions({
+      chatroomId: 15250312,
+      correlationId: 'disabled-gift',
+      giftedUsernames: ['one', 'two'],
+      gifterUsername: 'gifter',
+      giftCount: 2,
+    });
     callbacks.onHost({ chatroomId: 15250312, hostUsername: 'raider', numberViewers: 16, optionalMessage: null });
     expect(store.getMessagesInArrivalOrder()).toEqual([]);
 
@@ -59,7 +65,16 @@ describe('bootstrap event display flags', () => {
     featureFlags.showGiftedSubs = true;
     featureFlags.showHostRaid = true;
     callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 5 });
-    callbacks.onChannelSubscription({ channelId: 15462911, username: 'gifter', userIds: [1, 2], giftCount: 2 });
+    callbacks.onGiftedSubscriptions({
+      chatroomId: 15250312,
+      correlationId: '340002752601361',
+      giftedUsernames: [
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      ],
+      gifterUsername: '***REMOVED***',
+      giftCount: 10,
+    });
     callbacks.onHost({ chatroomId: 15250312, hostUsername: 'raider', numberViewers: 16, optionalMessage: null });
 
     expect(store.getMessagesInArrivalOrder().map((message) => message.systemEvent?.kind)).toEqual([
@@ -67,13 +82,61 @@ describe('bootstrap event display flags', () => {
       'gifted-subscription',
       'host',
     ]);
+    expect(store.getMessagesInArrivalOrder()[1]?.systemEvent).toEqual({
+      kind: 'gifted-subscription',
+      username: '***REMOVED***',
+      giftCount: 10,
+    });
+  });
+
+  it('dedupes a repeated modern gift frame by its captured correlation id', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showGiftedSubs = true;
+    const capturedGift = {
+      chatroomId: 5389830,
+      correlationId: '340002752602494',
+      giftedUsernames: [
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      ],
+      gifterUsername: '***REMOVED***',
+      giftCount: 28,
+    };
+
+    callbacks.onGiftedSubscriptions(capturedGift);
+    callbacks.onGiftedSubscriptions(capturedGift);
+
+    expect(store.getMessagesInArrivalOrder()).toHaveLength(1);
+    expect(store.getMessagesInArrivalOrder()[0]?.id).toBe('gift:5389830:340002752602494');
+  });
+
+  it('creates one subscribed row and no gift row for the captured self-sub fixture', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showSubscriptions = true;
+    featureFlags.showGiftedSubs = true;
+
+    callbacks.onSubscription({ chatroomId: 25951243, username: 's4drazam1', months: 9 });
+
+    const rows = store.getMessagesInArrivalOrder();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.systemEvent).toEqual({ kind: 'subscription', username: 's4drazam1', months: 9 });
+    expect(rows.some((message) => message.systemEvent?.kind === 'gifted-subscription')).toBe(false);
   });
 
   it('keeps the first mode snapshot silent, diffs all changed modes, and dedupes identical state', () => {
     const store = new ChatIntegrityStore();
     const callbacks = bootstrap.createSystemEventCallbacks((message) => {
       store.addMessage(message);
-    }, 25314085);
+    });
     featureFlags.showModeChanges = true;
 
     callbacks.onChatroomUpdated({
@@ -142,7 +205,7 @@ describe('bootstrap event display flags', () => {
     const store = new ChatIntegrityStore();
     const callbacks = bootstrap.createSystemEventCallbacks((message) => {
       store.addMessage(message);
-    }, 1);
+    });
     const state = (slow: boolean, subscribers: boolean) => ({
       chatroomId: 1,
       slowMode: { enabled: slow, messageInterval: slow ? 10 : 0 },

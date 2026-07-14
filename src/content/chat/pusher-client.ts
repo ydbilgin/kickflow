@@ -11,6 +11,7 @@ const CHAT_MESSAGE_EVENT = 'App\\Events\\ChatMessageEvent';
 const USER_BANNED_EVENT = 'App\\Events\\UserBannedEvent';
 const SUBSCRIPTION_EVENT = 'App\\Events\\SubscriptionEvent';
 const CHANNEL_SUBSCRIPTION_EVENT = 'App\\Events\\ChannelSubscriptionEvent';
+const GIFTED_SUBSCRIPTIONS_EVENT = 'GiftedSubscriptionsEvent';
 const STREAM_HOST_EVENT = 'App\\Events\\StreamHostEvent';
 const PINNED_MESSAGE_CREATED_EVENT = 'App\\Events\\PinnedMessageCreatedEvent';
 const CHATROOM_UPDATED_EVENT = 'App\\Events\\ChatroomUpdatedEvent';
@@ -65,6 +66,13 @@ export interface ChannelSubscriptionEventPayload {
   userIds: number[];
   username: string;
   channelId: number;
+}
+
+export interface GiftedSubscriptionsEventPayload {
+  chatroomId: number;
+  correlationId: string;
+  giftedUsernames: string[];
+  gifterUsername: string;
   giftCount: number;
 }
 
@@ -88,7 +96,7 @@ export interface PusherClientCallbacks {
   onUserBanned: (payload: BanEventPayload) => void;
   onMessageDeleted?: (payload: DeleteEventPayload) => void;
   onSubscription?: (payload: SubscriptionEventPayload) => void;
-  onChannelSubscription?: (payload: ChannelSubscriptionEventPayload) => void;
+  onGiftedSubscriptions?: (payload: GiftedSubscriptionsEventPayload) => void;
   onHost?: (payload: HostEventPayload) => void;
   onPinnedMessage?: (payload: PinnedMessage) => void;
   onChatroomUpdated?: (payload: ChatroomUpdatedEventPayload) => void;
@@ -327,7 +335,32 @@ export function normalizeChannelSubscriptionPayload(raw: unknown): ChannelSubscr
     userIds: data.user_ids,
     username: data.username,
     channelId: data.channel_id,
-    giftCount: data.user_ids.length,
+  };
+}
+
+/** Modern gift event captured on chatroom_{chatroomId} on 2026-07-14. Unlike
+ * ChannelSubscriptionEvent, this shape explicitly identifies the gifter and recipients and
+ * carries a stable purchase correlation id. gifted_total is the purchase/event count;
+ * gifter_total is cumulative and intentionally not used for the row. */
+export function normalizeGiftedSubscriptionsPayload(raw: unknown): GiftedSubscriptionsEventPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  if (!isPositiveInteger(data.chatroom_id)) return null;
+  if (typeof data.correlation_id !== 'string' || !data.correlation_id.trim()) return null;
+  if (typeof data.gifter_username !== 'string' || !data.gifter_username.trim()) return null;
+  if (
+    !Array.isArray(data.gifted_usernames) ||
+    data.gifted_usernames.length === 0 ||
+    !data.gifted_usernames.every((username) => typeof username === 'string' && username.trim())
+  ) return null;
+  if (!isPositiveInteger(data.gifted_total)) return null;
+
+  return {
+    chatroomId: data.chatroom_id,
+    correlationId: data.correlation_id,
+    giftedUsernames: data.gifted_usernames,
+    gifterUsername: data.gifter_username,
+    giftCount: data.gifted_total,
   };
 }
 
@@ -408,7 +441,7 @@ export function normalizeChatroomUpdatedPayload(raw: unknown): ChatroomUpdatedEv
   };
 }
 
-type ChannelSubscriptionState = 'idle' | 'pending' | 'active' | 'unavailable';
+type GiftSubscriptionState = 'idle' | 'pending' | 'active' | 'unavailable';
 type PrimarySubscriptionState = 'idle' | 'pending' | 'active';
 
 /** Opens KickFlow's own, independent, read-only Pusher connection — never the page's
@@ -428,8 +461,8 @@ export class PusherClient {
   private establishmentTimer: number | null = null;
   private primarySubscriptionTimer: number | null = null;
   private primarySubscriptionState: PrimarySubscriptionState = 'idle';
-  private channelSubscriptionTimer: number | null = null;
-  private channelSubscriptionState: ChannelSubscriptionState = 'idle';
+  private giftSubscriptionTimer: number | null = null;
+  private giftSubscriptionState: GiftSubscriptionState = 'idle';
 
   constructor(
     private readonly chatroomId: number,
@@ -473,9 +506,9 @@ export class PusherClient {
       this.socket = null;
       this.stopLivenessWatchdog();
       this.clearReadinessTimers();
-      this.clearChannelSubscriptionTimer();
+      this.clearGiftSubscriptionTimer();
       this.primarySubscriptionState = 'idle';
-      this.channelSubscriptionState = 'idle';
+      this.giftSubscriptionState = 'idle';
       this.callbacks.onDisconnected?.();
       this.scheduleReconnect();
     });
@@ -501,26 +534,36 @@ export class PusherClient {
         this.failCurrentConnection('subscription-timeout');
       }, PRIMARY_SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
     }
+    // Retain the legacy channel as a read-only observation/compatibility path. It does not
+    // control gifted-subscription availability and its ChannelSubscriptionEvent is not shown.
+    this.send({
+      event: 'pusher:subscribe',
+      data: { auth: '', channel: this.legacyChannelName },
+    });
     if (this.send({
       event: 'pusher:subscribe',
-      data: { auth: '', channel: this.channelName },
+      data: { auth: '', channel: this.giftChannelName },
     })) {
-      this.channelSubscriptionState = 'pending';
-      this.clearChannelSubscriptionTimer();
-      this.channelSubscriptionTimer = window.setTimeout(() => {
-        this.channelSubscriptionTimer = null;
-        if (this.channelSubscriptionState !== 'pending') return;
-        this.channelSubscriptionState = 'unavailable';
+      this.giftSubscriptionState = 'pending';
+      this.clearGiftSubscriptionTimer();
+      this.giftSubscriptionTimer = window.setTimeout(() => {
+        this.giftSubscriptionTimer = null;
+        if (this.giftSubscriptionState !== 'pending') return;
+        this.giftSubscriptionState = 'unavailable';
         logger.warn(
-          'pusher-client: channel subscription was not confirmed; gifted subscriptions disabled',
-          this.channelName,
+          'pusher-client: gift channel subscription was not confirmed; gifted subscriptions disabled',
+          this.giftChannelName,
         );
       }, CHANNEL_SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
     }
   }
 
-  private get channelName(): string {
+  private get legacyChannelName(): string {
     return `channel.${this.channelId}`;
+  }
+
+  private get giftChannelName(): string {
+    return `chatroom_${this.chatroomId}`;
   }
 
   private get primaryChannelName(): string {
@@ -565,23 +608,23 @@ export class PusherClient {
     this.failCurrentConnection('subscription-error');
   }
 
-  private clearChannelSubscriptionTimer(): void {
-    if (this.channelSubscriptionTimer === null) return;
-    window.clearTimeout(this.channelSubscriptionTimer);
-    this.channelSubscriptionTimer = null;
+  private clearGiftSubscriptionTimer(): void {
+    if (this.giftSubscriptionTimer === null) return;
+    window.clearTimeout(this.giftSubscriptionTimer);
+    this.giftSubscriptionTimer = null;
   }
 
-  private confirmChannelSubscription(): void {
-    this.clearChannelSubscriptionTimer();
-    this.channelSubscriptionState = 'active';
+  private confirmGiftSubscription(): void {
+    this.clearGiftSubscriptionTimer();
+    this.giftSubscriptionState = 'active';
   }
 
-  private rejectChannelSubscription(payload: unknown): void {
-    this.clearChannelSubscriptionTimer();
-    this.channelSubscriptionState = 'unavailable';
+  private rejectGiftSubscription(payload: unknown): void {
+    this.clearGiftSubscriptionTimer();
+    this.giftSubscriptionState = 'unavailable';
     logger.warn(
-      'pusher-client: channel subscription failed; gifted subscriptions disabled',
-      this.channelName,
+      'pusher-client: gift channel subscription failed; gifted subscriptions disabled',
+      this.giftChannelName,
       typeof payload === 'string' ? payload : JSON.stringify(payload),
     );
   }
@@ -644,9 +687,9 @@ export class PusherClient {
     const socket = this.socket;
     this.stopLivenessWatchdog();
     this.clearReadinessTimers();
-    this.clearChannelSubscriptionTimer();
+    this.clearGiftSubscriptionTimer();
     this.primarySubscriptionState = 'idle';
-    this.channelSubscriptionState = 'idle';
+    this.giftSubscriptionState = 'idle';
     // Detach before close so its eventual close event cannot schedule a second reconnect.
     this.socket = null;
     try {
@@ -692,7 +735,7 @@ export class PusherClient {
     }
     if (eventName === 'pusher_internal:subscription_succeeded') {
       if (frame.channel === this.primaryChannelName) this.confirmPrimarySubscription();
-      if (frame.channel === this.channelName) this.confirmChannelSubscription();
+      if (frame.channel === this.giftChannelName) this.confirmGiftSubscription();
       return;
     }
     if (eventName === 'pusher:subscription_error') {
@@ -700,7 +743,7 @@ export class PusherClient {
         this.rejectPrimarySubscription(this.parseInnerData(frame.data));
         return;
       }
-      if (frame.channel === this.channelName) this.rejectChannelSubscription(this.parseInnerData(frame.data));
+      if (frame.channel === this.giftChannelName) this.rejectGiftSubscription(this.parseInnerData(frame.data));
       return;
     }
     if (eventName.startsWith('pusher_internal:') || eventName.startsWith('pusher:')) {
@@ -759,16 +802,31 @@ export class PusherClient {
         return;
       }
       case CHANNEL_SUBSCRIPTION_EVENT: {
-        if (this.channelSubscriptionState === 'unavailable') return;
         const normalized = normalizeChannelSubscriptionPayload(payload);
         if (!normalized) {
           logger.warn('pusher-client: ChannelSubscriptionEvent payload did not match the captured shape', payload);
           return;
         }
-        // Receiving the channel event itself proves the public subscription is live even if its
-        // internal success frame was delayed or omitted by an intermediary.
-        this.confirmChannelSubscription();
-        this.callbacks.onChannelSubscription?.(normalized);
+        // This is a generic subscription notification, not a gift event. Real 2026-07-14
+        // captures show it co-firing with SubscriptionEvent for self/ordinary subscriptions,
+        // while explicit gifts arrive separately as GiftedSubscriptionsEvent. It intentionally
+        // has no presentation callback, preventing one action from becoming gift + sub rows.
+        if (featureFlags.debugLogging) {
+          logger.debug('pusher-client: non-presentational ChannelSubscriptionEvent', normalized);
+        }
+        return;
+      }
+      case GIFTED_SUBSCRIPTIONS_EVENT: {
+        if (frame.channel !== this.giftChannelName) return;
+        if (this.giftSubscriptionState === 'unavailable') return;
+        const normalized = normalizeGiftedSubscriptionsPayload(payload);
+        if (!normalized) {
+          logger.warn('pusher-client: GiftedSubscriptionsEvent payload did not match the captured shape', payload);
+          return;
+        }
+        // Receiving the event proves chatroom_{id} is live if its confirmation frame was delayed.
+        if (frame.channel === this.giftChannelName) this.confirmGiftSubscription();
+        this.callbacks.onGiftedSubscriptions?.(normalized);
         return;
       }
       case STREAM_HOST_EVENT: {
@@ -828,9 +886,9 @@ export class PusherClient {
     this.socket = null;
     this.stopLivenessWatchdog();
     this.clearReadinessTimers();
-    this.clearChannelSubscriptionTimer();
+    this.clearGiftSubscriptionTimer();
     this.primarySubscriptionState = 'idle';
-    this.channelSubscriptionState = 'idle';
+    this.giftSubscriptionState = 'idle';
     if (socket) {
       try {
         socket.close();
@@ -853,9 +911,9 @@ export class PusherClient {
   private teardownSocket(): void {
     this.stopLivenessWatchdog();
     this.clearReadinessTimers();
-    this.clearChannelSubscriptionTimer();
+    this.clearGiftSubscriptionTimer();
     this.primarySubscriptionState = 'idle';
-    this.channelSubscriptionState = 'idle';
+    this.giftSubscriptionState = 'idle';
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

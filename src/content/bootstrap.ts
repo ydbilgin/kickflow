@@ -16,7 +16,7 @@ import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
 import {
   PusherClient,
   type ChatroomUpdatedEventPayload,
-  type ChannelSubscriptionEventPayload,
+  type GiftedSubscriptionsEventPayload,
   type HostEventPayload,
   type SubscriptionEventPayload,
 } from './chat/pusher-client';
@@ -97,7 +97,7 @@ function isBooleanFlagKey(key: string): key is BooleanFlagKey {
 
 interface SystemEventCallbacks {
   onSubscription: (payload: SubscriptionEventPayload) => void;
-  onChannelSubscription: (payload: ChannelSubscriptionEventPayload) => void;
+  onGiftedSubscriptions: (payload: GiftedSubscriptionsEventPayload) => void;
   onHost: (payload: HostEventPayload) => void;
   onChatroomUpdated: (payload: ChatroomUpdatedEventPayload) => void;
 }
@@ -106,7 +106,6 @@ interface SystemEventCallbacks {
  * only drops future events; rows already rendered remain until the normal message-window trim. */
 export function createSystemEventCallbacks(
   enqueueOnce: (message: ChatMessage) => void,
-  chatroomId: number,
 ): SystemEventCallbacks {
   let systemEventSequence = 0;
   let previousChatroomState: ChatroomUpdatedEventPayload | null = null;
@@ -141,13 +140,12 @@ export function createSystemEventCallbacks(
         { kind: 'subscription', username: payload.username, months: payload.months },
       ));
     },
-    onChannelSubscription: (payload) => {
+    onGiftedSubscriptions: (payload) => {
       if (!featureFlags.showGiftedSubs) return;
-      const sequence = ++systemEventSequence;
       enqueueOnce(createSystemEventMessage(
-        `gift:${payload.channelId}:${encodeURIComponent(payload.username)}:${payload.giftCount}:${sequence}`,
-        chatroomId,
-        { kind: 'gifted-subscription', username: payload.username, giftCount: payload.giftCount },
+        `gift:${payload.chatroomId}:${encodeURIComponent(payload.correlationId)}`,
+        payload.chatroomId,
+        { kind: 'gifted-subscription', username: payload.gifterUsername, giftCount: payload.giftCount },
       ));
     },
     onHost: (payload) => {
@@ -1145,7 +1143,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     // History is independent from the socket handshake. Starting it now closes the initial gap
     // even when WebSocket establishment is slow or temporarily unavailable.
     historyBackfill.request();
-    const systemEventCallbacks = createSystemEventCallbacks(enqueueOnce, chatroomId);
+    const systemEventCallbacks = createSystemEventCallbacks(enqueueOnce);
     const client = new PusherClient(chatroomId, channelId, {
       onConnected: () => {
         if (!getStatus().active) setStatus({ reason: 'Pusher soketi bağlı — chatroom aboneliği bekleniyor…' });
@@ -1193,7 +1191,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
         enqueueOnce(message);
       },
       onSubscription: systemEventCallbacks.onSubscription,
-      onChannelSubscription: systemEventCallbacks.onChannelSubscription,
+      onGiftedSubscriptions: systemEventCallbacks.onGiftedSubscriptions,
       onHost: systemEventCallbacks.onHost,
       onChatroomUpdated: systemEventCallbacks.onChatroomUpdated,
       onUserBanned: (payload) => {
