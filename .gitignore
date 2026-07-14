@@ -19,3 +19,7 @@ server/.env
 # Playwright test output — throwaway Chromium profiles (contain real Cookies/Login Data/Web
 # Data SQLite files), screenshots, harness bundles. Never commit browser profile state.
 output/
+
+# Internal dev-only working notes — kept LOCAL, never published (not user-facing).
+CURRENT_STATUS.md
+docs/
