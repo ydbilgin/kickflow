@@ -16,6 +16,7 @@ class FakeWebSocket extends EventTarget {
   static instances: FakeWebSocket[] = [];
   readonly readyState = FakeWebSocket.OPEN;
   readonly sent: string[] = [];
+  closeCalls = 0;
 
   constructor(_url: string) {
     super();
@@ -26,7 +27,9 @@ class FakeWebSocket extends EventTarget {
     this.sent.push(data);
   }
 
-  close(): void {}
+  close(): void {
+    this.closeCalls++;
+  }
 }
 
 afterEach(() => {
@@ -419,6 +422,135 @@ describe('pusher-client normalizers', () => {
 });
 
 describe('PusherClient lifecycle', () => {
+  function establishPrimary(socket: FakeWebSocket, chatroomId = 1): void {
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'pusher_internal:subscription_succeeded',
+        channel: `chatrooms.${chatroomId}.v2`,
+        data: '{}',
+      }),
+    }));
+  }
+
+  it('does not treat the socket handshake as live readiness and reconnects on primary error or timeout', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onConnected = vi.fn();
+    const onPrimarySubscriptionReady = vi.fn();
+    const onPrimarySubscriptionUnavailable = vi.fn();
+    const client = new PusherClient(1, 2, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onConnected,
+      onPrimarySubscriptionReady,
+      onPrimarySubscriptionUnavailable,
+    });
+    client.connect();
+    const first = FakeWebSocket.instances[0]!;
+    first.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+
+    expect(onConnected).toHaveBeenCalledOnce();
+    expect(onPrimarySubscriptionReady).not.toHaveBeenCalled();
+    first.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'pusher:subscription_error',
+        channel: 'chatrooms.1.v2',
+        data: JSON.stringify({ status: 403 }),
+      }),
+    }));
+    expect(onPrimarySubscriptionUnavailable).toHaveBeenCalledWith('subscription-error');
+    expect(first.closeCalls).toBe(1);
+
+    vi.advanceTimersByTime(1_000);
+    const second = FakeWebSocket.instances[1]!;
+    second.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    vi.advanceTimersByTime(10_000);
+    expect(onPrimarySubscriptionUnavailable).toHaveBeenLastCalledWith('subscription-timeout');
+    expect(second.closeCalls).toBe(1);
+    client.dispose();
+  });
+
+  it('recovers from a constructor throw, an opening-handshake timeout, and a server error', () => {
+    vi.useFakeTimers();
+    const onPrimarySubscriptionUnavailable = vi.fn();
+    class ThrowOnceWebSocket extends FakeWebSocket {
+      static attempts = 0;
+      constructor(url: string) {
+        if (ThrowOnceWebSocket.attempts++ === 0) throw new Error('constructor failed');
+        super(url);
+      }
+    }
+    vi.stubGlobal('WebSocket', ThrowOnceWebSocket);
+    const client = new PusherClient(1, 2, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onPrimarySubscriptionUnavailable,
+    });
+    client.connect();
+    expect(onPrimarySubscriptionUnavailable).toHaveBeenCalledWith('constructor-error');
+
+    vi.advanceTimersByTime(1_000);
+    const opening = FakeWebSocket.instances[0]!;
+    vi.advanceTimersByTime(12_000);
+    expect(onPrimarySubscriptionUnavailable).toHaveBeenLastCalledWith('handshake-timeout');
+    expect(opening.closeCalls).toBe(1);
+
+    vi.advanceTimersByTime(2_000);
+    const serverError = FakeWebSocket.instances[1]!;
+    serverError.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    serverError.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:error', data: JSON.stringify({ code: 4201 }) }),
+    }));
+    expect(onPrimarySubscriptionUnavailable).toHaveBeenLastCalledWith('server-error');
+    expect(serverError.closeCalls).toBe(1);
+    client.dispose();
+  });
+
+  it('confirms primary readiness only for its exact subscription or a validated exact-channel frame', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onPrimarySubscriptionReady = vi.fn();
+    const client = new PusherClient(1, 2, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onPrimarySubscriptionReady,
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'pusher_internal:subscription_succeeded',
+        channel: 'channel.2',
+        data: '{}',
+      }),
+    }));
+    expect(onPrimarySubscriptionReady).not.toHaveBeenCalled();
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'App\\Events\\ChatMessageEvent',
+        channel: 'chatrooms.1.v2',
+        data: JSON.stringify({
+          id: 'proof', content: 'ready', created_at: '', chatroom_id: 1,
+          sender: { id: 1, username: 'u', slug: 'u' },
+        }),
+      }),
+    }));
+    expect(onPrimarySubscriptionReady).toHaveBeenCalledOnce();
+    client.dispose();
+  });
+
   it('ignores a queued socket message after disposal', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const onMessage = vi.fn();
@@ -445,6 +577,44 @@ describe('PusherClient lifecycle', () => {
     expect(onMessage).not.toHaveBeenCalled();
   });
 
+  it('keeps only the replacement session live across rapid mode and channel lifecycle changes', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const staleMessages = vi.fn();
+    const currentMessages = vi.fn();
+    const first = new PusherClient(1, 2, {
+      onMessage: staleMessages,
+      onUserBanned: vi.fn(),
+    });
+    first.connect();
+    const staleSocket = FakeWebSocket.instances[0]!;
+    establishPrimary(staleSocket, 1);
+    first.dispose();
+
+    const replacement = new PusherClient(3, 4, {
+      onMessage: currentMessages,
+      onUserBanned: vi.fn(),
+    });
+    replacement.connect();
+    const currentSocket = FakeWebSocket.instances[1]!;
+    establishPrimary(currentSocket, 3);
+    const frame = (channel: string, id: string) => JSON.stringify({
+      event: 'App\\Events\\ChatMessageEvent',
+      channel,
+      data: JSON.stringify({
+        id, content: id, created_at: '', chatroom_id: 3,
+        sender: { id: 1, username: 'u', slug: 'u' },
+      }),
+    });
+    staleSocket.dispatchEvent(new MessageEvent('message', { data: frame('chatrooms.1.v2', 'stale') }));
+    currentSocket.dispatchEvent(new MessageEvent('message', { data: frame('chatrooms.3.v2', 'current') }));
+
+    expect(staleSocket.closeCalls).toBe(1);
+    expect(currentSocket.closeCalls).toBe(0);
+    expect(staleMessages).not.toHaveBeenCalled();
+    expect(currentMessages).toHaveBeenCalledWith(expect.objectContaining({ id: 'current' }));
+    replacement.dispose();
+  });
+
   it('probes an idle connection and stays connected when any frame arrives in reply', () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -457,6 +627,7 @@ describe('PusherClient lifecycle', () => {
     client.connect();
     const socket = FakeWebSocket.instances[0];
     if (!socket) throw new Error('missing fake socket');
+    establishPrimary(socket);
 
     vi.advanceTimersByTime(2 * 60 * 1000);
     expect(socket.sent).toContain(JSON.stringify({ event: 'pusher:ping', data: {} }));
@@ -481,6 +652,7 @@ describe('PusherClient lifecycle', () => {
       onDisconnected,
     });
     client.connect();
+    establishPrimary(FakeWebSocket.instances[0]!);
 
     vi.advanceTimersByTime(2 * 60 * 1000 + 30_000);
     expect(onDisconnected).toHaveBeenCalledTimes(1);
@@ -672,6 +844,13 @@ describe('PusherClient lifecycle', () => {
 
     socket.dispatchEvent(new MessageEvent('message', {
       data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'pusher_internal:subscription_succeeded',
+        channel: 'chatrooms.1.v2',
+        data: '{}',
+      }),
     }));
     vi.advanceTimersByTime(10_000);
 

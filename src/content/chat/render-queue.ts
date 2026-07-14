@@ -6,6 +6,7 @@ import type { ChatDomRegistry, ChatMessage } from './message-store';
 const FLUSH_INTERVAL_MS = 250;
 const MAX_BATCH_SIZE = 50;
 const HIDDEN_FLUSH_DELAY_MS = 0;
+const MOUNT_RETRY_DELAY_MS = 250;
 
 export interface RenderQueueOptions {
   getContainer: () => HTMLElement | null;
@@ -67,32 +68,52 @@ export class RenderQueue {
       this.frameId = window.setTimeout(render, HIDDEN_FLUSH_DELAY_MS);
     } else {
       this.frameUsesTimeout = false;
-      this.frameId = window.requestAnimationFrame(render);
+      // Test harnesses and browser shims may invoke RAF synchronously. Do not overwrite the
+      // callback's `frameId = null` with the returned id after it already rendered.
+      let renderedSynchronously = false;
+      const id = window.requestAnimationFrame(() => {
+        renderedSynchronously = true;
+        render();
+      });
+      if (!renderedSynchronously) this.frameId = id;
     }
   }
 
   private renderNextBatch(): void {
     if (this.disposed || this.pending.length === 0) return;
-    const batch = this.pending.splice(0, MAX_BATCH_SIZE);
     const container = this.options.getContainer();
     if (!container) {
-      logger.warn('render-queue: container not found, dropping batch of', batch.length);
-      this.scheduleRender();
+      logger.debug('render-queue: guarded container unavailable; retaining', this.pending.length, 'queued rows');
+      if (this.timerId === null) {
+        this.timerId = window.setTimeout(() => {
+          this.timerId = null;
+          this.scheduleRender();
+        }, MOUNT_RETRY_DELAY_MS);
+      }
       return;
     }
+    const batch = this.pending.splice(0, MAX_BATCH_SIZE);
     const wasAtBottom = isNearBottom(container);
     const fragment = document.createDocumentFragment();
     const appended: HTMLElement[] = [];
     for (const message of batch) {
       if (this.options.shouldRender && !this.options.shouldRender(message)) continue;
-      const element = buildMessageElement(message);
-      this.options.registry.register(element, message);
-      fragment.appendChild(element);
-      appended.push(element);
+      try {
+        const element = buildMessageElement(message);
+        this.options.registry.register(element, message);
+        fragment.appendChild(element);
+        appended.push(element);
+      } catch (error) {
+        logger.error('render-queue: row render failed', message.id, error);
+      }
     }
     if (appended.length > 0) {
       container.appendChild(fragment);
-      this.options.onFlush?.(appended, wasAtBottom);
+      try {
+        this.options.onFlush?.(appended, wasAtBottom);
+      } catch (error) {
+        logger.error('render-queue: flush callback failed', error);
+      }
     }
     this.scheduleRender();
   }

@@ -59,6 +59,9 @@ const PINNED_MESSAGE_HOST_ID = 'kickflow-pinned-message-host';
 const OWN_LIST_ID = 'kickflow-message-list';
 const PRESERVED_SWEEP_INTERVAL_MS = 60_000;
 const NAVIGATION_POLL_INTERVAL_MS = 400;
+const CHANNEL_RESOLUTION_ATTEMPT_TIMEOUT_MS = 6_000;
+const INITIAL_NO_CONTENT_FALLBACK_MS = 15_000;
+const PRIMARY_RECONNECT_GRACE_MS = 12_000;
 
 const BOOLEAN_FLAG_KEYS = [
   'showDeletedMessages',
@@ -235,6 +238,7 @@ export interface PinnedMessageController {
 export function createPinnedMessageController(
   host: HTMLElement,
   onShow: () => void = () => undefined,
+  onHide: () => void = () => undefined,
 ): PinnedMessageController {
   const state = new ActivePinnedMessageState();
   let preRenderedContent: Node | null = null;
@@ -243,6 +247,7 @@ export function createPinnedMessageController(
     if (!pin) {
       host.replaceChildren();
       host.style.display = 'none';
+      onHide();
       return;
     }
     const element = buildPinnedMessageElement(
@@ -329,7 +334,7 @@ interface ResolvedChannel {
   subscriberBadges: SubscriberBadge[];
 }
 
-async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
+export async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
   // Same-origin credentials (the fetch default — no explicit `credentials: 'omit'`): the content
   // script runs ON https://kick.com/*, so this is the user's OWN browser calling the site it's
   // already logged into, exactly like the page's own API calls. Cloudflare 429s/challenges
@@ -340,8 +345,13 @@ async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
   // any other non-OK status is terminal. On total failure the fail-safe keeps native chat.
   const url = `https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`;
   for (let attempt = 0; attempt < CHATROOM_ID_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), CHANNEL_RESOLUTION_ATTEMPT_TIMEOUT_MS);
     try {
-      const response = await fetch(url, { headers: { accept: 'application/json' } });
+      const response = await fetch(url, {
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      });
       if (response.ok) {
         const json = (await response.json()) as {
           id?: number;
@@ -371,6 +381,8 @@ async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
       }
     } catch (error) {
       logger.warn('bootstrap: channel lookup threw', error, '(retrying)');
+    } finally {
+      window.clearTimeout(timeoutId);
     }
     if (attempt < CHATROOM_ID_MAX_ATTEMPTS - 1) {
       await new Promise((resolve) => setTimeout(resolve, CHATROOM_ID_RETRY_BASE_MS * 2 ** attempt));
@@ -521,7 +533,7 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
-    html.kickflow-chat-active [data-kickflow-native-pin-hidden] { display: none !important; }
+    html.kickflow-pin-surface-active [data-kickflow-native-pin-hidden] { display: none !important; }
     a[data-testid^="sidebar-following-channel-"][data-kickflow-live="false"],
     a[data-testid^="sidebar-recommended-channel-"][data-kickflow-live="false"] { display: none !important; }
     a[data-testid^="sidebar-following-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="true"],
@@ -1107,7 +1119,13 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
     const client = new PusherClient(chatroomId, channelId, {
       onConnected: () => {
+        setStatus({ reason: 'Pusher soketi bağlı — chatroom aboneliği bekleniyor…' });
+      },
+      onPrimarySubscriptionReady: () => {
         setStatus({ pusherConnected: true, active: true, reason: 'aktif — native chat işaretleniyor' });
+      },
+      onPrimarySubscriptionUnavailable: () => {
+        setStatus({ pusherConnected: false, active: false, reason: 'chatroom aboneliği bekleniyor — native chat' });
       },
       onDisconnected: () => {
         setStatus({ pusherConnected: false });
@@ -1163,13 +1181,12 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   new NavbarSettingsButton(lifecycle, panel);
 
   const mount = new ChatOverlayMount(lifecycle);
-  let activated = false;
-  const pinnedMessageController = createPinnedMessageController(mount.pinnedMessageHost, () => {
-    if (activated) return;
-    activated = true;
-    mount.activate();
-    setStatus({ active: true, reason: 'aktif — sabitlenmiş mesaj gösteriliyor' });
-  });
+  mount.setProbing();
+  const pinnedMessageController = createPinnedMessageController(
+    mount.pinnedMessageHost,
+    () => mount.pinVisibilityChanged(),
+    () => mount.pinVisibilityChanged(),
+  );
   new NativePinMirror(lifecycle, pinnedMessageController);
   refreshActivePinnedMessage = pinnedMessageController.refresh;
   lifecycle.add(() => {
@@ -1182,6 +1199,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   scrollPill.className = 'kickflow-scroll-pill';
   scrollPill.textContent = '↓ Yeni mesajlar';
   scrollPill.style.display = 'none';
+  scrollPill.style.pointerEvents = 'auto';
   const scrollFollow = new ScrollFollowController(ownList, {
     onPinnedChange: (pinned) => {
       if (pinned) scrollPill.style.display = 'none';
@@ -1196,16 +1214,15 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   lifecycle.add(() => scrollPill.remove());
 
   const renderQueue = new RenderQueue({
-    getContainer: () => ownList,
+    getContainer: () => mount.getRenderContainer(),
     registry,
     // A delete can arrive while its ChatMessageEvent is waiting in RenderQueue's 250ms batch.
     // Only render objects that this session's store still owns: this drops those removed-before-
     // flush rows and also prevents a replayed Pusher/history id from creating a duplicate row.
     shouldRender: (message) => store.getMessageById(message.id) === message,
     onFlush: (appended /*, wasAtBottom */) => {
-      if (!activated && appended.length > 0) {
-        activated = true;
-        mount.activate();
+      mount.noteContentAppended(appended);
+      if (mount.state === 'active') {
         setStatus({ active: true, reason: 'aktif — kendi liste render ediliyor' });
       }
 
@@ -1229,16 +1246,33 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     if (store.addMessage(message)) renderQueue.enqueue(message);
   };
 
+  lifecycle.setTimeout(() => {
+    mount.initialNoContentDeadline();
+    if (mount.state === 'fallback') {
+      setStatus({ active: false, reason: 'içerik hazır değil — native chat, arka planda yeniden deneniyor' });
+    }
+  }, INITIAL_NO_CONTENT_FALLBACK_MS);
+
   resolveChannel(slug).then(async (resolved) => {
     if (lifecycle.isDisposed) return;
     if (!resolved) {
       logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
-      setStatus({ reason: 'chatroom-id çözülemedi — native chat' });
+      mount.failOpen('channel-resolution-failed');
+      setStatus({ active: false, reason: 'chatroom-id çözülemedi — native chat' });
       return;
     }
     setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId, channelId } = resolved;
     setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
+    let primaryReady = false;
+    let hasPrimaryReadyOnce = false;
+    let reconnectGraceTimer: number | null = null;
+    const clearReconnectGrace = (): void => {
+      if (reconnectGraceTimer === null) return;
+      window.clearTimeout(reconnectGraceTimer);
+      reconnectGraceTimer = null;
+    };
+    lifecycle.add(clearReconnectGrace);
     const historyBackfill = new ChatHistoryBackfill(channelId, {
       isDisposed: () => lifecycle.isDisposed,
       onMessages: (history) => {
@@ -1246,19 +1280,64 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
           enqueueOnce(message);
         }
       },
+      onResult: (result) => {
+        if (result.status === 'success') {
+          if (result.messages.length === 0 && !primaryReady && mount.state !== 'active') {
+            setStatus({ reason: 'geçmiş boş — canlı chatroom aboneliği bekleniyor…' });
+          }
+          return;
+        }
+        if (mount.state !== 'active') {
+          setStatus({ reason: 'geçmiş alınamadı — canlı chatroom aboneliği bekleniyor…' });
+        }
+      },
     });
+    // History is independent from the socket handshake. Starting it now closes the initial gap
+    // even when WebSocket establishment is slow or temporarily unavailable.
+    historyBackfill.request();
     const systemEventCallbacks = createSystemEventCallbacks(enqueueOnce, chatroomId);
     const client = new PusherClient(chatroomId, channelId, {
       onConnected: () => {
-        setStatus({ pusherConnected: true });
-        if (!getStatus().active) setStatus({ reason: 'Pusher bağlı — geçmiş yükleniyor…' });
-        // Subscribe before history: messages emitted while the fetch retries are live-rendered,
-        // then this backfill closes the initial/reconnect gap. Store id de-duping makes overlap
-        // harmless, and ChatHistoryBackfill queues one fresh request for every reconnect.
-        historyBackfill.request();
+        if (!getStatus().active) setStatus({ reason: 'Pusher soketi bağlı — chatroom aboneliği bekleniyor…' });
+      },
+      onPrimarySubscriptionReady: () => {
+        primaryReady = true;
+        clearReconnectGrace();
+        mount.setPrimaryReady();
+        setStatus({
+          pusherConnected: true,
+          active: mount.state === 'active',
+          reason: mount.state === 'active'
+            ? 'aktif — chatroom aboneliği hazır'
+            : 'chatroom hazır — görünür chat alanı bekleniyor',
+        });
+        if (hasPrimaryReadyOnce) historyBackfill.request();
+        hasPrimaryReadyOnce = true;
+      },
+      onPrimarySubscriptionUnavailable: (reason) => {
+        primaryReady = false;
+        clearReconnectGrace();
+        mount.setPrimaryUnavailable(`primary-${reason}`);
+        setStatus({
+          pusherConnected: false,
+          active: false,
+          reason: `chatroom bağlantısı hazır değil (${reason}) — native chat`,
+        });
       },
       onDisconnected: () => {
+        const keepDuringGrace = mount.state === 'active';
+        primaryReady = false;
         setStatus({ pusherConnected: false });
+        if (!keepDuringGrace) return;
+        mount.setReconnecting();
+        setStatus({ active: true, reason: 'yeniden bağlanıyor…' });
+        clearReconnectGrace();
+        reconnectGraceTimer = window.setTimeout(() => {
+          reconnectGraceTimer = null;
+          if (primaryReady || lifecycle.isDisposed) return;
+          mount.setPrimaryUnavailable('primary-reconnect-grace-expired');
+          setStatus({ active: false, reason: 'chatroom yeniden bağlanamadı — native chat' });
+        }, PRIMARY_RECONNECT_GRACE_MS);
       },
       onMessage: (message) => {
         enqueueOnce(message);
@@ -1387,6 +1466,7 @@ function startSession(slug: string): void {
   const token = ++sessionToken;
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
+  document.documentElement.classList.remove('kickflow-pin-surface-active');
   configureUserCardSession(null);
 
   const lifecycle = new Lifecycle();
@@ -1437,6 +1517,7 @@ function teardownZombie(): void {
   document.getElementById('kickflow-footer-toggle')?.remove();
   document.getElementById('kickflow-navbar-settings')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
+  document.documentElement.classList.remove('kickflow-pin-surface-active');
 }
 
 /** Named so extension-reload zombie teardown can remove the page-event route too. */

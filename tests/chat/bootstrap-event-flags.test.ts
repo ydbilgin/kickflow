@@ -445,4 +445,24 @@ describe('bootstrap event display flags', () => {
       document.body.replaceChildren();
     }
   });
+
+  it('bounds and aborts every hung channel-resolution attempt before returning native fallback', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      }));
+
+    try {
+      const pending = bootstrap.resolveChannel('hung-channel');
+      await vi.advanceTimersByTimeAsync(6_000 + 800 + 6_000 + 1_600 + 6_000);
+
+      await expect(pending).resolves.toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true);
+    } finally {
+      fetchMock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });

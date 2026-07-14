@@ -27,6 +27,8 @@ const LIVENESS_IDLE_MS = 2 * 60 * 1000;
 const LIVENESS_PROBE_TIMEOUT_MS = 30 * 1000;
 const LIVENESS_CHECK_INTERVAL_MS = 30 * 1000;
 const CHANNEL_SUBSCRIPTION_CONFIRM_TIMEOUT_MS = 10 * 1000;
+export const PRIMARY_SUBSCRIPTION_CONFIRM_TIMEOUT_MS = 10 * 1000;
+export const PUSHER_ESTABLISHMENT_TIMEOUT_MS = 12 * 1000;
 
 export interface BanEventPayload {
   userId: number;
@@ -94,9 +96,22 @@ export interface PusherClientCallbacks {
   /** Fired on pusher:connection_established (before subscribe completes) — used only for
    * status reporting; the socket may still fail to subscribe to a private/invalid channel. */
   onConnected?: () => void;
+  /** Fired only after chatrooms.{id}.v2 confirms, or a validated event proves that exact
+   * subscription is delivering. This—not the socket handshake—is live chat readiness. */
+  onPrimarySubscriptionReady?: () => void;
+  /** Transport/readiness failures are explicit so own-mode can fail open immediately. */
+  onPrimarySubscriptionUnavailable?: (reason: PusherReadinessFailure) => void;
   /** Fired on socket close (before reconnect is scheduled) — status reporting only. */
   onDisconnected?: () => void;
 }
+
+export type PusherReadinessFailure =
+  | 'constructor-error'
+  | 'handshake-timeout'
+  | 'socket-error'
+  | 'server-error'
+  | 'subscription-error'
+  | 'subscription-timeout';
 
 /** Badge shape on the message payload wasn't pinned down to a strict schema in the
  * spec — normalize defensively, keeping only the fields message-view.ts needs and
@@ -394,6 +409,7 @@ export function normalizeChatroomUpdatedPayload(raw: unknown): ChatroomUpdatedEv
 }
 
 type ChannelSubscriptionState = 'idle' | 'pending' | 'active' | 'unavailable';
+type PrimarySubscriptionState = 'idle' | 'pending' | 'active';
 
 /** Opens KickFlow's own, independent, read-only Pusher connection — never the page's
  * authenticated one. Reconnects on both socket drop and on being reconnect()-ed after a
@@ -409,6 +425,9 @@ export class PusherClient {
   private livenessProbeTimer: number | null = null;
   private lastFrameAt = 0;
   private awaitingLivenessReply = false;
+  private establishmentTimer: number | null = null;
+  private primarySubscriptionTimer: number | null = null;
+  private primarySubscriptionState: PrimarySubscriptionState = 'idle';
   private channelSubscriptionTimer: number | null = null;
   private channelSubscriptionState: ChannelSubscriptionState = 'idle';
 
@@ -422,10 +441,24 @@ export class PusherClient {
     if (this.disposed) return;
     this.teardownSocket();
 
-    const socket = new WebSocket(PUSHER_URL);
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(PUSHER_URL);
+    } catch (error) {
+      logger.warn('pusher-client: WebSocket construction failed', error);
+      this.callbacks.onPrimarySubscriptionUnavailable?.('constructor-error');
+      this.scheduleReconnect();
+      return;
+    }
     this.socket = socket;
     this.startLivenessWatchdog();
     const isCurrentSocket = (): boolean => !this.disposed && this.socket === socket;
+    this.establishmentTimer = window.setTimeout(() => {
+      this.establishmentTimer = null;
+      if (!isCurrentSocket()) return;
+      logger.warn('pusher-client: connection establishment timed out; reconnecting');
+      this.failCurrentConnection('handshake-timeout');
+    }, PUSHER_ESTABLISHMENT_TIMEOUT_MS);
 
     socket.addEventListener('message', (event) => {
       if (!isCurrentSocket()) return;
@@ -437,7 +470,12 @@ export class PusherClient {
       // A close/message task from a replaced or disposed socket can run after a SPA session
       // changes. It must not mutate the new session's status or schedule a stray reconnect.
       if (!isCurrentSocket()) return;
+      this.socket = null;
       this.stopLivenessWatchdog();
+      this.clearReadinessTimers();
+      this.clearChannelSubscriptionTimer();
+      this.primarySubscriptionState = 'idle';
+      this.channelSubscriptionState = 'idle';
       this.callbacks.onDisconnected?.();
       this.scheduleReconnect();
     });
@@ -445,14 +483,24 @@ export class PusherClient {
     socket.addEventListener('error', (event) => {
       if (!isCurrentSocket()) return;
       logger.debug('pusher-client: socket error', event);
+      this.failCurrentConnection('socket-error');
     });
   }
 
   private subscribe(): void {
-    this.send({
+    if (this.send({
       event: 'pusher:subscribe',
-      data: { auth: '', channel: `chatrooms.${this.chatroomId}.v2` },
-    });
+      data: { auth: '', channel: this.primaryChannelName },
+    })) {
+      this.primarySubscriptionState = 'pending';
+      this.clearPrimarySubscriptionTimer();
+      this.primarySubscriptionTimer = window.setTimeout(() => {
+        this.primarySubscriptionTimer = null;
+        if (this.primarySubscriptionState !== 'pending') return;
+        logger.warn('pusher-client: primary chatroom subscription was not confirmed; reconnecting', this.primaryChannelName);
+        this.failCurrentConnection('subscription-timeout');
+      }, PRIMARY_SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
+    }
     if (this.send({
       event: 'pusher:subscribe',
       data: { auth: '', channel: this.channelName },
@@ -473,6 +521,48 @@ export class PusherClient {
 
   private get channelName(): string {
     return `channel.${this.channelId}`;
+  }
+
+  private get primaryChannelName(): string {
+    return `chatrooms.${this.chatroomId}.v2`;
+  }
+
+  private clearEstablishmentTimer(): void {
+    if (this.establishmentTimer === null) return;
+    window.clearTimeout(this.establishmentTimer);
+    this.establishmentTimer = null;
+  }
+
+  private clearPrimarySubscriptionTimer(): void {
+    if (this.primarySubscriptionTimer === null) return;
+    window.clearTimeout(this.primarySubscriptionTimer);
+    this.primarySubscriptionTimer = null;
+  }
+
+  private clearReadinessTimers(): void {
+    this.clearEstablishmentTimer();
+    this.clearPrimarySubscriptionTimer();
+  }
+
+  private confirmPrimarySubscription(): void {
+    if (this.primarySubscriptionState === 'active') return;
+    this.clearPrimarySubscriptionTimer();
+    this.primarySubscriptionState = 'active';
+    this.reconnectAttempt = 0;
+    this.callbacks.onPrimarySubscriptionReady?.();
+  }
+
+  private confirmPrimaryFromValidatedFrame(channel: string | undefined): void {
+    if (channel === this.primaryChannelName) this.confirmPrimarySubscription();
+  }
+
+  private rejectPrimarySubscription(payload: unknown): void {
+    logger.warn(
+      'pusher-client: primary chatroom subscription failed; reconnecting',
+      this.primaryChannelName,
+      typeof payload === 'string' ? payload : JSON.stringify(payload),
+    );
+    this.failCurrentConnection('subscription-error');
   }
 
   private clearChannelSubscriptionTimer(): void {
@@ -553,6 +643,10 @@ export class PusherClient {
     if (this.disposed || !this.socket) return;
     const socket = this.socket;
     this.stopLivenessWatchdog();
+    this.clearReadinessTimers();
+    this.clearChannelSubscriptionTimer();
+    this.primarySubscriptionState = 'idle';
+    this.channelSubscriptionState = 'idle';
     // Detach before close so its eventual close event cannot schedule a second reconnect.
     this.socket = null;
     try {
@@ -577,7 +671,7 @@ export class PusherClient {
     if (!eventName) return;
 
     if (eventName === 'pusher:connection_established') {
-      this.reconnectAttempt = 0;
+      this.clearEstablishmentTimer();
       this.subscribe();
       this.callbacks.onConnected?.();
       return;
@@ -593,13 +687,19 @@ export class PusherClient {
       // reconnect/heartbeat logic recovers; a single normal connection does not see these.
       const data = this.parseInnerData(frame.data);
       logger.debug('pusher-client: server error frame', typeof data === 'string' ? data : JSON.stringify(data));
+      this.failCurrentConnection('server-error');
       return;
     }
     if (eventName === 'pusher_internal:subscription_succeeded') {
+      if (frame.channel === this.primaryChannelName) this.confirmPrimarySubscription();
       if (frame.channel === this.channelName) this.confirmChannelSubscription();
       return;
     }
     if (eventName === 'pusher:subscription_error') {
+      if (frame.channel === this.primaryChannelName) {
+        this.rejectPrimarySubscription(this.parseInnerData(frame.data));
+        return;
+      }
       if (frame.channel === this.channelName) this.rejectChannelSubscription(this.parseInnerData(frame.data));
       return;
     }
@@ -619,6 +719,7 @@ export class PusherClient {
           }
           return;
         }
+        this.confirmPrimaryFromValidatedFrame(frame.channel);
         this.callbacks.onMessage(message);
         return;
       }
@@ -628,6 +729,7 @@ export class PusherClient {
         }
         const normalized = normalizeBanPayload(payload);
         if (normalized) {
+          this.confirmPrimaryFromValidatedFrame(frame.channel);
           this.callbacks.onUserBanned(normalized);
         } else {
           logger.warn('pusher-client: UserBannedEvent payload matched neither known shape', payload);
@@ -642,6 +744,7 @@ export class PusherClient {
         // distinguishes an AI-moderation delete (with the flagged rule) from a human-mod delete.
         const normalized = normalizeDeletePayload(payload);
         if (!normalized) return;
+        this.confirmPrimaryFromValidatedFrame(frame.channel);
         this.callbacks.onMessageDeleted?.(normalized);
         return;
       }
@@ -651,6 +754,7 @@ export class PusherClient {
           logger.warn('pusher-client: SubscriptionEvent payload did not match the captured shape', payload);
           return;
         }
+        this.confirmPrimaryFromValidatedFrame(frame.channel);
         this.callbacks.onSubscription?.(normalized);
         return;
       }
@@ -673,6 +777,7 @@ export class PusherClient {
           logger.warn('pusher-client: StreamHostEvent payload did not match the captured shape', payload);
           return;
         }
+        this.confirmPrimaryFromValidatedFrame(frame.channel);
         this.callbacks.onHost?.(normalized);
         return;
       }
@@ -682,6 +787,7 @@ export class PusherClient {
           logger.warn('pusher-client: PinnedMessageCreatedEvent payload did not match the captured shape', payload);
           return;
         }
+        this.confirmPrimaryFromValidatedFrame(frame.channel);
         this.callbacks.onPinnedMessage?.(normalized);
         return;
       }
@@ -691,6 +797,7 @@ export class PusherClient {
           logger.warn('pusher-client: ChatroomUpdatedEvent payload did not match the captured shape', payload);
           return;
         }
+        this.confirmPrimaryFromValidatedFrame(frame.channel);
         this.callbacks.onChatroomUpdated?.(normalized);
         return;
       }
@@ -715,6 +822,27 @@ export class PusherClient {
     }
   }
 
+  private failCurrentConnection(reason: PusherReadinessFailure): void {
+    if (this.disposed) return;
+    const socket = this.socket;
+    this.socket = null;
+    this.stopLivenessWatchdog();
+    this.clearReadinessTimers();
+    this.clearChannelSubscriptionTimer();
+    this.primarySubscriptionState = 'idle';
+    this.channelSubscriptionState = 'idle';
+    if (socket) {
+      try {
+        socket.close();
+      } catch {
+        // already closing/closed — reconnect scheduling below remains authoritative
+      }
+    }
+    this.callbacks.onPrimarySubscriptionUnavailable?.(reason);
+    if (socket) this.callbacks.onDisconnected?.();
+    this.scheduleReconnect();
+  }
+
   private scheduleReconnect(): void {
     if (this.disposed || this.reconnectTimer !== null) return;
     const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempt, RECONNECT_MAX_DELAY_MS);
@@ -724,7 +852,9 @@ export class PusherClient {
 
   private teardownSocket(): void {
     this.stopLivenessWatchdog();
+    this.clearReadinessTimers();
     this.clearChannelSubscriptionTimer();
+    this.primarySubscriptionState = 'idle';
     this.channelSubscriptionState = 'idle';
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);

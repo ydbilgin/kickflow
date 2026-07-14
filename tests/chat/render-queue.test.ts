@@ -28,6 +28,30 @@ afterEach(() => {
 });
 
 describe('RenderQueue', () => {
+  it('retains a batch while the guarded mount is unavailable and renders it after recovery', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    let available = false;
+    const queue = new RenderQueue({
+      getContainer: () => available ? container : null,
+      registry: new ChatDomRegistry(),
+    });
+
+    queue.enqueue(message('mount-gap'));
+    vi.advanceTimersByTime(250);
+    expect(container.childElementCount).toBe(0);
+
+    available = true;
+    vi.advanceTimersByTime(250);
+    expect(container.textContent).toContain('queued message');
+    queue.dispose();
+  });
+
   it('renders a store-backed host event only once when the same synthetic id is received twice', () => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {

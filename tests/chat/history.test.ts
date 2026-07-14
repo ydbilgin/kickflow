@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ChatHistoryBackfill, fetchChatHistory } from '../../src/content/chat/history';
+import { ChatHistoryBackfill, fetchChatHistory, fetchChatHistoryResult } from '../../src/content/chat/history';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
 
 function response(status: number, body?: unknown): Response {
@@ -55,6 +55,32 @@ describe('fetchChatHistory', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://web.kick.com/api/v1/chat/123/history');
     expect(messages.map((message) => message.id)).toEqual(['earlier', 'later']);
   });
+
+  it('distinguishes a legitimate empty history from a terminal response', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(200, { data: { messages: [] } }))
+      .mockResolvedValueOnce(response(404));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchChatHistoryResult(123)).resolves.toEqual({ status: 'success', messages: [] });
+    await expect(fetchChatHistoryResult(123)).resolves.toMatchObject({ status: 'error', reason: 'terminal-http' });
+  });
+
+  it('aborts a hung attempt and reports exhaustion after bounded retries', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = fetchChatHistoryResult(123);
+    await vi.advanceTimersByTimeAsync(6_000 + 800 + 6_000 + 1_600 + 6_000);
+
+    await expect(pending).resolves.toMatchObject({ status: 'error', reason: 'exhausted' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls.every(([, init]) => init.signal instanceof AbortSignal)).toBe(true);
+  });
 });
 
 describe('ChatHistoryBackfill', () => {
@@ -83,5 +109,22 @@ describe('ChatHistoryBackfill', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(received).toEqual([['initial'], ['reconnect']]);
+  });
+
+  it('surfaces success-empty and terminal states independently from message delivery', async () => {
+    const onMessages = vi.fn();
+    const onResult = vi.fn();
+    const backfill = new ChatHistoryBackfill(123, {
+      isDisposed: () => false,
+      onMessages,
+      onResult,
+    }, vi.fn().mockResolvedValue({ status: 'success', messages: [] }));
+
+    backfill.request();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onMessages).toHaveBeenCalledWith([]);
+    expect(onResult).toHaveBeenCalledWith({ status: 'success', messages: [] });
   });
 });

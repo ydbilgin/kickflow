@@ -742,4 +742,42 @@ describe('own-mode native pin mirror', () => {
     lifecycle.dispose();
     fetchMock.mockRestore();
   });
+
+  it('keeps native messages visible when a valid pin arrives before channel lookup resolves, including after dismiss', async () => {
+    featureFlags.chatMode = 'own';
+    featureFlags.showPinnedMessage = true;
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    const fixture = createFixture();
+    vi.spyOn(fixture.messages, 'getBoundingClientRect').mockReturnValue({
+      width: 320, height: 480, left: 0, top: 0, right: 320, bottom: 480, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const nativeRow = document.createElement('div');
+    nativeRow.textContent = 'native remains visible';
+    fixture.messages.append(nativeRow);
+    fillPin(fixture.inner, 'BotRix', 'pin before lookup');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>(() => undefined));
+    const lifecycle = new Lifecycle();
+    activeLifecycles.add(lifecycle);
+
+    bootstrap.initChatIntegrity('unresolved-channel', lifecycle);
+    await flushMutations();
+
+    const host = document.getElementById('kickflow-pinned-message-host');
+    expect(host?.textContent).toContain('pin before lookup');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
+    expect(getComputedStyle(nativeRow).visibility).not.toBe('hidden');
+
+    host?.querySelector<HTMLButtonElement>('.kickflow-pinned-message__dismiss')?.click();
+    expect(host?.childElementCount).toBe(0);
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
+    expect(getComputedStyle(nativeRow).visibility).not.toBe('hidden');
+
+    lifecycle.dispose();
+    fetchMock.mockRestore();
+  });
 });
