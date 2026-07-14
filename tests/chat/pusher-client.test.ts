@@ -6,6 +6,7 @@ import {
   normalizeChannelSubscriptionPayload,
   normalizeDeletePayload,
   normalizeGiftedSubscriptionsPayload,
+  normalizeKicksGiftedPayload,
   normalizeHostPayload,
   normalizeMessage,
   normalizePinnedMessagePayload,
@@ -360,6 +361,80 @@ describe('pusher-client normalizers', () => {
       gifted_usernames: ['recipient'],
       gifter_username: 'gifter',
       gifted_total: '1',
+    })).toBeNull();
+  });
+
+  it('normalizes a real captured KicksGifted payload and rejects malformed ones', () => {
+    expect(normalizeKicksGiftedPayload({
+      gift_transaction_id: '340003001122334',
+      message: 'gg wp',
+      sender: {
+        id: 27183991,
+        username: 'TallSkydiver',
+        username_color: '#FF9D00',
+        profile_picture: 'https://files.kick.com/images/user/27183991/profile.webp',
+      },
+      gift: {
+        gift_id: 7,
+        name: 'Rage Quit',
+        amount: 500,
+        type: 'kicks',
+        tier: 'tier_1',
+        character_limit: 200,
+        pinned_time: 600000000000,
+      },
+      created_at: '2026-07-14T22:00:00Z',
+      expires_at: '2026-07-14T22:10:00Z',
+    })).toEqual({
+      giftTransactionId: '340003001122334',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: 'gg wp',
+    });
+
+    // Optional secondary fields collapse to null when absent/blank; the row still validates.
+    expect(normalizeKicksGiftedPayload({
+      gift_transaction_id: 'txn-2',
+      message: '   ',
+      sender: { id: 5, username: 'Solo' },
+      gift: { amount: 25 },
+    })).toEqual({
+      giftTransactionId: 'txn-2',
+      senderUsername: 'Solo',
+      amount: 25,
+      giftName: null,
+      senderMessage: null,
+    });
+
+    // Missing / empty transaction id
+    expect(normalizeKicksGiftedPayload({
+      gift_transaction_id: '',
+      sender: { id: 5, username: 'Solo' },
+      gift: { amount: 25 },
+    })).toBeNull();
+    // Invalid sender id (non-positive)
+    expect(normalizeKicksGiftedPayload({
+      gift_transaction_id: 'txn-3',
+      sender: { id: 0, username: 'Solo' },
+      gift: { amount: 25 },
+    })).toBeNull();
+    // Missing sender username
+    expect(normalizeKicksGiftedPayload({
+      gift_transaction_id: 'txn-4',
+      sender: { id: 5, username: '' },
+      gift: { amount: 25 },
+    })).toBeNull();
+    // Non-integer / non-positive amount
+    expect(normalizeKicksGiftedPayload({
+      gift_transaction_id: 'txn-5',
+      sender: { id: 5, username: 'Solo' },
+      gift: { amount: 12.5 },
+    })).toBeNull();
+    expect(normalizeKicksGiftedPayload({
+      gift_transaction_id: 'txn-6',
+      sender: { id: 5, username: 'Solo' },
+      gift: { amount: 0 },
     })).toBeNull();
   });
 
@@ -744,7 +819,7 @@ describe('PusherClient lifecycle', () => {
     client.dispose();
   });
 
-  it('subscribes to all three product channels and routes a modern gift explicitly', () => {
+  it('subscribes to all four product channels and routes a modern gift explicitly', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const onSubscription = vi.fn();
     const onGiftedSubscriptions = vi.fn();
@@ -772,6 +847,7 @@ describe('PusherClient lifecycle', () => {
       { event: 'pusher:subscribe', data: { auth: '', channel: 'chatrooms.15250312.v2' } },
       { event: 'pusher:subscribe', data: { auth: '', channel: 'channel.15462911' } },
       { event: 'pusher:subscribe', data: { auth: '', channel: 'chatroom_15250312' } },
+      { event: 'pusher:subscribe', data: { auth: '', channel: 'channel_15462911' } },
     ]);
 
     socket.dispatchEvent(new MessageEvent('message', {
@@ -972,6 +1048,65 @@ describe('PusherClient lifecycle', () => {
       'pusher-client: gift channel subscription was not confirmed; gifted subscriptions disabled',
       'chatroom_1',
     );
+    client.dispose();
+  });
+
+  it('routes a KicksGifted event on channel_{channelId} and ignores leaderboard updates', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const onKicksGifted = vi.fn();
+    const client = new PusherClient(15250312, 15462911, {
+      onMessage: vi.fn(),
+      onUserBanned: vi.fn(),
+      onKicksGifted,
+    });
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error('missing fake socket');
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ event: 'pusher:connection_established', data: '{}' }),
+    }));
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'pusher_internal:subscription_succeeded',
+        channel: 'channel_15462911',
+        data: '{}',
+      }),
+    }));
+
+    // Leaderboard state on the same channel must never become a Kicks row.
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'KicksLeaderboardUpdated',
+        channel: 'channel_15462911',
+        data: JSON.stringify({ leaderboard: [{ username: 'TallSkydiver', amount: 500 }] }),
+      }),
+    }));
+    expect(onKicksGifted).not.toHaveBeenCalled();
+
+    socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        event: 'KicksGifted',
+        channel: 'channel_15462911',
+        data: JSON.stringify({
+          gift_transaction_id: '340003001122334',
+          message: 'gg wp',
+          sender: { id: 27183991, username: 'TallSkydiver', username_color: '#FF9D00' },
+          gift: { gift_id: 7, name: 'Rage Quit', amount: 500, type: 'kicks', tier: 'tier_1' },
+          created_at: '2026-07-14T22:00:00Z',
+          expires_at: '2026-07-14T22:10:00Z',
+        }),
+      }),
+    }));
+
+    expect(onKicksGifted).toHaveBeenCalledOnce();
+    expect(onKicksGifted).toHaveBeenCalledWith({
+      giftTransactionId: '340003001122334',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: 'gg wp',
+    });
     client.dispose();
   });
 });

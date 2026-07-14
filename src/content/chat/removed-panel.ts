@@ -118,6 +118,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private banInlineCheckbox: HTMLInputElement | null = null;
   private subscriptionsCheckbox: HTMLInputElement | null = null;
   private giftedSubsCheckbox: HTMLInputElement | null = null;
+  private kicksCheckbox: HTMLInputElement | null = null;
   private hostRaidCheckbox: HTMLInputElement | null = null;
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private sidebarRefreshCheckbox: HTMLInputElement | null = null;
@@ -474,6 +475,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.giftedSubsCheckbox = giftedSubsCheckbox;
 
+    const { label: kicksLabel, checkbox: kicksCheckbox } = this.buildSettingsToggle(
+      'Kicks / bağışlar', 'Ücretli Kicks bağış etkinliklerini sohbet akışına ekler.', 'showKicks', featureFlags.showKicks,
+    );
+    this.kicksCheckbox = kicksCheckbox;
+
     const { label: hostRaidLabel, checkbox: hostRaidCheckbox } = this.buildSettingsToggle(
       'Host / Raid', 'Host ve raid etkinliklerini sohbet akışına ekler.', 'showHostRaid', featureFlags.showHostRaid,
     );
@@ -494,6 +500,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       banLabel,
       subscriptionsLabel,
       giftedSubsLabel,
+      kicksLabel,
       hostRaidLabel,
       modeChangesLabel,
       sidebarRefreshLabel,
@@ -868,6 +875,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.giftedSubsCheckbox && this.giftedSubsCheckbox.checked !== featureFlags.showGiftedSubs) {
       this.giftedSubsCheckbox.checked = featureFlags.showGiftedSubs;
     }
+    if (this.kicksCheckbox && this.kicksCheckbox.checked !== featureFlags.showKicks) {
+      this.kicksCheckbox.checked = featureFlags.showKicks;
+    }
     if (this.hostRaidCheckbox && this.hostRaidCheckbox.checked !== featureFlags.showHostRaid) {
       this.hostRaidCheckbox.checked = featureFlags.showHostRaid;
     }
@@ -959,6 +969,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.banInlineCheckbox = null;
     this.subscriptionsCheckbox = null;
     this.giftedSubsCheckbox = null;
+    this.kicksCheckbox = null;
     this.hostRaidCheckbox = null;
     this.modeChangesCheckbox = null;
     this.sidebarRefreshCheckbox = null;

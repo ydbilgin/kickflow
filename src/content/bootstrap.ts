@@ -18,6 +18,7 @@ import {
   type ChatroomUpdatedEventPayload,
   type GiftedSubscriptionsEventPayload,
   type HostEventPayload,
+  type KicksGiftedEventPayload,
   type SubscriptionEventPayload,
 } from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
@@ -64,6 +65,7 @@ const BOOLEAN_FLAG_KEYS = [
   'debugLogging',
   'showSubscriptions',
   'showGiftedSubs',
+  'showKicks',
   'showHostRaid',
   'showModeChanges',
   'showSidebarRefresh',
@@ -98,6 +100,7 @@ function isBooleanFlagKey(key: string): key is BooleanFlagKey {
 interface SystemEventCallbacks {
   onSubscription: (payload: SubscriptionEventPayload) => void;
   onGiftedSubscriptions: (payload: GiftedSubscriptionsEventPayload) => void;
+  onKicksGifted: (payload: KicksGiftedEventPayload) => void;
   onHost: (payload: HostEventPayload) => void;
   onChatroomUpdated: (payload: ChatroomUpdatedEventPayload) => void;
 }
@@ -146,6 +149,23 @@ export function createSystemEventCallbacks(
         `gift:${payload.chatroomId}:${encodeURIComponent(payload.correlationId)}`,
         payload.chatroomId,
         { kind: 'gifted-subscription', username: payload.gifterUsername, giftCount: payload.giftCount },
+      ));
+    },
+    onKicksGifted: (payload) => {
+      if (!featureFlags.showKicks) return;
+      // gift_transaction_id is the stable id → store id-dedup suppresses reconnect/replay.
+      // The KicksGifted payload carries no chatroom id (it rides channel_{channelId}); the
+      // store never filters system rows by chatroom, so 0 is a safe non-identifying value.
+      enqueueOnce(createSystemEventMessage(
+        `kicks:${encodeURIComponent(payload.giftTransactionId)}`,
+        0,
+        {
+          kind: 'kicks',
+          username: payload.senderUsername,
+          amount: payload.amount,
+          giftName: payload.giftName,
+          senderMessage: payload.senderMessage,
+        },
       ));
     },
     onHost: (payload) => {
@@ -1192,6 +1212,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       },
       onSubscription: systemEventCallbacks.onSubscription,
       onGiftedSubscriptions: systemEventCallbacks.onGiftedSubscriptions,
+      onKicksGifted: systemEventCallbacks.onKicksGifted,
       onHost: systemEventCallbacks.onHost,
       onChatroomUpdated: systemEventCallbacks.onChatroomUpdated,
       onUserBanned: (payload) => {
@@ -1430,6 +1451,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     debugLogging: featureFlags.debugLogging,
     showSubscriptions: featureFlags.showSubscriptions,
     showGiftedSubs: featureFlags.showGiftedSubs,
+    showKicks: featureFlags.showKicks,
     showHostRaid: featureFlags.showHostRaid,
     showModeChanges: featureFlags.showModeChanges,
     showSidebarRefresh: featureFlags.showSidebarRefresh,
@@ -1538,6 +1560,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_debugLogging',
     'kf_flag_showSubscriptions',
     'kf_flag_showGiftedSubs',
+    'kf_flag_showKicks',
     'kf_flag_showHostRaid',
     'kf_flag_showModeChanges',
     'kf_flag_showSidebarRefresh',
@@ -1554,6 +1577,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);
   if (typeof saved.kf_flag_showSubscriptions === 'boolean') setFeatureFlag('showSubscriptions', saved.kf_flag_showSubscriptions);
   if (typeof saved.kf_flag_showGiftedSubs === 'boolean') setFeatureFlag('showGiftedSubs', saved.kf_flag_showGiftedSubs);
+  if (typeof saved.kf_flag_showKicks === 'boolean') setFeatureFlag('showKicks', saved.kf_flag_showKicks);
   if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);

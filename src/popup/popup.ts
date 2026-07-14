@@ -22,6 +22,7 @@ interface StatusResponse extends KickFlowStatusSnapshot {
     debugLogging: boolean;
     showSubscriptions: boolean;
     showGiftedSubs: boolean;
+    showKicks: boolean;
     showHostRaid: boolean;
     showModeChanges: boolean;
     showSidebarRefresh: boolean;
@@ -117,6 +118,7 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-debug') as HTMLInputElement)).checked = res.flags.debugLogging;
   (($('t-subscriptions') as HTMLInputElement)).checked = res.flags.showSubscriptions;
   (($('t-gifted-subs') as HTMLInputElement)).checked = res.flags.showGiftedSubs;
+  (($('t-kicks') as HTMLInputElement)).checked = res.flags.showKicks;
   (($('t-host-raid') as HTMLInputElement)).checked = res.flags.showHostRaid;
   (($('t-mode-changes') as HTMLInputElement)).checked = res.flags.showModeChanges;
   (($('t-sidebar-refresh') as HTMLInputElement)).checked = res.flags.showSidebarRefresh;
@@ -143,12 +145,12 @@ async function refresh(): Promise<void> {
 }
 
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls',
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'chatMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'chatMode',
   value: boolean | 'native' | 'own'
 ): Promise<void> {
   const id = await activeTabId();
@@ -189,6 +191,7 @@ $('t-bans-inline').addEventListener('change', (e) => setFlag('preserveBansInline
 $('t-debug').addEventListener('change', (e) => setFlag('debugLogging', (e.target as HTMLInputElement).checked));
 $('t-subscriptions').addEventListener('change', (e) => setFlag('showSubscriptions', (e.target as HTMLInputElement).checked));
 $('t-gifted-subs').addEventListener('change', (e) => setFlag('showGiftedSubs', (e.target as HTMLInputElement).checked));
+$('t-kicks').addEventListener('change', (e) => setFlag('showKicks', (e.target as HTMLInputElement).checked));
 $('t-host-raid').addEventListener('change', (e) => setFlag('showHostRaid', (e.target as HTMLInputElement).checked));
 $('t-mode-changes').addEventListener('change', (e) => setFlag('showModeChanges', (e.target as HTMLInputElement).checked));
 $('t-sidebar-refresh').addEventListener('change', (e) => setFlag('showSidebarRefresh', (e.target as HTMLInputElement).checked));

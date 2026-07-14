@@ -12,6 +12,7 @@ const USER_BANNED_EVENT = 'App\\Events\\UserBannedEvent';
 const SUBSCRIPTION_EVENT = 'App\\Events\\SubscriptionEvent';
 const CHANNEL_SUBSCRIPTION_EVENT = 'App\\Events\\ChannelSubscriptionEvent';
 const GIFTED_SUBSCRIPTIONS_EVENT = 'GiftedSubscriptionsEvent';
+const KICKS_GIFTED_EVENT = 'KicksGifted';
 const STREAM_HOST_EVENT = 'App\\Events\\StreamHostEvent';
 const PINNED_MESSAGE_CREATED_EVENT = 'App\\Events\\PinnedMessageCreatedEvent';
 const CHATROOM_UPDATED_EVENT = 'App\\Events\\ChatroomUpdatedEvent';
@@ -76,6 +77,14 @@ export interface GiftedSubscriptionsEventPayload {
   giftCount: number;
 }
 
+export interface KicksGiftedEventPayload {
+  giftTransactionId: string;
+  senderUsername: string;
+  amount: number;
+  giftName: string | null;
+  senderMessage: string | null;
+}
+
 export interface HostEventPayload {
   chatroomId: number;
   hostUsername: string;
@@ -97,6 +106,7 @@ export interface PusherClientCallbacks {
   onMessageDeleted?: (payload: DeleteEventPayload) => void;
   onSubscription?: (payload: SubscriptionEventPayload) => void;
   onGiftedSubscriptions?: (payload: GiftedSubscriptionsEventPayload) => void;
+  onKicksGifted?: (payload: KicksGiftedEventPayload) => void;
   onHost?: (payload: HostEventPayload) => void;
   onPinnedMessage?: (payload: PinnedMessage) => void;
   onChatroomUpdated?: (payload: ChatroomUpdatedEventPayload) => void;
@@ -364,6 +374,34 @@ export function normalizeGiftedSubscriptionsPayload(raw: unknown): GiftedSubscri
   };
 }
 
+/** KicksGifted on channel_{channelId} — captured live 2026-07-14.
+ * Validates gift_transaction_id (non-empty string), sender.id (positive int),
+ * sender.username (non-empty string), and gift.amount (finite positive integer). */
+export function normalizeKicksGiftedPayload(raw: unknown): KicksGiftedEventPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  if (typeof data.gift_transaction_id !== 'string' || !data.gift_transaction_id.trim()) return null;
+
+  const sender = data.sender;
+  if (!sender || typeof sender !== 'object') return null;
+  const s = sender as Record<string, unknown>;
+  if (!isPositiveInteger(s.id)) return null;
+  if (typeof s.username !== 'string' || !s.username.trim()) return null;
+
+  const gift = data.gift;
+  if (!gift || typeof gift !== 'object') return null;
+  const g = gift as Record<string, unknown>;
+  if (!isPositiveInteger(g.amount)) return null;
+
+  return {
+    giftTransactionId: data.gift_transaction_id,
+    senderUsername: s.username,
+    amount: g.amount,
+    giftName: typeof g.name === 'string' && g.name.trim() ? g.name : null,
+    senderMessage: typeof data.message === 'string' && data.message.trim() ? data.message : null,
+  };
+}
+
 export function normalizeHostPayload(raw: unknown): HostEventPayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const data = raw as Record<string, unknown>;
@@ -463,6 +501,8 @@ export class PusherClient {
   private primarySubscriptionState: PrimarySubscriptionState = 'idle';
   private giftSubscriptionTimer: number | null = null;
   private giftSubscriptionState: GiftSubscriptionState = 'idle';
+  private kicksSubscriptionTimer: number | null = null;
+  private kicksSubscriptionState: GiftSubscriptionState = 'idle';
 
   constructor(
     private readonly chatroomId: number,
@@ -507,8 +547,10 @@ export class PusherClient {
       this.stopLivenessWatchdog();
       this.clearReadinessTimers();
       this.clearGiftSubscriptionTimer();
+      this.clearKicksSubscriptionTimer();
       this.primarySubscriptionState = 'idle';
       this.giftSubscriptionState = 'idle';
+      this.kicksSubscriptionState = 'idle';
       this.callbacks.onDisconnected?.();
       this.scheduleReconnect();
     });
@@ -556,6 +598,25 @@ export class PusherClient {
         );
       }, CHANNEL_SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
     }
+    // channel_{channelId} (underscore) is a distinct public channel from channel.{channelId}
+    // (dot); it carries paid Kicks gifts. Its own lifecycle mirrors the gift channel so an
+    // unconfirmed/failed subscription only disables Kicks rows, never the primary chat.
+    if (this.send({
+      event: 'pusher:subscribe',
+      data: { auth: '', channel: this.kicksChannelName },
+    })) {
+      this.kicksSubscriptionState = 'pending';
+      this.clearKicksSubscriptionTimer();
+      this.kicksSubscriptionTimer = window.setTimeout(() => {
+        this.kicksSubscriptionTimer = null;
+        if (this.kicksSubscriptionState !== 'pending') return;
+        this.kicksSubscriptionState = 'unavailable';
+        logger.warn(
+          'pusher-client: kicks channel subscription was not confirmed; kicks gifts disabled',
+          this.kicksChannelName,
+        );
+      }, CHANNEL_SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
+    }
   }
 
   private get legacyChannelName(): string {
@@ -564,6 +625,10 @@ export class PusherClient {
 
   private get giftChannelName(): string {
     return `chatroom_${this.chatroomId}`;
+  }
+
+  private get kicksChannelName(): string {
+    return `channel_${this.channelId}`;
   }
 
   private get primaryChannelName(): string {
@@ -629,6 +694,27 @@ export class PusherClient {
     );
   }
 
+  private clearKicksSubscriptionTimer(): void {
+    if (this.kicksSubscriptionTimer === null) return;
+    window.clearTimeout(this.kicksSubscriptionTimer);
+    this.kicksSubscriptionTimer = null;
+  }
+
+  private confirmKicksSubscription(): void {
+    this.clearKicksSubscriptionTimer();
+    this.kicksSubscriptionState = 'active';
+  }
+
+  private rejectKicksSubscription(payload: unknown): void {
+    this.clearKicksSubscriptionTimer();
+    this.kicksSubscriptionState = 'unavailable';
+    logger.warn(
+      'pusher-client: kicks channel subscription failed; kicks gifts disabled',
+      this.kicksChannelName,
+      typeof payload === 'string' ? payload : JSON.stringify(payload),
+    );
+  }
+
   private send(payload: unknown): boolean {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(payload));
@@ -688,8 +774,10 @@ export class PusherClient {
     this.stopLivenessWatchdog();
     this.clearReadinessTimers();
     this.clearGiftSubscriptionTimer();
+    this.clearKicksSubscriptionTimer();
     this.primarySubscriptionState = 'idle';
     this.giftSubscriptionState = 'idle';
+    this.kicksSubscriptionState = 'idle';
     // Detach before close so its eventual close event cannot schedule a second reconnect.
     this.socket = null;
     try {
@@ -736,6 +824,7 @@ export class PusherClient {
     if (eventName === 'pusher_internal:subscription_succeeded') {
       if (frame.channel === this.primaryChannelName) this.confirmPrimarySubscription();
       if (frame.channel === this.giftChannelName) this.confirmGiftSubscription();
+      if (frame.channel === this.kicksChannelName) this.confirmKicksSubscription();
       return;
     }
     if (eventName === 'pusher:subscription_error') {
@@ -744,6 +833,7 @@ export class PusherClient {
         return;
       }
       if (frame.channel === this.giftChannelName) this.rejectGiftSubscription(this.parseInnerData(frame.data));
+      if (frame.channel === this.kicksChannelName) this.rejectKicksSubscription(this.parseInnerData(frame.data));
       return;
     }
     if (eventName.startsWith('pusher_internal:') || eventName.startsWith('pusher:')) {
@@ -829,6 +919,21 @@ export class PusherClient {
         this.callbacks.onGiftedSubscriptions?.(normalized);
         return;
       }
+      case KICKS_GIFTED_EVENT: {
+        // Paid Kicks gifts arrive on channel_{channelId} only. Ignore look-alikes on other
+        // channels and stay silent once the subscription proved unavailable.
+        if (frame.channel !== this.kicksChannelName) return;
+        if (this.kicksSubscriptionState === 'unavailable') return;
+        const normalized = normalizeKicksGiftedPayload(payload);
+        if (!normalized) {
+          logger.warn('pusher-client: KicksGifted payload did not match the captured shape', payload);
+          return;
+        }
+        // Receiving the event proves channel_{channelId} is live if its confirmation was delayed.
+        this.confirmKicksSubscription();
+        this.callbacks.onKicksGifted?.(normalized);
+        return;
+      }
       case STREAM_HOST_EVENT: {
         const normalized = normalizeHostPayload(payload);
         if (!normalized) {
@@ -887,8 +992,10 @@ export class PusherClient {
     this.stopLivenessWatchdog();
     this.clearReadinessTimers();
     this.clearGiftSubscriptionTimer();
+    this.clearKicksSubscriptionTimer();
     this.primarySubscriptionState = 'idle';
     this.giftSubscriptionState = 'idle';
+    this.kicksSubscriptionState = 'idle';
     if (socket) {
       try {
         socket.close();
@@ -912,8 +1019,10 @@ export class PusherClient {
     this.stopLivenessWatchdog();
     this.clearReadinessTimers();
     this.clearGiftSubscriptionTimer();
+    this.clearKicksSubscriptionTimer();
     this.primarySubscriptionState = 'idle';
     this.giftSubscriptionState = 'idle';
+    this.kicksSubscriptionState = 'idle';
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

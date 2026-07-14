@@ -15,6 +15,8 @@ export interface FeatureFlags {
   showSubscriptions: boolean;
   /** Show new gifted-subscription events in KickFlow's own chat list. */
   showGiftedSubs: boolean;
+  /** Show Kicks gift events (paid gifts) in KickFlow's own chat list. */
+  showKicks: boolean;
   /** Show new host and raid events in KickFlow's own chat list. */
   showHostRaid: boolean;
   /** Show rows describing chatroom mode changes after the initial state snapshot. */
@@ -45,6 +47,7 @@ export const featureFlags: FeatureFlags = {
   preserveBansInline: true,
   showSubscriptions: true,
   showGiftedSubs: true,
+  showKicks: true,
   showHostRaid: true,
   showModeChanges: true,
   showSidebarRefresh: true,

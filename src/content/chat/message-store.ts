@@ -59,6 +59,7 @@ export interface ReplyContext {
 export type ChatSystemEvent =
   | { kind: 'subscription'; username: string; months: number }
   | { kind: 'gifted-subscription'; username: string; giftCount: number }
+  | { kind: 'kicks'; username: string; amount: number; giftName: string | null; senderMessage: string | null }
   | { kind: 'host'; username: string; numberViewers: number; optionalMessage: string | null }
   | { kind: 'mode'; mode: ChatroomModeKey; text: string };
 

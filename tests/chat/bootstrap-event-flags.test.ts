@@ -132,6 +132,72 @@ describe('bootstrap event display flags', () => {
     expect(rows.some((message) => message.systemEvent?.kind === 'gifted-subscription')).toBe(false);
   });
 
+  it('creates one kicks row with the captured sender, amount, and optional fields', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showKicks = true;
+
+    callbacks.onKicksGifted({
+      giftTransactionId: '340003001122334',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: 'gg wp',
+    });
+
+    const rows = store.getMessagesInArrivalOrder();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('kicks:340003001122334');
+    expect(rows[0]?.systemEvent).toEqual({
+      kind: 'kicks',
+      username: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: 'gg wp',
+    });
+  });
+
+  it('dedupes a replayed kicks frame by its gift_transaction_id', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showKicks = true;
+    const captured = {
+      giftTransactionId: '340003001122334',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: null,
+    };
+
+    callbacks.onKicksGifted(captured);
+    callbacks.onKicksGifted(captured);
+
+    expect(store.getMessagesInArrivalOrder()).toHaveLength(1);
+  });
+
+  it('does not ingest kicks rows when showKicks is off', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showKicks = false;
+
+    callbacks.onKicksGifted({
+      giftTransactionId: 'txn-off',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: null,
+      senderMessage: null,
+    });
+
+    expect(store.getMessagesInArrivalOrder()).toEqual([]);
+    featureFlags.showKicks = true;
+  });
+
   it('keeps the first mode snapshot silent, diffs all changed modes, and dedupes identical state', () => {
     const store = new ChatIntegrityStore();
     const callbacks = bootstrap.createSystemEventCallbacks((message) => {

@@ -100,6 +100,44 @@ describe('message-view safe rendering', () => {
     expect(row.querySelector('script')).toBeNull();
   });
 
+  it('renders a kicks row with safe user text, grouped amount, and optional fields', () => {
+    const basic = buildMessageElement(message('', undefined, {
+      id: 'kicks:txn-1',
+      type: 'kicks',
+      systemEvent: { kind: 'kicks', username: 'TallSkydiver', amount: 500, giftName: null, senderMessage: null },
+    }));
+
+    expect(basic.classList.contains('kickflow-event-row--kicks')).toBe(true);
+    expect(basic.querySelector('.kickflow-event-row__icon')?.textContent).toBe('💰');
+    expect(basic.querySelector('.kickflow-event-row__username')?.textContent).toBe('TallSkydiver');
+    expect(basic.querySelector('.kickflow-event-row__count')?.textContent).toBe('500');
+    expect(basic.textContent).toBe('💰TallSkydiver 500 KICKs hediye etti');
+
+    const rich = buildMessageElement(message('', undefined, {
+      id: 'kicks:txn-2',
+      type: 'kicks',
+      systemEvent: {
+        kind: 'kicks',
+        username: '***REMOVED***<script>',
+        amount: 1_234_567,
+        giftName: 'Rage Quit',
+        senderMessage: 'nice [emote:456:kek] <script>alert(1)</script>',
+      },
+    }));
+
+    const count = rich.querySelector<HTMLElement>('.kickflow-event-row__count');
+    // Large amounts are grouped for display, but the exact integer stays on the title.
+    expect(count?.textContent).toBe('1.234.567');
+    expect(count?.title).toBe('1234567');
+    expect(rich.querySelector('.kickflow-event-row__username')?.textContent).toBe('***REMOVED***<script>');
+    expect(rich.querySelector('.kickflow-event-row__gift')?.textContent).toBe('Rage Quit');
+    // The sender message travels the same safe emote/link path as ordinary chat content.
+    expect(rich.querySelector<HTMLImageElement>('.kickflow-event-row__note img.kickflow-emote')?.src)
+      .toBe('https://files.kick.com/emotes/456/fullsize');
+    expect(rich.textContent).toContain('<script>alert(1)</script>');
+    expect(rich.querySelector('script, svg')).toBeNull();
+  });
+
   it('renders host rows with safe user text, Turkish viewer formatting, and a viewerless fallback', () => {
     const unsafeUsername = '<img src=x onerror=alert(1)>';
     const withViewers = buildMessageElement(message('', undefined, {

@@ -441,9 +441,11 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
     ? '⭐'
     : event.kind === 'gifted-subscription'
       ? '🎁'
-      : event.kind === 'host'
-        ? '📡'
-        : '⚙';
+      : event.kind === 'kicks'
+        ? '💰'
+        : event.kind === 'host'
+          ? '📡'
+          : '⚙';
 
   if (event.kind === 'mode') {
     const text = document.createElement('span');
@@ -480,6 +482,29 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
     count.className = `${EVENT_ROW_CLASS}__count`;
     count.textContent = String(event.giftCount);
     body.append(count, document.createTextNode(' kişiye abonelik hediye etti'));
+  } else if (event.kind === 'kicks') {
+    body.appendChild(document.createTextNode(' '));
+    const count = document.createElement('span');
+    count.className = `${EVENT_ROW_CLASS}__count`;
+    // Group large amounts for readability; the exact value stays on the count title (below).
+    count.textContent = new Intl.NumberFormat('tr-TR').format(event.amount);
+    // Keep the precise integer available to screen readers / hover even when Intl groups it.
+    count.title = String(event.amount);
+    body.append(count, document.createTextNode(' KICKs hediye etti'));
+    // gift.name and the sender's message are attacker-controlled → same safe emote/link/mention
+    // path as ordinary chat content (appendParsedContent), never innerHTML.
+    if (event.giftName) {
+      const gift = document.createElement('span');
+      gift.className = `${EVENT_ROW_CLASS}__gift`;
+      appendParsedContent(gift, event.giftName);
+      body.append(document.createTextNode(' · '), gift);
+    }
+    if (event.senderMessage) {
+      const note = document.createElement('span');
+      note.className = `${EVENT_ROW_CLASS}__note`;
+      appendParsedContent(note, event.senderMessage);
+      body.append(document.createTextNode(' — '), note);
+    }
   } else if (event.numberViewers > 0) {
     body.appendChild(document.createTextNode(' '));
     const count = document.createElement('span');

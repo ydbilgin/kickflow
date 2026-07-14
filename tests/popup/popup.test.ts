@@ -24,6 +24,7 @@ const statusResponse = {
     debugLogging: false,
     showSubscriptions: false,
     showGiftedSubs: true,
+    showKicks: true,
     showHostRaid: false,
     showModeChanges: false,
     showSidebarRefresh: true,
@@ -116,10 +117,12 @@ describe('popup event display toggles', () => {
 
     expect((document.getElementById('t-subscriptions') as HTMLInputElement).checked).toBe(false);
     expect((document.getElementById('t-gifted-subs') as HTMLInputElement).checked).toBe(true);
+    expect((document.getElementById('t-kicks') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('t-host-raid') as HTMLInputElement).checked).toBe(false);
     expect((document.getElementById('t-mode-changes') as HTMLInputElement).checked).toBe(false);
     expect(document.querySelector('label[for="t-subscriptions"]')?.textContent).toBe('Abonelikler');
     expect(document.querySelector('label[for="t-gifted-subs"]')?.textContent).toBe('Hediye abonelikler');
+    expect(document.querySelector('label[for="t-kicks"]')?.textContent).toBe('Kicks / bağışlar');
     expect(document.querySelector('label[for="t-host-raid"]')?.textContent).toBe('Host / Raid');
     expect(document.querySelector('label[for="t-mode-changes"]')?.textContent).toBe('Mod değişiklikleri');
   });
@@ -132,6 +135,7 @@ describe('popup event display toggles', () => {
     for (const [id, key] of [
       ['t-subscriptions', 'showSubscriptions'],
       ['t-gifted-subs', 'showGiftedSubs'],
+      ['t-kicks', 'showKicks'],
       ['t-host-raid', 'showHostRaid'],
       ['t-mode-changes', 'showModeChanges'],
     ] as const) {

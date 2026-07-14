@@ -682,6 +682,7 @@ describe('RemovedMessagesPanel', () => {
     it.each([
       ['Abonelikler', 'showSubscriptions'],
       ['Hediye abonelikler', 'showGiftedSubs'],
+      ['Kicks / bağışlar', 'showKicks'],
       ['Host / Raid', 'showHostRaid'],
       ['Mod değişiklikleri', 'showModeChanges'],
       ['Otomatik tiyatro modu', 'autoTheater'],
