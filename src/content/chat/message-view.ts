@@ -1,8 +1,7 @@
-import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessageSender, type PinnedMessage, type PreservedMeta, type SubscriberBadge } from './message-store';
+import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
 import { isSafeKickSlug, openUserCard } from './user-card';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
-import { cloneSanitizedNativeDom } from './native-dom-sanitizer';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -10,7 +9,6 @@ export const BANNED_CLASS = 'kickflow-banned';
 export const TIMEOUT_CLASS = 'kickflow-timeout';
 export const DELETED_CLASS = 'kickflow-deleted';
 export const EVENT_ROW_CLASS = 'kickflow-event-row';
-export const PINNED_MESSAGE_CLASS = 'kickflow-pinned-message';
 
 // Kick official emotes only (confirmed scope — no 7TV/BTTV). Live-verified 2026-07-04:
 // `/fullsize` on this path returns 200 image/gif; the same URL without it returns 403.
@@ -425,125 +423,6 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
   text.appendChild(label);
   reply.appendChild(text);
   row.appendChild(reply);
-}
-
-/** Sticky Mode A pin banner. Structured payloads use the ordinary safe text/badge parsers; the
- * native-mirror path deep-clones already-rendered DOM nodes and never converts markup to a string. */
-export function buildPinnedMessageElement(
-  pin: PinnedMessage,
-  collapsed: boolean,
-  onDismiss: (pinId: string) => void,
-  onToggleCollapse: () => void,
-  preRenderedContent?: Node,
-  textExpanded = false,
-  onToggleTextExpanded: () => void = () => undefined,
-): HTMLElement {
-  const banner = document.createElement('section');
-  banner.className = PINNED_MESSAGE_CLASS;
-  banner.dataset.pinId = pin.message.id;
-
-  if (collapsed) {
-    banner.classList.add(`${PINNED_MESSAGE_CLASS}--collapsed`);
-    banner.title = 'Sabitlenmiş mesajı genişlet';
-    banner.setAttribute('aria-label', 'Sabitlenmiş mesajı genişlet');
-    banner.textContent = '📌';
-    banner.addEventListener('click', onToggleCollapse);
-    return banner;
-  }
-
-  const header = document.createElement('div');
-  header.className = `${PINNED_MESSAGE_CLASS}__header`;
-  const title = document.createElement('span');
-  title.className = `${PINNED_MESSAGE_CLASS}__title`;
-  title.textContent = '📌 Sabitlenmiş mesaj';
-  const actor = document.createElement('span');
-  actor.className = `${PINNED_MESSAGE_CLASS}__actor`;
-  actor.textContent = `${pin.pinnedBy.username} sabitledi`;
-  const collapse = document.createElement('button');
-  collapse.type = 'button';
-  collapse.className = `${PINNED_MESSAGE_CLASS}__collapse`;
-  collapse.title = 'Sabitlenmiş mesajı küçült';
-  collapse.setAttribute('aria-label', 'Sabitlenmiş mesajı küçült');
-  collapse.textContent = '👁';
-  collapse.addEventListener('click', onToggleCollapse);
-  const dismiss = document.createElement('button');
-  dismiss.type = 'button';
-  dismiss.className = `${PINNED_MESSAGE_CLASS}__dismiss`;
-  dismiss.title = 'Bu sabitlenmiş mesajı kapat';
-  dismiss.setAttribute('aria-label', 'Bu sabitlenmiş mesajı kapat');
-  dismiss.textContent = '×';
-  dismiss.addEventListener('click', () => onDismiss(pin.message.id));
-  header.appendChild(title);
-  if (pin.pinnedBy.username.trim()) header.appendChild(actor);
-  header.append(collapse, dismiss);
-
-  const body = document.createElement('div');
-  body.className = `${PINNED_MESSAGE_CLASS}__body`;
-  const bodyContent = document.createElement('div');
-  bodyContent.className = `${PINNED_MESSAGE_CLASS}__body-content`;
-  body.classList.add(`${PINNED_MESSAGE_CLASS}__body--text-collapsed`);
-  const content = document.createElement('span');
-  content.className = `${PINNED_MESSAGE_CLASS}__content`;
-  if (preRenderedContent) {
-    // Native-pin mirroring passes a detached template cloned from Kick's already-rendered DOM.
-    // Clone again because collapse/expand rebuilds the banner and appending consumes fragments.
-    content.appendChild(cloneSanitizedNativeDom(preRenderedContent));
-    bodyContent.appendChild(content);
-  } else {
-    const badges = document.createElement('span');
-    badges.className = `${PINNED_MESSAGE_CLASS}__badges`;
-    appendBadges(badges, mergeIdentityBadges(pin.message.sender.identity));
-    const displayName = pin.message.sender.displayName || pin.message.sender.username;
-    const username = document.createElement('span');
-    username.className = `${PINNED_MESSAGE_CLASS}__username`;
-    username.textContent = displayName;
-    wireUsernameProfileLink(username, pin.message.sender, displayName, `${PINNED_MESSAGE_CLASS}__username--link`);
-    username.style.color = pin.message.sender.identity.color || 'inherit';
-    const separator = document.createElement('span');
-    separator.className = `${PINNED_MESSAGE_CLASS}__separator`;
-    separator.textContent = ': ';
-    appendParsedContent(content, pin.message.content);
-    bodyContent.append(badges, username, separator, content);
-  }
-  body.appendChild(bodyContent);
-
-  banner.append(header, body);
-
-  // The banner is still detached while it is built, so defer the real layout comparison until
-  // the controller has mounted it. Short pins never receive a control; the first collapsed
-  // render doubles as the measurement shape even when this pin's session state is expanded.
-  queueMicrotask(() => {
-    if (!banner.isConnected) return;
-    // Computed CSS resolves the em-based cap to pixels without depending on the rendered box,
-    // which can be unusably small for block-structured mirrored content.
-    const collapsedMaxHeight = Number.parseFloat(getComputedStyle(bodyContent).maxHeight);
-    if (!Number.isFinite(collapsedMaxHeight) || collapsedMaxHeight <= 0) return;
-    const overflows = bodyContent.scrollHeight > collapsedMaxHeight + 1;
-    if (!overflows) return;
-
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = `${PINNED_MESSAGE_CLASS}__text-toggle`;
-    body.classList.add(`${PINNED_MESSAGE_CLASS}__body--text-expandable`);
-    let expanded = textExpanded;
-    const applyExpandedPresentation = (): void => {
-      body.classList.toggle(`${PINNED_MESSAGE_CLASS}__body--text-collapsed`, !expanded);
-      body.classList.toggle(`${PINNED_MESSAGE_CLASS}__body--text-expanded`, expanded);
-      toggle.title = expanded ? 'Mesajı küçült' : 'Mesajı genişlet';
-      toggle.setAttribute('aria-label', toggle.title);
-      toggle.setAttribute('aria-expanded', String(expanded));
-      toggle.textContent = expanded ? '⌃' : '⌄';
-    };
-    applyExpandedPresentation();
-    toggle.addEventListener('click', () => {
-      expanded = !expanded;
-      applyExpandedPresentation();
-      onToggleTextExpanded();
-    });
-    body.appendChild(toggle);
-  });
-
-  return banner;
 }
 
 /** Safe-render only: username and counts originate in public Pusher payloads and are assigned via

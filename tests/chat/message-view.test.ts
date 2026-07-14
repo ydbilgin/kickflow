@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, buildPinnedMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
+import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { ROLE_BADGE_ASSETS } from '../../src/content/chat/badge-assets';
-import type { ChatMessage, PinnedMessage } from '../../src/content/chat/message-store';
+import type { ChatMessage } from '../../src/content/chat/message-store';
 
 function message(
   slug: string,
@@ -145,139 +145,6 @@ describe('message-view safe rendering', () => {
     expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('⚙');
     expect(row.querySelector('.kickflow-event-row__text')?.textContent).toBe(unsafeText);
     expect(row.querySelector('script')).toBeNull();
-  });
-
-  it('builds the sticky pin with normal badges/content parsing and ID-scoped dismiss', () => {
-    const onDismiss = vi.fn();
-    const onToggleCollapse = vi.fn();
-    const pinned: PinnedMessage = {
-      message: message('botrix', { badges: [{ type: 'moderator', text: 'Moderator' }] }, {
-        id: 'pin-1',
-        content: 'bak [emote:123:kek] @Bob <script>alert(1)</script>',
-        sender: {
-          id: 1,
-          username: '<img src=x onerror=alert(1)>',
-          slug: 'botrix',
-          identity: { color: '#75FD46', badges: [{ type: 'moderator', text: 'Moderator' }], badgesV2: [] },
-        },
-      }),
-      durationSeconds: 1200,
-      pinnedBy: { id: 2, username: '<svg onload=alert(1)>', slug: 'moderator' },
-    };
-
-    const banner = buildPinnedMessageElement(pinned, false, onDismiss, onToggleCollapse);
-    expect(banner.dataset.pinId).toBe('pin-1');
-    expect(banner.querySelector('.kickflow-pinned-message__username')?.textContent).toBe('<img src=x onerror=alert(1)>');
-    expect(banner.querySelector('.kickflow-pinned-message__actor')?.textContent).toBe('<svg onload=alert(1)> sabitledi');
-    expect(banner.querySelector('.kickflow-badge-icon')).not.toBeNull();
-    const emote = banner.querySelector<HTMLImageElement>('.kickflow-emote');
-    expect(emote?.alt).toBe('kek');
-    expect(emote?.title).toBe('kek');
-    expect(banner.querySelector('.kickflow-mention')?.textContent).toBe('@Bob');
-    expect(banner.querySelector('.kickflow-pinned-message__content')?.textContent).toContain('<script>alert(1)</script>');
-    expect(banner.querySelector('script, svg')).toBeNull();
-    expect(banner.querySelector('.kickflow-pinned-message__collapse')).not.toBeNull();
-
-    banner.querySelector<HTMLButtonElement>('.kickflow-pinned-message__dismiss')?.click();
-    expect(onDismiss).toHaveBeenCalledWith('pin-1');
-    banner.querySelector<HTMLButtonElement>('.kickflow-pinned-message__collapse')?.click();
-    expect(onToggleCollapse).toHaveBeenCalledOnce();
-  });
-
-  it('builds a collapsed pin bar without the body or dismiss button and expands on click', () => {
-    const onDismiss = vi.fn();
-    const onToggleCollapse = vi.fn();
-    const pinned: PinnedMessage = {
-      message: message('botrix', {}, { id: 'pin-1' }),
-      durationSeconds: 1200,
-      pinnedBy: { id: 2, username: 'mod', slug: 'moderator' },
-    };
-
-    const banner = buildPinnedMessageElement(pinned, true, onDismiss, onToggleCollapse);
-
-    expect(banner.classList.contains('kickflow-pinned-message--collapsed')).toBe(true);
-    expect(banner.textContent).toBe('📌');
-    expect(banner.querySelector('.kickflow-pinned-message__body')).toBeNull();
-    expect(banner.querySelector('.kickflow-pinned-message__dismiss')).toBeNull();
-    expect(banner.querySelector('.kickflow-pinned-message__header')).toBeNull();
-
-    banner.click();
-    expect(onToggleCollapse).toHaveBeenCalledOnce();
-    expect(onDismiss).not.toHaveBeenCalled();
-  });
-
-  it('adds the text chevron only for measured overflow in structured and mirrored pin bodies', async () => {
-    let clientHeightReads = 0;
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      if (!this.classList.contains('kickflow-pinned-message__body-content')) return 0;
-      clientHeightReads += 1;
-      const fullHeight = (this.textContent?.length ?? 0) > 80 ? 72 : 18;
-      const collapsed = this.closest('.kickflow-pinned-message__body')
-        ?.classList.contains('kickflow-pinned-message__body--text-collapsed') ?? false;
-      return collapsed ? Math.min(fullHeight, 44) : fullHeight;
-    });
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      if (!this.classList.contains('kickflow-pinned-message__body-content')) return 0;
-      return (this.textContent?.length ?? 0) > 80 ? 72 : 18;
-    });
-    vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => ({
-      maxHeight: element.classList.contains('kickflow-pinned-message__body-content') ? '44px' : 'none',
-    } as CSSStyleDeclaration));
-    const pin = (id: string, content: string): PinnedMessage => ({
-      message: message('botrix', {}, { id, content }),
-      durationSeconds: 1200,
-      pinnedBy: { id: 2, username: 'mod', slug: 'moderator' },
-    });
-
-    const short = buildPinnedMessageElement(pin('short', 'kısa mesaj'), false, vi.fn(), vi.fn());
-    document.body.appendChild(short);
-    await Promise.resolve();
-    expect(short.querySelector('.kickflow-pinned-message__text-toggle')).toBeNull();
-
-    const onToggleTextExpanded = vi.fn();
-    const structured = buildPinnedMessageElement(
-      pin('long', 'uzun '.repeat(40)),
-      false,
-      vi.fn(),
-      vi.fn(),
-      undefined,
-      false,
-      onToggleTextExpanded,
-    );
-    document.body.appendChild(structured);
-    await Promise.resolve();
-    const structuredToggle = structured.querySelector<HTMLButtonElement>('.kickflow-pinned-message__text-toggle');
-    expect(clientHeightReads).toBe(0);
-    expect(structuredToggle?.textContent).toBe('⌄');
-    expect(structuredToggle?.title).toBe('Mesajı genişlet');
-    expect(structuredToggle?.getAttribute('aria-expanded')).toBe('false');
-    expect(structured.querySelector('.kickflow-pinned-message__body--text-collapsed')).not.toBeNull();
-    const structuredContent = structured.querySelector<HTMLElement>('.kickflow-pinned-message__body-content');
-    expect(structuredContent?.clientHeight).toBeGreaterThan(0);
-    expect(structuredContent?.clientHeight).toBeLessThan(structuredContent?.scrollHeight ?? 0);
-
-    structuredToggle?.click();
-    expect(onToggleTextExpanded).toHaveBeenCalledOnce();
-    expect(structured.querySelector('.kickflow-pinned-message__body--text-expanded')).not.toBeNull();
-    expect(structuredToggle?.textContent).toBe('⌃');
-    expect(structuredToggle?.title).toBe('Mesajı küçült');
-    expect(structuredToggle?.getAttribute('aria-expanded')).toBe('true');
-    expect(structuredContent?.clientHeight).toBe(structuredContent?.scrollHeight);
-
-    const nativeTemplate = document.createDocumentFragment();
-    const nativeText = document.createElement('span');
-    nativeText.textContent = 'aynalı uzun '.repeat(30);
-    nativeTemplate.appendChild(nativeText);
-    const mirrored = buildPinnedMessageElement(
-      pin('mirrored', 'identity only'),
-      false,
-      vi.fn(),
-      vi.fn(),
-      nativeTemplate,
-    );
-    document.body.appendChild(mirrored);
-    await Promise.resolve();
-    expect(mirrored.querySelector('.kickflow-pinned-message__text-toggle')).not.toBeNull();
   });
 
   it('opens a mention slug in a new tab on middle-click without adding a same-origin anchor', () => {

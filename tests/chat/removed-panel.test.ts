@@ -554,7 +554,6 @@ describe('RemovedMessagesPanel', () => {
       const originalSubscriptions = featureFlags.showSubscriptions;
       const originalGiftedSubs = featureFlags.showGiftedSubs;
       const originalHostRaid = featureFlags.showHostRaid;
-      const originalPinnedMessage = featureFlags.showPinnedMessage;
       const originalModeChanges = featureFlags.showModeChanges;
       const originalAutoTheater = featureFlags.autoTheater;
       featureFlags.chatMode = 'own';
@@ -563,7 +562,6 @@ describe('RemovedMessagesPanel', () => {
       featureFlags.showSubscriptions = false;
       featureFlags.showGiftedSubs = true;
       featureFlags.showHostRaid = false;
-      featureFlags.showPinnedMessage = true;
       featureFlags.showModeChanges = false;
       featureFlags.autoTheater = true;
 
@@ -582,7 +580,6 @@ describe('RemovedMessagesPanel', () => {
         const subscriptionsCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Abonelikler');
         const giftedSubsCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Hediye abonelikler');
         const hostRaidCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Host / Raid');
-        const pinnedMessageCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Sabitlenmiş mesaj');
         const modeChangesCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Mod değişiklikleri');
         const player = openDashboardSection(panel, 'player').pane;
         const autoTheaterCheckbox = requiredSettingsControl<HTMLInputElement>(player, 'Otomatik tiyatro modu');
@@ -592,7 +589,6 @@ describe('RemovedMessagesPanel', () => {
         expect(subscriptionsCheckbox.checked).toBe(false);
         expect(giftedSubsCheckbox.checked).toBe(true);
         expect(hostRaidCheckbox.checked).toBe(false);
-        expect(pinnedMessageCheckbox.checked).toBe(true);
         expect(modeChangesCheckbox.checked).toBe(false);
         expect(autoTheaterCheckbox.checked).toBe(true);
 
@@ -604,7 +600,6 @@ describe('RemovedMessagesPanel', () => {
         featureFlags.showSubscriptions = originalSubscriptions;
         featureFlags.showGiftedSubs = originalGiftedSubs;
         featureFlags.showHostRaid = originalHostRaid;
-        featureFlags.showPinnedMessage = originalPinnedMessage;
         featureFlags.showModeChanges = originalModeChanges;
         featureFlags.autoTheater = originalAutoTheater;
       }
@@ -688,7 +683,6 @@ describe('RemovedMessagesPanel', () => {
       ['Abonelikler', 'showSubscriptions'],
       ['Hediye abonelikler', 'showGiftedSubs'],
       ['Host / Raid', 'showHostRaid'],
-      ['Sabitlenmiş mesaj', 'showPinnedMessage'],
       ['Mod değişiklikleri', 'showModeChanges'],
       ['Otomatik tiyatro modu', 'autoTheater'],
       ['Geri / ileri sarma', 'rewindControls'],

@@ -3,9 +3,77 @@ import { ChatOverlayMount } from '../../src/content/chat/overlay-mount';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 
 class FakeResizeObserver {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
+  static readonly instances: FakeResizeObserver[] = [];
+  readonly observed = new Set<Element>();
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    FakeResizeObserver.instances.push(this);
+  }
+
+  observe(target: Element): void {
+    this.observed.add(target);
+  }
+
+  unobserve(target: Element): void {
+    this.observed.delete(target);
+  }
+
+  disconnect(): void {
+    this.observed.clear();
+  }
+
+  static trigger(target: Element): void {
+    for (const observer of FakeResizeObserver.instances) {
+      if (!observer.observed.has(target)) continue;
+      observer.callback([{ target } as ResizeObserverEntry], observer as unknown as ResizeObserver);
+    }
+  }
+
+  static reset(): void {
+    FakeResizeObserver.instances.length = 0;
+  }
+}
+
+class FakeMutationObserver {
+  static readonly instances: FakeMutationObserver[] = [];
+  readonly observations: Array<{ target: Node; options: MutationObserverInit }> = [];
+
+  constructor(private readonly callback: MutationCallback) {
+    FakeMutationObserver.instances.push(this);
+  }
+
+  observe(target: Node, options: MutationObserverInit = {}): void {
+    this.observations.push({ target, options });
+  }
+
+  disconnect(): void {
+    this.observations.length = 0;
+  }
+
+  takeRecords(): MutationRecord[] {
+    return [];
+  }
+
+  static triggerChildList(target: Node, addedNodes: Node[] = [], removedNodes: Node[] = []): void {
+    const record = {
+      type: 'childList',
+      target,
+      addedNodes,
+      removedNodes,
+    } as unknown as MutationRecord;
+    for (const observer of FakeMutationObserver.instances) {
+      const matches = observer.observations.some((observation) =>
+        observation.options.childList === true
+        && (observation.target === target
+          || (observation.options.subtree === true && observation.target.contains(target))),
+      );
+      if (matches) observer.callback([record], observer as unknown as MutationObserver);
+    }
+  }
+
+  static reset(): void {
+    FakeMutationObserver.instances.length = 0;
+  }
 }
 
 function rect(width = 320, height = 480, left = 10, top = 20): DOMRect {
@@ -30,6 +98,37 @@ function addAnchor(width = 320, height = 480): HTMLElement {
   return anchor;
 }
 
+interface CapturedChatFixture {
+  parent: HTMLElement;
+  anchor: HTMLElement;
+  pin: HTMLElement | null;
+}
+
+function addCapturedChatFixture(
+  anchorRect: DOMRect = rect(),
+  getPinRect?: () => DOMRect,
+): CapturedChatFixture {
+  const parent = document.createElement('section');
+  parent.className = 'relative flex min-h-0 flex-1 flex-col';
+  let pin: HTMLElement | null = null;
+  if (getPinRect) {
+    pin = document.createElement('div');
+    pin.className = 'absolute w-full empty:hidden';
+    const control = document.createElement('button');
+    vi.spyOn(control, 'getBoundingClientRect').mockImplementation(getPinRect);
+    pin.append(control);
+    vi.spyOn(pin, 'getBoundingClientRect').mockImplementation(getPinRect);
+    parent.append(pin);
+  }
+
+  const anchor = document.createElement('div');
+  anchor.id = 'chatroom-messages';
+  vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue(anchorRect);
+  parent.append(anchor);
+  document.body.append(parent);
+  return { parent, anchor, pin };
+}
+
 function addOwnRow(mount: ChatOverlayMount, id: string): HTMLElement {
   const row = document.createElement('div');
   row.className = 'kickflow-message';
@@ -43,7 +142,10 @@ describe('ChatOverlayMount takeover readiness', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    vi.stubGlobal('MutationObserver', FakeMutationObserver);
     document.documentElement.classList.remove('kickflow-chat-active');
+    FakeResizeObserver.reset();
+    FakeMutationObserver.reset();
   });
 
   afterEach(() => {
@@ -52,38 +154,229 @@ describe('ChatOverlayMount takeover readiness', () => {
     vi.unstubAllGlobals();
     document.body.replaceChildren();
     document.documentElement.classList.remove('kickflow-chat-active');
-    document.documentElement.classList.remove('kickflow-pin-surface-active');
+    FakeResizeObserver.reset();
+    FakeMutationObserver.reset();
   });
 
-  it('shows a mirrored pin while probing without hiding native messages', () => {
-    addAnchor();
+  it('uses the full captured anchor rectangle when there is no native pin', () => {
+    addCapturedChatFixture(rect(320, 480, 10, 20));
     const lifecycle = new Lifecycle();
     const mount = new ChatOverlayMount(lifecycle);
-    mount.setProbing();
-    mount.pinnedMessageHost.append(document.createElement('div'));
-    mount.pinVisibilityChanged();
 
-    expect(mount.state).toBe('probing');
-    expect(mount.root.style.display).not.toBe('none');
-    expect(mount.ownList.style.display).toBe('none');
-    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
-    expect(document.documentElement.classList.contains('kickflow-pin-surface-active')).toBe(true);
+    expect(mount.root.style.left).toBe('10px');
+    expect(mount.root.style.top).toBe('20px');
+    expect(mount.root.style.width).toBe('320px');
+    expect(mount.root.style.height).toBe('480px');
     lifecycle.dispose();
   });
 
-  it('retains native visibility after a pin is dismissed with zero own rows', () => {
-    addAnchor();
+  it('reserves an initial visible native pin top band', () => {
+    addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 84, 10, 20));
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+
+    expect(mount.root.style.top).toBe('104px');
+    expect(mount.root.style.height).toBe('396px');
+    lifecycle.dispose();
+  });
+
+  it('reserves a native pin when Kick populates its existing empty shell in place', () => {
+    const { parent, anchor } = addCapturedChatFixture(rect(320, 480, 10, 20));
+    let pinRect = rect(0, 0, 10, 20);
+    const pin = document.createElement('div');
+    pin.className = 'absolute w-full empty:hidden';
+    vi.spyOn(pin, 'getBoundingClientRect').mockImplementation(() => pinRect);
+    parent.insertBefore(pin, anchor);
     const lifecycle = new Lifecycle();
     const mount = new ChatOverlayMount(lifecycle);
     mount.setProbing();
-    mount.pinnedMessageHost.append(document.createElement('div'));
-    mount.pinVisibilityChanged();
-    mount.pinnedMessageHost.replaceChildren();
-    mount.pinVisibilityChanged();
+    mount.setPrimaryReady();
+    expect(mount.root.style.top).toBe('20px');
 
-    expect(mount.root.style.display).toBe('none');
+    const control = document.createElement('button');
+    pinRect = rect(320, 84, 10, 20);
+    vi.spyOn(control, 'getBoundingClientRect').mockImplementation(() => pinRect);
+    pin.append(control);
+    FakeMutationObserver.triggerChildList(pin, [control]);
+
+    expect(mount.root.style.top).toBe('104px');
+    expect(mount.root.style.height).toBe('396px');
+    expect(mount.state).toBe('active');
+    lifecycle.dispose();
+  });
+
+  it('recomputes the reserved band for native expand and collapse ResizeObserver changes', () => {
+    let pinRect = rect(320, 54, 10, 20);
+    const { pin } = addCapturedChatFixture(rect(320, 480, 10, 20), () => pinRect);
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+
+    expect(mount.root.style.top).toBe('74px');
+    expect(mount.root.style.height).toBe('426px');
+    pinRect = rect(320, 132, 10, 20);
+    FakeResizeObserver.trigger(pin!);
+    expect(mount.root.style.top).toBe('152px');
+    expect(mount.root.style.height).toBe('348px');
+    pinRect = rect(320, 42, 10, 20);
+    FakeResizeObserver.trigger(pin!);
+    expect(mount.root.style.top).toBe('62px');
+    expect(mount.root.style.height).toBe('438px');
+    lifecycle.dispose();
+  });
+
+  it('restores the full anchor rectangle after native unpin removal', () => {
+    const { parent, pin } = addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 84, 10, 20));
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    expect(mount.root.style.top).toBe('104px');
+
+    pin!.remove();
+    FakeMutationObserver.triggerChildList(parent, [], [pin!]);
+
+    expect(mount.root.style.top).toBe('20px');
+    expect(mount.root.style.height).toBe('480px');
+    lifecycle.dispose();
+  });
+
+  it('restores the full anchor rectangle when Kick empties the native pin surface in place', () => {
+    let pinRect = rect(320, 84, 10, 20);
+    const { pin } = addCapturedChatFixture(rect(320, 480, 10, 20), () => pinRect);
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    expect(mount.root.style.top).toBe('104px');
+
+    const removed = Array.from(pin!.childNodes);
+    pinRect = rect(0, 0, 10, 20);
+    pin!.replaceChildren();
+    FakeMutationObserver.triggerChildList(pin!, [], removed);
+
+    expect(mount.root.style.top).toBe('20px');
+    expect(mount.root.style.height).toBe('480px');
+    lifecycle.dispose();
+  });
+
+  it('tracks a same-parent native pin replacement without touching message data', () => {
+    const { parent, anchor, pin } = addCapturedChatFixture(
+      rect(320, 480, 10, 20),
+      () => rect(320, 60, 10, 20),
+    );
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    expect(mount.root.style.top).toBe('80px');
+
+    const replacement = document.createElement('div');
+    replacement.className = 'absolute w-full empty:hidden';
+    replacement.append(document.createElement('button'));
+    vi.spyOn(replacement, 'getBoundingClientRect').mockReturnValue(rect(320, 110, 10, 20));
+    pin!.remove();
+    parent.insertBefore(replacement, anchor);
+    FakeMutationObserver.triggerChildList(parent, [replacement], [pin!]);
+
+    expect(mount.root.style.top).toBe('130px');
+    expect(mount.root.style.height).toBe('370px');
+    lifecycle.dispose();
+  });
+
+  it('ignores an unrelated absolute full-width sibling outside the anchor top edge', () => {
+    addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 40, 10, 180));
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+
+    expect(mount.root.style.top).toBe('20px');
+    expect(mount.root.style.height).toBe('480px');
+    lifecycle.dispose();
+  });
+
+  it('fails open when a native pin leaves zero own-list height', () => {
+    addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 480, 10, 20));
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setProbing();
+    const row = addOwnRow(mount, 'no-space');
+    mount.noteContentAppended([row]);
+
+    expect(mount.state).toBe('fallback');
     expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
-    expect(document.documentElement.classList.contains('kickflow-pin-surface-active')).toBe(false);
+    lifecycle.dispose();
+  });
+
+  it('fails open for ambiguous or horizontally non-contiguous top-edge pin coverage', () => {
+    const ambiguous = addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 50, 10, 20));
+    const secondPin = document.createElement('div');
+    secondPin.className = 'absolute w-full empty:hidden';
+    secondPin.append(document.createElement('button'));
+    vi.spyOn(secondPin, 'getBoundingClientRect').mockReturnValue(rect(320, 70, 10, 20));
+    ambiguous.parent.insertBefore(secondPin, ambiguous.anchor);
+    const ambiguousLifecycle = new Lifecycle();
+    const ambiguousMount = new ChatOverlayMount(ambiguousLifecycle);
+    ambiguousMount.setProbing();
+    ambiguousMount.setPrimaryReady();
+    expect(ambiguousMount.state).toBe('fallback');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
+    ambiguousLifecycle.dispose();
+
+    document.body.replaceChildren();
+    const partial = addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(160, 70, 10, 20));
+    const partialLifecycle = new Lifecycle();
+    const partialMount = new ChatOverlayMount(partialLifecycle);
+    partialMount.setProbing();
+    partialMount.setPrimaryReady();
+    expect(partial.pin).not.toBeNull();
+    expect(partialMount.state).toBe('fallback');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
+    partialLifecycle.dispose();
+  });
+
+  it('keeps the body root and pointer-active descendants below native pin controls', () => {
+    const { pin } = addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 90, 10, 20));
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setProbing();
+    mount.setPrimaryReady();
+
+    expect(mount.root.style.pointerEvents).toBe('auto');
+    expect(Number.parseFloat(mount.root.style.top)).toBeGreaterThanOrEqual(pin!.getBoundingClientRect().bottom);
+    expect(Number.parseFloat(mount.root.style.top)).toBeGreaterThanOrEqual(pin!.querySelector('button')!.getBoundingClientRect().bottom);
+    lifecycle.dispose();
+  });
+
+  it('never activates takeover from native pin presence, resize, or replacement', () => {
+    let pinRect = rect(320, 54, 10, 20);
+    const { parent, anchor, pin } = addCapturedChatFixture(rect(320, 480, 10, 20), () => pinRect);
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setProbing();
+    pinRect = rect(320, 100, 10, 20);
+    FakeResizeObserver.trigger(pin!);
+    const replacement = document.createElement('div');
+    replacement.className = 'absolute w-full empty:hidden';
+    replacement.append(document.createElement('button'));
+    vi.spyOn(replacement, 'getBoundingClientRect').mockReturnValue(rect(320, 70, 10, 20));
+    pin!.remove();
+    parent.insertBefore(replacement, anchor);
+    FakeMutationObserver.triggerChildList(parent, [replacement], [pin!]);
+
+    expect(mount.state).toBe('probing');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
+    lifecycle.dispose();
+  });
+
+  it('does not let a pin-only resize reacquire takeover from fallback readiness', () => {
+    let pinRect = rect(320, 54, 10, 20);
+    const { pin } = addCapturedChatFixture(rect(320, 480, 10, 20), () => pinRect);
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setProbing();
+    mount.setPrimaryReady();
+    expect(mount.state).toBe('active');
+    mount.failOpen('test-fallback');
+
+    pinRect = rect(320, 100, 10, 20);
+    FakeResizeObserver.trigger(pin!);
+
+    expect(mount.root.style.top).toBe('120px');
+    expect(mount.state).toBe('fallback');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
     lifecycle.dispose();
   });
 
@@ -119,8 +412,9 @@ describe('ChatOverlayMount takeover readiness', () => {
     lifecycle.dispose();
   });
 
-  it('selects the visible duplicate anchor instead of the first zero-sized match', () => {
-    addAnchor(0, 0);
+  it('selects the visible duplicate anchor instead of the first hidden zero-sized match', () => {
+    const hidden = addAnchor(0, 0);
+    hidden.style.display = 'none';
     const visible = addAnchor(360, 500);
     const lifecycle = new Lifecycle();
     const mount = new ChatOverlayMount(lifecycle);

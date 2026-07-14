@@ -17,8 +17,6 @@ export interface FeatureFlags {
   showGiftedSubs: boolean;
   /** Show new host and raid events in KickFlow's own chat list. */
   showHostRaid: boolean;
-  /** Show the latest pinned chat message above KickFlow's own scrolling list. */
-  showPinnedMessage: boolean;
   /** Show rows describing chatroom mode changes after the initial state snapshot. */
   showModeChanges: boolean;
   /** Refresh native followed-channel sidebar viewer counts and live indicators. */
@@ -48,7 +46,6 @@ export const featureFlags: FeatureFlags = {
   showSubscriptions: true,
   showGiftedSubs: true,
   showHostRaid: true,
-  showPinnedMessage: true,
   showModeChanges: true,
   showSidebarRefresh: true,
   autoTheater: false,

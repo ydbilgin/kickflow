@@ -2,21 +2,21 @@ import { Lifecycle } from '../shared/lifecycle';
 import { SELECTORS } from '../shared/selectors';
 
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
-const PINNED_MESSAGE_HOST_ID = 'kickflow-pinned-message-host';
 const OWN_LIST_ID = 'kickflow-message-list';
 const CHAT_ACTIVE_CLASS = 'kickflow-chat-active';
-const PIN_SURFACE_ACTIVE_CLASS = 'kickflow-pin-surface-active';
 const STATUS_ATTRIBUTE = 'data-kickflow-chat-status';
 const SYNC_INTERVAL_MS = 500;
+const GEOMETRY_EPSILON_PX = 0.5;
 
 export type ChatTakeoverState = 'native' | 'probing' | 'ready' | 'active' | 'fallback';
 
 function isCssVisible(element: HTMLElement): boolean {
   const style = getComputedStyle(element);
+  const opacity = Number.parseFloat(style.opacity);
   return style.display !== 'none'
     && style.visibility !== 'hidden'
     && style.visibility !== 'collapse'
-    && style.opacity !== '0';
+    && (!Number.isFinite(opacity) || opacity > 0);
 }
 
 function containsChatAnchor(node: Node): boolean {
@@ -26,18 +26,131 @@ function containsChatAnchor(node: Node): boolean {
   );
 }
 
+interface LayoutRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+export type NativePinGeometryResolution =
+  | { readonly status: 'none'; readonly pin: null; readonly pinRect: null; readonly ownRect: LayoutRect }
+  | { readonly status: 'valid'; readonly pin: HTMLElement; readonly pinRect: DOMRect; readonly ownRect: LayoutRect }
+  | { readonly status: 'invalid'; readonly pin: HTMLElement | null; readonly pinRect: DOMRect | null; readonly ownRect: null };
+
+function toLayoutRect(left: number, top: number, width: number, height: number): LayoutRect {
+  return { left, top, width, height, right: left + width, bottom: top + height };
+}
+
+function horizontallyIntersects(first: DOMRect, second: DOMRect): boolean {
+  return Math.min(first.right, second.right) - Math.max(first.left, second.left) > GEOMETRY_EPSILON_PX;
+}
+
+function spansAnchorWidth(pinRect: DOMRect, anchorRect: DOMRect): boolean {
+  return pinRect.left <= anchorRect.left + GEOMETRY_EPSILON_PX
+    && pinRect.right >= anchorRect.right - GEOMETRY_EPSILON_PX;
+}
+
+/** Kick commonly leaves its `.empty:hidden` pin shell mounted between pins. Observe that shell
+ * structurally so an in-place empty -> populated transition is noticed before the periodic sync. */
+function findNativePinObservationTarget(anchor: HTMLElement): HTMLElement | null {
+  const parent = anchor.parentElement;
+  if (!parent) return null;
+  for (let sibling = anchor.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+    if (sibling instanceof HTMLElement
+      && sibling.isConnected
+      && sibling.parentElement === parent
+      && sibling.matches('.absolute.w-full')) {
+      return sibling;
+    }
+  }
+  return null;
+}
+
+/** Layout-only native-pin resolver. It reads no message content or identity: the only accepted
+ * surface is a visible, non-empty preceding `.absolute.w-full` sibling that forms one contiguous
+ * band across the selected anchor's top edge. Ambiguous/partial coverage is explicitly invalid. */
+export function resolveNativePinGeometry(anchor: HTMLElement): NativePinGeometryResolution {
+  const anchorRect = anchor.getBoundingClientRect();
+  const fullAnchorRect = toLayoutRect(
+    anchorRect.left,
+    anchorRect.top,
+    anchorRect.width,
+    anchorRect.height,
+  );
+  const parent = anchor.parentElement;
+  if (!parent) return { status: 'invalid', pin: null, pinRect: null, ownRect: null };
+
+  const topEdgeCandidates: Array<{ pin: HTMLElement; rect: DOMRect }> = [];
+  for (let sibling = anchor.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+    if (!(sibling instanceof HTMLElement) || !sibling.matches('.absolute.w-full')) continue;
+    if (!sibling.isConnected || sibling.parentElement !== parent || !isCssVisible(sibling)) continue;
+    const pinRect = sibling.getBoundingClientRect();
+    if (pinRect.width <= 0 || pinRect.height <= 0) continue;
+    const overlapsAnchorTop = pinRect.top <= anchorRect.top + GEOMETRY_EPSILON_PX
+      && pinRect.bottom > anchorRect.top + GEOMETRY_EPSILON_PX;
+    if (!overlapsAnchorTop || !horizontallyIntersects(pinRect, anchorRect)) continue;
+    topEdgeCandidates.push({ pin: sibling, rect: pinRect });
+  }
+
+  if (topEdgeCandidates.length === 0) {
+    return { status: 'none', pin: null, pinRect: null, ownRect: fullAnchorRect };
+  }
+  if (topEdgeCandidates.length !== 1) {
+    return { status: 'invalid', pin: null, pinRect: null, ownRect: null };
+  }
+
+  const [{ pin, rect: pinRect }] = topEdgeCandidates;
+  if (!spansAnchorWidth(pinRect, anchorRect)) {
+    return { status: 'invalid', pin, pinRect, ownRect: null };
+  }
+
+  const reservedBottom = Math.min(Math.max(pinRect.bottom, anchorRect.top), anchorRect.bottom);
+  const ownTop = reservedBottom;
+  const ownHeight = anchorRect.bottom - ownTop;
+  if (!(ownHeight > 0)) {
+    return { status: 'invalid', pin, pinRect, ownRect: null };
+  }
+  return {
+    status: 'valid',
+    pin,
+    pinRect,
+    ownRect: toLayoutRect(anchorRect.left, ownTop, anchorRect.width, ownHeight),
+  };
+}
+
+function rectsMatch(first: LayoutRect | null, second: LayoutRect): boolean {
+  if (!first) return false;
+  return Math.abs(first.left - second.left) <= GEOMETRY_EPSILON_PX
+    && Math.abs(first.top - second.top) <= GEOMETRY_EPSILON_PX
+    && Math.abs(first.width - second.width) <= GEOMETRY_EPSILON_PX
+    && Math.abs(first.height - second.height) <= GEOMETRY_EPSILON_PX;
+}
+
+function inlineGeometryMatches(element: HTMLElement, rect: LayoutRect): boolean {
+  return Math.abs(Number.parseFloat(element.style.left) - rect.left) <= GEOMETRY_EPSILON_PX
+    && Math.abs(Number.parseFloat(element.style.top) - rect.top) <= GEOMETRY_EPSILON_PX
+    && Math.abs(Number.parseFloat(element.style.width) - rect.width) <= GEOMETRY_EPSILON_PX
+    && Math.abs(Number.parseFloat(element.style.height) - rect.height) <= GEOMETRY_EPSILON_PX;
+}
+
 /** Own-chat takeover owner. The global native-hide class is written only by transitionToActive,
  * and every route through that method proves the mount/content/anchor invariant first. */
 export class ChatOverlayMount {
   readonly root: HTMLElement;
-  readonly pinnedMessageHost: HTMLElement;
   readonly ownList: HTMLElement;
   private takeoverState: ChatTakeoverState = 'native';
   private contentReady = false;
   private primaryReady = false;
   private readonly resizeObserver: ResizeObserver;
   private readonly mutationObserver: MutationObserver;
+  private readonly nativePinMutationObserver: MutationObserver;
   private observedAnchor: HTMLElement | null = null;
+  private observedPin: HTMLElement | null = null;
+  private observedPinParent: HTMLElement | null = null;
+  private availableOwnListRect: LayoutRect | null = null;
   private statusElement: HTMLElement | null = null;
   private disposed = false;
 
@@ -49,23 +162,21 @@ export class ChatOverlayMount {
     root.style.display = 'none';
     root.style.pointerEvents = 'none';
 
-    const pinnedMessageHost = document.createElement('div');
-    pinnedMessageHost.id = PINNED_MESSAGE_HOST_ID;
-    pinnedMessageHost.style.display = 'none';
-    pinnedMessageHost.style.pointerEvents = 'auto';
-
     const ownList = document.createElement('div');
     ownList.id = OWN_LIST_ID;
     ownList.style.display = 'none';
     ownList.style.pointerEvents = 'auto';
-    root.append(pinnedMessageHost, ownList);
+    root.append(ownList);
     document.body.appendChild(root);
     this.root = root;
-    this.pinnedMessageHost = pinnedMessageHost;
     this.ownList = ownList;
 
     const sync = () => this.syncNow();
-    this.resizeObserver = new ResizeObserver(sync);
+    this.resizeObserver = new ResizeObserver((entries) => {
+      const pinDriven = entries.length > 0
+        && entries.every((entry) => entry.target === this.observedPin);
+      this.syncNow(!pinDriven);
+    });
     this.resizeObserver.observe(document.documentElement);
     lifecycle.add(() => this.resizeObserver.disconnect());
 
@@ -87,13 +198,15 @@ export class ChatOverlayMount {
     });
     lifecycle.add(() => this.mutationObserver.disconnect());
 
+    this.nativePinMutationObserver = new MutationObserver(() => this.syncNow(false));
+    lifecycle.add(() => this.nativePinMutationObserver.disconnect());
+
     lifecycle.addEventListener(window, 'resize', sync);
     lifecycle.addEventListener(window, 'scroll', sync, true);
     lifecycle.setInterval(sync, SYNC_INTERVAL_MS);
     lifecycle.add(() => {
       this.disposed = true;
       document.documentElement.classList.remove(CHAT_ACTIVE_CLASS);
-      document.documentElement.classList.remove(PIN_SURFACE_ACTIVE_CLASS);
       root.remove();
     });
 
@@ -116,13 +229,6 @@ export class ChatOverlayMount {
     if (this.disposed || this.takeoverState === 'active') return;
     this.takeoverState = 'probing';
     document.documentElement.classList.remove(CHAT_ACTIVE_CLASS);
-    this.syncNow();
-  }
-
-  /** Called after the pin controller changes its host. Pins are an independent surface and never
-   * count as list readiness, so this can reveal the banner without acquiring native-hide. */
-  pinVisibilityChanged(): void {
-    if (this.disposed) return;
     this.syncNow();
   }
 
@@ -200,6 +306,12 @@ export class ChatOverlayMount {
 
     const roots = Array.from(document.querySelectorAll<HTMLElement>(`[id="${OVERLAY_ROOT_ID}"]`));
     const hasVisibleContent = this.hasVisibleOwnRow() || this.hasVisibleStatus();
+    const geometry = this.observedAnchor ? resolveNativePinGeometry(this.observedAnchor) : null;
+    const hasPositiveAvailableRect = geometry !== null
+      && geometry.status !== 'invalid'
+      && geometry.ownRect.height > 0
+      && rectsMatch(this.availableOwnListRect, geometry.ownRect)
+      && inlineGeometryMatches(this.root, geometry.ownRect);
     const valid = roots.length === 1
       && roots[0] === this.root
       && this.root.isConnected
@@ -208,12 +320,13 @@ export class ChatOverlayMount {
       && this.ownList.parentElement === this.root
       && this.observedAnchor !== null
       && this.isUsableAnchor(this.observedAnchor)
+      && hasPositiveAvailableRect
       && hasVisibleContent;
     if (!valid) this.failOpen('active-invariant-broken');
     return valid;
   }
 
-  syncNow(): void {
+  syncNow(allowRecoveryActivation = true): void {
     if (this.disposed) return;
     const mountWasBroken = !this.root.isConnected
       || !this.ownList.isConnected
@@ -224,13 +337,11 @@ export class ChatOverlayMount {
     this.repairStructure();
 
     const anchor = this.selectAnchor();
-    if (anchor !== this.observedAnchor) {
-      if (this.observedAnchor) this.resizeObserver.unobserve(this.observedAnchor);
-      if (anchor) this.resizeObserver.observe(anchor);
-      this.observedAnchor = anchor;
-    }
+    this.updateObservedAnchor(anchor);
 
     if (!anchor) {
+      this.availableOwnListRect = null;
+      this.updateNativePinObservers(null, null);
       if (this.takeoverState === 'active' || document.documentElement.classList.contains(CHAT_ACTIVE_CLASS)) {
         this.failOpen('anchor-unavailable');
       }
@@ -239,15 +350,16 @@ export class ChatOverlayMount {
       return;
     }
 
-    const rect = anchor.getBoundingClientRect();
-    this.root.style.visibility = 'visible';
-    this.root.style.left = `${rect.left}px`;
-    this.root.style.top = `${rect.top}px`;
-    this.root.style.width = `${rect.width}px`;
-    this.root.style.height = `${rect.height}px`;
+    if (!this.syncGeometry(anchor)) {
+      this.root.style.visibility = 'hidden';
+      this.failOpen('native-pin-geometry-invalid');
+      return;
+    }
 
     this.refreshContentReadiness();
-    if (this.takeoverState === 'fallback' && (this.contentReady || this.primaryReady)) {
+    if (allowRecoveryActivation
+      && this.takeoverState === 'fallback'
+      && (this.contentReady || this.primaryReady)) {
       this.takeoverState = 'ready';
       this.transitionToActive();
       return;
@@ -260,11 +372,7 @@ export class ChatOverlayMount {
     if (this.disposed || this.takeoverState !== 'ready') return;
     this.repairStructure();
     const anchor = this.selectAnchor();
-    if (anchor !== this.observedAnchor) {
-      if (this.observedAnchor) this.resizeObserver.unobserve(this.observedAnchor);
-      if (anchor) this.resizeObserver.observe(anchor);
-      this.observedAnchor = anchor;
-    }
+    this.updateObservedAnchor(anchor);
     this.refreshContentReadiness();
     const hasReadiness = this.contentReady || (this.primaryReady && this.hasVisibleStatus());
     if (!anchor || !hasReadiness) {
@@ -272,12 +380,10 @@ export class ChatOverlayMount {
       return;
     }
 
-    const rect = anchor.getBoundingClientRect();
-    this.root.style.left = `${rect.left}px`;
-    this.root.style.top = `${rect.top}px`;
-    this.root.style.width = `${rect.width}px`;
-    this.root.style.height = `${rect.height}px`;
-    this.root.style.visibility = 'visible';
+    if (!this.syncGeometry(anchor)) {
+      this.failOpen('native-pin-geometry-invalid');
+      return;
+    }
     this.takeoverState = 'active';
     this.updatePresentation();
     document.documentElement.classList.add(CHAT_ACTIVE_CLASS);
@@ -289,8 +395,51 @@ export class ChatOverlayMount {
       if (duplicate !== this.root) duplicate.remove();
     }
     if (!this.root.isConnected && document.body) document.body.append(this.root);
-    if (this.pinnedMessageHost.parentElement !== this.root) this.root.prepend(this.pinnedMessageHost);
-    if (this.ownList.parentElement !== this.root) this.pinnedMessageHost.after(this.ownList);
+    if (this.ownList.parentElement !== this.root) this.root.prepend(this.ownList);
+  }
+
+  private updateObservedAnchor(anchor: HTMLElement | null): void {
+    if (anchor === this.observedAnchor) return;
+    if (this.observedAnchor) this.resizeObserver.unobserve(this.observedAnchor);
+    if (anchor) this.resizeObserver.observe(anchor);
+    this.observedAnchor = anchor;
+  }
+
+  private updateNativePinObservers(parent: HTMLElement | null, pin: HTMLElement | null): void {
+    if (parent === this.observedPinParent && pin === this.observedPin) return;
+    if (this.observedPin) this.resizeObserver.unobserve(this.observedPin);
+    this.nativePinMutationObserver.disconnect();
+    this.observedPinParent = parent;
+    this.observedPin = pin;
+    if (parent) this.nativePinMutationObserver.observe(parent, { childList: true });
+    if (pin) {
+      this.resizeObserver.observe(pin);
+      this.nativePinMutationObserver.observe(pin, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style', 'hidden'],
+      });
+    }
+  }
+
+  private syncGeometry(anchor: HTMLElement): boolean {
+    const geometry = resolveNativePinGeometry(anchor);
+    const pinObservationTarget = geometry.pin ?? findNativePinObservationTarget(anchor);
+    this.updateNativePinObservers(anchor.parentElement, pinObservationTarget);
+    if (geometry.status === 'invalid' || geometry.ownRect.height <= 0) {
+      this.availableOwnListRect = null;
+      return false;
+    }
+
+    const rect = geometry.ownRect;
+    this.availableOwnListRect = rect;
+    this.root.style.visibility = 'visible';
+    this.root.style.left = `${rect.left}px`;
+    this.root.style.top = `${rect.top}px`;
+    this.root.style.width = `${rect.width}px`;
+    this.root.style.height = `${rect.height}px`;
+    return true;
   }
 
   private selectAnchor(): HTMLElement | null {
@@ -347,15 +496,8 @@ export class ChatOverlayMount {
 
   private updatePresentation(): void {
     const active = this.takeoverState === 'active';
-    const pinVisible = this.pinnedMessageHost.childElementCount > 0;
-    this.pinnedMessageHost.style.display = pinVisible ? '' : 'none';
     this.ownList.style.display = active ? '' : 'none';
-    this.root.style.display = active || pinVisible ? '' : 'none';
+    this.root.style.display = active ? '' : 'none';
     this.root.style.pointerEvents = active ? 'auto' : 'none';
-    const pinSurfaceVisible = pinVisible
-      && this.observedAnchor !== null
-      && this.isUsableAnchor(this.observedAnchor)
-      && this.root.style.visibility !== 'hidden';
-    document.documentElement.classList.toggle(PIN_SURFACE_ACTIVE_CLASS, pinSurfaceVisible);
   }
 }

@@ -6,12 +6,10 @@ import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './share
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus, type KickFlowStatusSnapshot } from './status';
 import {
-  ActivePinnedMessageState,
   ChatDomRegistry,
   ChatIntegrityStore,
   type ChatMessage,
   type ChatroomModeKey,
-  type PinnedMessage,
   type SubscriberBadge,
 } from './chat/message-store';
 import { handleUserBanned, handleMessageDeleted } from './chat/ban-guard';
@@ -31,9 +29,7 @@ import { ScrollFollowController, trimMessageWindow, decideScrollFollow } from '.
 import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
-import { buildPinnedMessageElement, clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
-import { NativePinMirror } from './chat/native-pin-mirror';
-import { cloneSanitizedNativeDom } from './chat/native-dom-sanitizer';
+import { clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -55,7 +51,6 @@ import { SIDEBAR_CHANNEL_ROW_SELECTOR, SidebarRefreshController } from './sideba
 
 const STYLE_ID = 'kickflow-styles';
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
-const PINNED_MESSAGE_HOST_ID = 'kickflow-pinned-message-host';
 const OWN_LIST_ID = 'kickflow-message-list';
 const PRESERVED_SWEEP_INTERVAL_MS = 60_000;
 const NAVIGATION_POLL_INTERVAL_MS = 400;
@@ -70,7 +65,6 @@ const BOOLEAN_FLAG_KEYS = [
   'showSubscriptions',
   'showGiftedSubs',
   'showHostRaid',
-  'showPinnedMessage',
   'showModeChanges',
   'showSidebarRefresh',
   'autoTheater',
@@ -225,76 +219,6 @@ export function createSystemEventCallbacks(
   };
 }
 
-export interface PinnedMessageController {
-  onPinnedMessage: (pin: PinnedMessage) => void;
-  setMirroredPinnedMessage: (pin: PinnedMessage, content: Node) => void;
-  clearPinnedMessage: () => void;
-  refresh: () => void;
-}
-
-/** Own-mode pin controller: structured/Pusher ingestion remains flag-gated for compatibility.
- * Native DOM mirroring always retains current state, so refresh can apply a live global toggle
- * without losing a pin created while the flag was off or changing its per-id dismiss state. */
-export function createPinnedMessageController(
-  host: HTMLElement,
-  onShow: () => void = () => undefined,
-  onHide: () => void = () => undefined,
-): PinnedMessageController {
-  const state = new ActivePinnedMessageState();
-  let preRenderedContent: Node | null = null;
-  const refresh = (): void => {
-    const pin = featureFlags.showPinnedMessage ? state.getVisible() : null;
-    if (!pin) {
-      host.replaceChildren();
-      host.style.display = 'none';
-      onHide();
-      return;
-    }
-    const element = buildPinnedMessageElement(
-      pin,
-      state.isCollapsed(),
-      (pinId) => {
-        if (!state.dismiss(pinId)) return;
-        refresh();
-      },
-      () => {
-        state.toggleCollapsed();
-        refresh();
-      },
-      preRenderedContent ?? undefined,
-      state.isTextExpanded(),
-      () => {
-        state.toggleTextExpanded();
-        refresh();
-      },
-    );
-    host.replaceChildren(element);
-    host.style.display = '';
-    onShow();
-  };
-
-  return {
-    onPinnedMessage: (pin) => {
-      if (!featureFlags.showPinnedMessage || !state.setActive(pin)) return;
-      preRenderedContent = null;
-      refresh();
-    },
-    setMirroredPinnedMessage: (pin, content) => {
-      if (!state.setActive(pin)) state.updateActive(pin);
-      preRenderedContent = cloneSanitizedNativeDom(content);
-      refresh();
-    },
-    clearPinnedMessage: () => {
-      state.clearActive();
-      preRenderedContent = null;
-      refresh();
-    },
-    refresh,
-  };
-}
-
-let refreshActivePinnedMessage: (() => void) | null = null;
-
 const NON_CHANNEL_SLUGS = new Set([
   'video',
   'videos',
@@ -400,74 +324,11 @@ function ensureStyles(): void {
   // with Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally.
   style.textContent = `
     #${OVERLAY_ROOT_ID} { display: flex; flex-direction: column; overflow: hidden; }
-    #${PINNED_MESSAGE_HOST_ID} { flex: none; padding: 6px 10px 0; box-sizing: border-box; }
     #${OWN_LIST_ID} {
       flex: 1 1 auto; min-height: 0; padding: 6px 10px; overflow-y: auto; height: auto; box-sizing: border-box;
       font-size: 13px; line-height: 1.45; color: #efeff1;
       font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
     }
-    .kickflow-pinned-message {
-      overflow: hidden; border: 1px solid rgba(255,176,32,0.55); border-radius: 7px;
-      background: rgba(24,24,27,0.97); color: #efeff1;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.35); font-size: 13px; line-height: 1.4;
-      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-    }
-    .kickflow-pinned-message__header {
-      display: flex; align-items: center; gap: 7px; min-height: 28px; padding: 3px 5px 3px 8px;
-      background: rgba(255,176,32,0.12); color: #ffd27a;
-    }
-    .kickflow-pinned-message__title { font-weight: 800; }
-    .kickflow-pinned-message__actor { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8c8cf; font-size: 11px; }
-    .kickflow-pinned-message--collapsed {
-      min-height: 26px; display: flex; align-items: center; justify-content: center; box-sizing: border-box;
-      background: rgba(255,176,32,0.12); color: #ffd27a; cursor: pointer;
-    }
-    .kickflow-pinned-message__collapse,
-    .kickflow-pinned-message__dismiss {
-      flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px;
-      background: transparent; color: #c8c8cf; font: 700 18px/24px system-ui, sans-serif; cursor: pointer;
-    }
-    .kickflow-pinned-message__collapse { margin-left: auto; }
-    .kickflow-pinned-message__collapse:hover,
-    .kickflow-pinned-message__dismiss:hover { background: rgba(255,255,255,0.1); color: #fff; }
-    .kickflow-pinned-message__body { position: relative; padding: 7px 9px 8px; }
-    .kickflow-pinned-message__body-content {
-      max-height: none; overflow: visible; word-break: break-word; overflow-wrap: anywhere;
-    }
-    .kickflow-pinned-message__body-content,
-    .kickflow-pinned-message__body-content * {
-      -webkit-line-clamp: unset !important;
-    }
-    .kickflow-pinned-message__body-content * { max-height: none !important; }
-    .kickflow-pinned-message__body-content :is(
-      [class~="line-clamp"], [class^="line-clamp-"], [class*=" line-clamp-"]
-    ) {
-      display: revert !important; overflow: visible !important; -webkit-box-orient: initial !important;
-    }
-    .kickflow-pinned-message__body--text-collapsed .kickflow-pinned-message__body-content {
-      max-height: 3.4em; overflow: hidden;
-    }
-    .kickflow-pinned-message__body--text-expanded .kickflow-pinned-message__body-content {
-      max-height: none; overflow: visible;
-    }
-    .kickflow-pinned-message__body--text-expandable .kickflow-pinned-message__body-content { padding-right: 28px; }
-    .kickflow-pinned-message__body--text-expandable.kickflow-pinned-message__body--text-collapsed::after {
-      content: ''; position: absolute; right: 33px; bottom: 8px; left: 9px; height: 1.15em;
-      background: linear-gradient(to bottom, rgba(24,24,27,0), rgba(24,24,27,0.97)); pointer-events: none;
-    }
-    .kickflow-pinned-message__text-toggle {
-      position: absolute; right: 5px; bottom: 4px; width: 24px; height: 24px; padding: 0;
-      border: 0; border-radius: 4px; background: rgba(24,24,27,0.94); color: #c8c8cf;
-      font: 800 18px/20px system-ui, sans-serif; cursor: pointer;
-    }
-    .kickflow-pinned-message__text-toggle:hover { background: rgba(255,255,255,0.12); color: #fff; }
-    .kickflow-pinned-message__badges:empty { display: none; }
-    .kickflow-pinned-message__badges { margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle; }
-    .kickflow-pinned-message__username { font-weight: 700; }
-    .kickflow-pinned-message__username--link { cursor: pointer; }
-    .kickflow-pinned-message__username--link:hover { text-decoration: underline; }
-    .kickflow-pinned-message__separator { color: #adadb8; }
-    .kickflow-pinned-message__content { color: #efeff1; }
     #${OWN_LIST_ID} .kickflow-message {
       display: block; padding: 3px 5px; border-radius: 4px;
       word-break: break-word; overflow-wrap: anywhere;
@@ -533,7 +394,6 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
-    html.kickflow-pin-surface-active [data-kickflow-native-pin-hidden] { display: none !important; }
     a[data-testid^="sidebar-following-channel-"][data-kickflow-live="false"],
     a[data-testid^="sidebar-recommended-channel-"][data-kickflow-live="false"] { display: none !important; }
     a[data-testid^="sidebar-following-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="true"],
@@ -1182,16 +1042,6 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
 
   const mount = new ChatOverlayMount(lifecycle);
   mount.setProbing();
-  const pinnedMessageController = createPinnedMessageController(
-    mount.pinnedMessageHost,
-    () => mount.pinVisibilityChanged(),
-    () => mount.pinVisibilityChanged(),
-  );
-  new NativePinMirror(lifecycle, pinnedMessageController);
-  refreshActivePinnedMessage = pinnedMessageController.refresh;
-  lifecycle.add(() => {
-    if (refreshActivePinnedMessage === pinnedMessageController.refresh) refreshActivePinnedMessage = null;
-  });
   const ownList = mount.ownList;
 
   const scrollPill = document.createElement('button');
@@ -1466,7 +1316,6 @@ function startSession(slug: string): void {
   const token = ++sessionToken;
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
-  document.documentElement.classList.remove('kickflow-pin-surface-active');
   configureUserCardSession(null);
 
   const lifecycle = new Lifecycle();
@@ -1517,7 +1366,6 @@ function teardownZombie(): void {
   document.getElementById('kickflow-footer-toggle')?.remove();
   document.getElementById('kickflow-navbar-settings')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
-  document.documentElement.classList.remove('kickflow-pin-surface-active');
 }
 
 /** Named so extension-reload zombie teardown can remove the page-event route too. */
@@ -1559,7 +1407,6 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'speedControls' && !value) deactivateSpeedControls();
     if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
     if (key === 'debugLogging') setDebugLogging(value);
-    if (key === 'showPinnedMessage') refreshActivePinnedMessage?.();
     if (key === 'autoTheater') syncAutoTheaterFlag();
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
     if (key === 'showSidebarRefresh') {
@@ -1586,7 +1433,6 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showSubscriptions: featureFlags.showSubscriptions,
     showGiftedSubs: featureFlags.showGiftedSubs,
     showHostRaid: featureFlags.showHostRaid,
-    showPinnedMessage: featureFlags.showPinnedMessage,
     showModeChanges: featureFlags.showModeChanges,
     showSidebarRefresh: featureFlags.showSidebarRefresh,
     autoTheater: featureFlags.autoTheater,
@@ -1695,7 +1541,6 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showSubscriptions',
     'kf_flag_showGiftedSubs',
     'kf_flag_showHostRaid',
-    'kf_flag_showPinnedMessage',
     'kf_flag_showModeChanges',
     'kf_flag_showSidebarRefresh',
     'kf_flag_autoTheater',
@@ -1712,7 +1557,6 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showSubscriptions === 'boolean') setFeatureFlag('showSubscriptions', saved.kf_flag_showSubscriptions);
   if (typeof saved.kf_flag_showGiftedSubs === 'boolean') setFeatureFlag('showGiftedSubs', saved.kf_flag_showGiftedSubs);
   if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
-  if (typeof saved.kf_flag_showPinnedMessage === 'boolean') setFeatureFlag('showPinnedMessage', saved.kf_flag_showPinnedMessage);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);

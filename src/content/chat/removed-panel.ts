@@ -119,7 +119,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private subscriptionsCheckbox: HTMLInputElement | null = null;
   private giftedSubsCheckbox: HTMLInputElement | null = null;
   private hostRaidCheckbox: HTMLInputElement | null = null;
-  private pinnedMessageCheckbox: HTMLInputElement | null = null;
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private sidebarRefreshCheckbox: HTMLInputElement | null = null;
   private autoTheaterCheckbox: HTMLInputElement | null = null;
@@ -480,11 +479,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.hostRaidCheckbox = hostRaidCheckbox;
 
-    const { label: pinnedMessageLabel, checkbox: pinnedMessageCheckbox } = this.buildSettingsToggle(
-      'Sabitlenmiş mesaj', 'Aktif sabit mesajı KickFlow görünümünde gösterir.', 'showPinnedMessage', featureFlags.showPinnedMessage,
-    );
-    this.pinnedMessageCheckbox = pinnedMessageCheckbox;
-
     const { label: modeChangesLabel, checkbox: modeChangesCheckbox } = this.buildSettingsToggle(
       'Mod değişiklikleri', 'Yavaş mod gibi sohbet ayarı değişikliklerini bildirir.', 'showModeChanges', featureFlags.showModeChanges,
     );
@@ -501,7 +495,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       subscriptionsLabel,
       giftedSubsLabel,
       hostRaidLabel,
-      pinnedMessageLabel,
       modeChangesLabel,
       sidebarRefreshLabel,
     );
@@ -878,9 +871,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.hostRaidCheckbox && this.hostRaidCheckbox.checked !== featureFlags.showHostRaid) {
       this.hostRaidCheckbox.checked = featureFlags.showHostRaid;
     }
-    if (this.pinnedMessageCheckbox && this.pinnedMessageCheckbox.checked !== featureFlags.showPinnedMessage) {
-      this.pinnedMessageCheckbox.checked = featureFlags.showPinnedMessage;
-    }
     if (this.modeChangesCheckbox && this.modeChangesCheckbox.checked !== featureFlags.showModeChanges) {
       this.modeChangesCheckbox.checked = featureFlags.showModeChanges;
     }
@@ -970,7 +960,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.subscriptionsCheckbox = null;
     this.giftedSubsCheckbox = null;
     this.hostRaidCheckbox = null;
-    this.pinnedMessageCheckbox = null;
     this.modeChangesCheckbox = null;
     this.sidebarRefreshCheckbox = null;
     this.autoTheaterCheckbox = null;

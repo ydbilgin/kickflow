@@ -6,11 +6,10 @@ describe('feature-flags', () => {
     expect(featureFlags.chatMode).toBe('native');
   });
 
-  it('shows event rows and pinned messages by default', () => {
+  it('shows event rows by default', () => {
     expect(featureFlags.showSubscriptions).toBe(true);
     expect(featureFlags.showGiftedSubs).toBe(true);
     expect(featureFlags.showHostRaid).toBe(true);
-    expect(featureFlags.showPinnedMessage).toBe(true);
     expect(featureFlags.showModeChanges).toBe(true);
   });
 

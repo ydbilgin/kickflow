@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
-import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage, type PinnedMessage } from '../../src/content/chat/message-store';
+import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { configureUserCardSession, openUserCard } from '../../src/content/chat/user-card';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
@@ -164,81 +164,34 @@ describe('bootstrap event display flags', () => {
     ]);
   });
 
-  it('renders one active pin, dismisses only its id, shows a new id, and obeys the global flag', () => {
-    const host = document.createElement('div');
-    const onShow = vi.fn();
-    const controller = bootstrap.createPinnedMessageController(host, onShow);
-    const pin = (id: string, content: string): PinnedMessage => ({
-      message: {
-        id,
-        chatroomId: 1,
-        content,
-        type: 'message',
-        createdAt: '',
-        sender: {
-          id: 2,
-          username: 'sender',
-          slug: 'sender',
-          identity: { color: '', badges: [], badgesV2: [] },
-        },
-        preserved: false,
-      },
-      durationSeconds: 1200,
-      pinnedBy: { id: 3, username: 'moderator', slug: 'moderator' },
-    });
-
-    featureFlags.showPinnedMessage = true;
-    controller.onPinnedMessage(pin('pin-1', 'first'));
-    controller.onPinnedMessage(pin('pin-1', 'duplicate'));
-    expect(host.querySelectorAll('.kickflow-pinned-message')).toHaveLength(1);
-    expect(onShow).toHaveBeenCalledOnce();
-    expect(host.textContent).toContain('first');
-    expect(host.textContent).not.toContain('duplicate');
-
-    host.querySelector<HTMLButtonElement>('.kickflow-pinned-message__dismiss')?.click();
-    expect(host.childElementCount).toBe(0);
-    controller.onPinnedMessage(pin('pin-2', 'second'));
-    expect(host.textContent).toContain('second');
-
-    featureFlags.showPinnedMessage = false;
-    controller.refresh();
-    controller.onPinnedMessage(pin('pin-3', 'hidden'));
-    expect(host.childElementCount).toBe(0);
-  });
-
-  it('applyFlagChange handles and persists all five event boolean keys', () => {
+  it('applyFlagChange handles and persists all four event boolean keys', () => {
     storageSet.mockClear();
 
     bootstrap.applyFlagChange('showSubscriptions', false);
     bootstrap.applyFlagChange('showGiftedSubs', false);
     bootstrap.applyFlagChange('showHostRaid', false);
-    bootstrap.applyFlagChange('showPinnedMessage', false);
     bootstrap.applyFlagChange('showModeChanges', false);
 
     expect(featureFlags.showSubscriptions).toBe(false);
     expect(featureFlags.showGiftedSubs).toBe(false);
     expect(featureFlags.showHostRaid).toBe(false);
-    expect(featureFlags.showPinnedMessage).toBe(false);
     expect(featureFlags.showModeChanges).toBe(false);
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showSubscriptions: false });
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showGiftedSubs: false });
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showHostRaid: false });
-    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showPinnedMessage: false });
     expect(storageSet).toHaveBeenCalledWith({ kf_flag_showModeChanges: false });
   });
 
-  it('loads all five persisted boolean overrides', async () => {
+  it('loads all four persisted boolean overrides', async () => {
     storageGet.mockResolvedValue({
       kf_flag_showSubscriptions: false,
       kf_flag_showGiftedSubs: true,
       kf_flag_showHostRaid: false,
-      kf_flag_showPinnedMessage: false,
       kf_flag_showModeChanges: true,
     });
     featureFlags.showSubscriptions = true;
     featureFlags.showGiftedSubs = false;
     featureFlags.showHostRaid = true;
-    featureFlags.showPinnedMessage = true;
     featureFlags.showModeChanges = false;
 
     await bootstrap.applySavedFlags();
@@ -246,22 +199,19 @@ describe('bootstrap event display flags', () => {
     expect(featureFlags.showSubscriptions).toBe(false);
     expect(featureFlags.showGiftedSubs).toBe(true);
     expect(featureFlags.showHostRaid).toBe(false);
-    expect(featureFlags.showPinnedMessage).toBe(false);
     expect(featureFlags.showModeChanges).toBe(true);
   });
 
-  it('includes all five values in the popup status flag payload', () => {
+  it('includes all four values in the popup status flag payload', () => {
     featureFlags.showSubscriptions = false;
     featureFlags.showGiftedSubs = true;
     featureFlags.showHostRaid = false;
-    featureFlags.showPinnedMessage = true;
     featureFlags.showModeChanges = false;
 
     expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
       showSubscriptions: false,
       showGiftedSubs: true,
       showHostRaid: false,
-      showPinnedMessage: true,
       showModeChanges: false,
     });
   });

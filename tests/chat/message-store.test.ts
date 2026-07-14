@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ActivePinnedMessageState, ChatIntegrityStore, GLOBAL_CAPACITY, mergeIdentityBadges, type ChatMessage, type PinnedMessage } from '../../src/content/chat/message-store';
+import { ChatIntegrityStore, GLOBAL_CAPACITY, mergeIdentityBadges, type ChatMessage } from '../../src/content/chat/message-store';
 import { MAX_NON_PRESERVED_NODES_PAUSED } from '../../src/content/chat/dom-window';
 
 function message(id: string, userId = 1, createdAt = new Date().toISOString()): ChatMessage {
@@ -185,61 +185,6 @@ describe('ChatIntegrityStore', () => {
       preservedReason: 'banned',
       preservedMeta: { permanent: false, durationMin: 5, bannedBy: 'mod' },
     });
-  });
-});
-
-describe('ActivePinnedMessageState', () => {
-  it('dismisses only the active id, dedupes it, and exposes a different next pin', () => {
-    const state = new ActivePinnedMessageState();
-    const pin = (id: string): PinnedMessage => ({
-      message: message(id),
-      durationSeconds: 1200,
-      pinnedBy: { id: 9, username: 'mod', slug: 'mod' },
-    });
-
-    expect(state.setActive(pin('pin-1'))).toBe(true);
-    expect(state.setActive(pin('pin-1'))).toBe(false);
-    expect(state.getVisible()?.message.id).toBe('pin-1');
-    expect(state.dismiss('another-id')).toBe(false);
-    expect(state.dismiss('pin-1')).toBe(true);
-    expect(state.getVisible()).toBeNull();
-    expect(state.dismiss('pin-1')).toBe(false);
-
-    expect(state.setActive(pin('pin-2'))).toBe(true);
-    expect(state.getActive()?.message.id).toBe('pin-2');
-    expect(state.getVisible()?.message.id).toBe('pin-2');
-  });
-
-  it('preserves both UI states for the same pin and resets both for a new pin', () => {
-    const state = new ActivePinnedMessageState();
-    const pin = (id: string): PinnedMessage => ({
-      message: message(id),
-      durationSeconds: 1200,
-      pinnedBy: { id: 9, username: 'mod', slug: 'mod' },
-    });
-
-    expect(state.setActive(pin('pin-1'))).toBe(true);
-    state.toggleCollapsed();
-    state.toggleTextExpanded();
-    expect(state.isCollapsed()).toBe(true);
-    expect(state.isTextExpanded()).toBe(true);
-
-    expect(state.setActive(pin('pin-1'))).toBe(false);
-    expect(state.isCollapsed()).toBe(true);
-    expect(state.isTextExpanded()).toBe(true);
-
-    state.toggleCollapsed();
-    expect(state.isCollapsed()).toBe(false);
-    state.toggleCollapsed();
-    expect(state.isCollapsed()).toBe(true);
-    state.toggleTextExpanded();
-    expect(state.isTextExpanded()).toBe(false);
-    state.toggleTextExpanded();
-    expect(state.isTextExpanded()).toBe(true);
-
-    expect(state.setActive(pin('pin-2'))).toBe(true);
-    expect(state.isCollapsed()).toBe(false);
-    expect(state.isTextExpanded()).toBe(false);
   });
 });
 

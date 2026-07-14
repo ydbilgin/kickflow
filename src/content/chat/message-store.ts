@@ -70,75 +70,12 @@ export interface PinnedBy {
   slug: string;
 }
 
-/** A pin is independent from the scrolling chat ring: at most one is active, and dismissing it
- * records only that message id. A different id always becomes visible again. */
+/** Normalized transport payload retained for Pusher protocol coverage. Pin presentation remains
+ * native to Kick and is never stored in or rendered by KickFlow's own scrolling chat ring. */
 export interface PinnedMessage {
   message: ChatMessage;
   durationSeconds: number;
   pinnedBy: PinnedBy;
-}
-
-export class ActivePinnedMessageState {
-  private activePin: PinnedMessage | null = null;
-  private dismissedPinId: string | null = null;
-  private collapsed = false;
-  private textExpanded = false;
-
-  setActive(pin: PinnedMessage): boolean {
-    if (this.activePin?.message.id === pin.message.id) return false;
-    this.activePin = pin;
-    this.dismissedPinId = null;
-    this.collapsed = false;
-    this.textExpanded = false;
-    return true;
-  }
-
-  /** Replace same-id metadata without resetting that pin's dismissal/collapse state. */
-  updateActive(pin: PinnedMessage): boolean {
-    if (this.activePin?.message.id !== pin.message.id) return false;
-    this.activePin = pin;
-    return true;
-  }
-
-  toggleCollapsed(): void {
-    this.collapsed = !this.collapsed;
-  }
-
-  isCollapsed(): boolean {
-    return this.collapsed;
-  }
-
-  toggleTextExpanded(): void {
-    this.textExpanded = !this.textExpanded;
-  }
-
-  isTextExpanded(): boolean {
-    return this.textExpanded;
-  }
-
-  dismiss(pinId: string): boolean {
-    if (this.activePin?.message.id !== pinId || this.dismissedPinId === pinId) return false;
-    this.dismissedPinId = pinId;
-    return true;
-  }
-
-  getVisible(): PinnedMessage | null {
-    if (!this.activePin || this.activePin.message.id === this.dismissedPinId) return null;
-    return this.activePin;
-  }
-
-  getActive(): PinnedMessage | null {
-    return this.activePin;
-  }
-
-  clearActive(): boolean {
-    if (!this.activePin && this.dismissedPinId === null && !this.collapsed && !this.textExpanded) return false;
-    this.activePin = null;
-    this.dismissedPinId = null;
-    this.collapsed = false;
-    this.textExpanded = false;
-    return true;
-  }
 }
 
 /** Moderation detail attached to a preserved message so the row can distinguish a permanent
