@@ -183,6 +183,22 @@ describe('RemovedMessagesPanel', () => {
     lifecycle.dispose();
   });
 
+  it('renders removed-row emotes with their typeable shortcut as alt and hover text', () => {
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'bak [emote:789:HYPERCLAP]'));
+    store.markMessageDeleted('m1');
+
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+    panel.render();
+    panel.toggle();
+
+    const emote = document.querySelector<HTMLImageElement>('.kickflow-removed-row__content img.kickflow-emote');
+    expect(emote?.alt).toBe('HYPERCLAP');
+    expect(emote?.title).toBe('HYPERCLAP');
+    lifecycle.dispose();
+  });
+
   it('opens a removed-panel username in a new tab on middle-click without adding a same-origin anchor', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);

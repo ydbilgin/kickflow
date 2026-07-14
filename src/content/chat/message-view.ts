@@ -59,6 +59,7 @@ function appendEmote(parent: HTMLElement, id: string, name: string, rawToken: st
   const img = document.createElement('img');
   img.src = `${EMOTE_URL_PREFIX}${id}${EMOTE_URL_SUFFIX}`;
   img.alt = name;
+  img.title = name;
   img.className = 'kickflow-emote';
   img.loading = 'lazy';
   parent.appendChild(img);

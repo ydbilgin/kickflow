@@ -39,6 +39,8 @@ describe('message-view safe rendering', () => {
 
     const emote = parent.querySelector<HTMLImageElement>('img.kickflow-emote');
     expect(emote?.src).toBe('https://files.kick.com/emotes/123/fullsize');
+    expect(emote?.alt).toBe('kek');
+    expect(emote?.title).toBe('kek');
     const mention = parent.querySelector<HTMLElement>('.kickflow-mention');
     expect(mention?.textContent).toBe('@Bob');
     expect(mention?.getAttribute('role')).toBe('link');
@@ -48,6 +50,18 @@ describe('message-view safe rendering', () => {
     expect(parent.querySelector<HTMLAnchorElement>('a.kickflow-link')?.href).toBe('http://x.y/');
     expect(parent.textContent).toContain('<script>alert(1)</script>');
     expect(parent.querySelector('script')).toBeNull();
+  });
+
+  it('uses the parsed emote name as safe alt and hover text in a regular Mode-A row', () => {
+    const emoteName = '<svg onload=alert(1)>';
+    const row = buildMessageElement(message('alice', undefined, {
+      content: `hello [emote:456:${emoteName}]`,
+    }));
+
+    const emote = row.querySelector<HTMLImageElement>('.kickflow-message__content img.kickflow-emote');
+    expect(emote?.alt).toBe(emoteName);
+    expect(emote?.title).toBe(emoteName);
+    expect(row.querySelector('svg')).toBeNull();
   });
 
   it('renders a subscription event row with singular/plural wording and safe user text', () => {
@@ -156,7 +170,9 @@ describe('message-view safe rendering', () => {
     expect(banner.querySelector('.kickflow-pinned-message__username')?.textContent).toBe('<img src=x onerror=alert(1)>');
     expect(banner.querySelector('.kickflow-pinned-message__actor')?.textContent).toBe('<svg onload=alert(1)> sabitledi');
     expect(banner.querySelector('.kickflow-badge-icon')).not.toBeNull();
-    expect(banner.querySelector('.kickflow-emote')).not.toBeNull();
+    const emote = banner.querySelector<HTMLImageElement>('.kickflow-emote');
+    expect(emote?.alt).toBe('kek');
+    expect(emote?.title).toBe('kek');
     expect(banner.querySelector('.kickflow-mention')?.textContent).toBe('@Bob');
     expect(banner.querySelector('.kickflow-pinned-message__content')?.textContent).toContain('<script>alert(1)</script>');
     expect(banner.querySelector('script, svg')).toBeNull();

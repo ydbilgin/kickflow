@@ -59,6 +59,7 @@ describe('native DOM clone presentation sanitiser', () => {
     const emote = document.createElement('img');
     emote.src = 'https://files.kick.com/emotes/789/fullsize';
     emote.alt = 'BLOCKEMOTE';
+    emote.title = 'BLOCKEMOTE';
     emote.className = 'keep-emote h-0 w-full size-0 h-6 w-6 size-7 max-h-4 absolute overflow-hidden';
     emote.style.cssText = 'width:24px;height:24px;opacity:0;position:absolute;object-fit:contain';
     nativeContent.append(paragraph, emote);
@@ -85,6 +86,8 @@ describe('native DOM clone presentation sanitiser', () => {
     expect(clonedEmote?.style.objectFit).toBe('contain');
     expect(clonedEmote?.style.opacity).toBe('');
     expect(clonedEmote?.style.position).toBe('');
+    expect(clonedEmote?.alt).toBe('BLOCKEMOTE');
+    expect(clonedEmote?.title).toBe('BLOCKEMOTE');
 
     // The live Kick node is never mutated.
     expect(nativeContent.classList.contains('line-clamp-2')).toBe(true);

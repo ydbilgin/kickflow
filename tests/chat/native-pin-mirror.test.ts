@@ -113,6 +113,7 @@ function fillPin(inner: HTMLElement, actor: string, message: string): HTMLElemen
   const emote = document.createElement('img');
   emote.src = 'https://files.kick.com/emotes/123/fullsize';
   emote.alt = 'HYPERCLAP';
+  emote.title = 'HYPERCLAP';
   content.append(link, document.createTextNode(' '), emote);
   const nativeBodyControl = document.createElement('button');
   nativeBodyControl.type = 'button';
@@ -336,6 +337,7 @@ describe('own-mode native pin mirror', () => {
     expect(host.querySelector('.kickflow-pinned-message__content')?.textContent).toContain('Destek mesajı tip link');
     expect(host.querySelector<HTMLAnchorElement>('.kickflow-pinned-message__content a')?.href).toBe('https://example.com/tip');
     expect(host.querySelector<HTMLImageElement>('.kickflow-pinned-message__content img')?.alt).toBe('HYPERCLAP');
+    expect(host.querySelector<HTMLImageElement>('.kickflow-pinned-message__content img')?.title).toBe('HYPERCLAP');
     expect(host.querySelector('.kickflow-pinned-message__body button')).toBeNull();
     expect(host.querySelector('.native-rendered-content')).not.toBe(nativeContent);
     expect(onShow).toHaveBeenCalledOnce();

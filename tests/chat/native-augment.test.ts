@@ -123,7 +123,9 @@ describe('NativeChatAugmenter', () => {
     expect(nativeContent?.classList.contains('line-clamp-2')).toBe(true);
     expect(nativeContent?.classList.contains('kickflow-native-content-dimmed')).toBe(true);
     expect(preserved?.parentElement).toBe(row);
-    expect(preserved?.querySelector('img.kickflow-emote')).not.toBeNull();
+    const emote = preserved?.querySelector<HTMLImageElement>('img.kickflow-emote');
+    expect(emote?.alt).toBe('kek');
+    expect(emote?.title).toBe('kek');
     expect(preserved?.querySelector('a.kickflow-link')?.textContent).toBe('https://example.com/duyuru');
     expect(preserved?.querySelector('[class*="line-clamp"], .truncate, [class*="max-h-"]')).toBeNull();
   });
