@@ -1,7 +1,27 @@
 # KickFlow — CURRENT STATUS
 
 > Bu dosya = projenin anlık durumu. Owner "status oku" derse BU dosya okunur.
-> Son güncelleme: 2026-07-13
+> Son güncelleme: 2026-07-14
+
+## 🟢 2026-07-14 (32) — SIDEBAR: site-wide refresh + Önerilen Kanallar da yenilenir (cx-sol teşhis→implement, Claude gate+review, ✅ COMMIT'Lİ `a47002d`)
+Owner: "kybeleniz canlı ama yanda 0 yazıyor; prensesperver Önerilen'de 876 ama followed'da 0" + "Önerilen ve following de yenilensin, F5'te oralar yenileniyor sadece yan yenilenmiyor." cx teşhisi (`output/sidebar-diagnosis.md`): API mapper/dot-flip/CSS DOĞRU; kök sebep = **aktivasyon kapsamı** — refresher SADECE kanal-oturumunda başlatılıyordu → ana/following/kanal-dışı sayfalarda controller YOK → Kick'in bayat sayfa-yükleme verisi kalıyor. Ground-truth (curl): prensesperver gerçekten offline (bizim 0 doğru; Kick Önerilen'deki 876 = Kick'in kendi bayat native'i), kybeleniz gerçekten canlı ama non-channel sayfada refresh yok.
+- **Fix:** (1) sidebar refresh kanal-lifecycle'ından ayrıldı → kendi flag-yönetimli lifecycle'ı, her `kick.com/*` sayfasında başlar (SPA-nav'da yaşar, sadece flag-off/zombie-teardown'da düşer), CSS her route'a enjekte. (2) kırılgan `sidebar-following-channel-1` gate kaldırıldı (KF-R5) → genel prefix. (3) **Önerilen Kanallar da yenileniyor** (`sidebar-recommended-channel-*`, birebir aynı satır yapısı — gerçek DOM owner snippet'iyle alındı), **slug-bazlı dedup** (naru/kybeleniz iki listede → tek fetch, tüm satırlar patch). UUID/404/idempotent korumaları duruyor.
+- **Gate (Claude bağımsız):** 320/320 · tsc · build temiz. Aktivasyon (idempotent, çift-instance yok, doğru teardown) + dedupe review edildi. **⚠️ owner canlı teyit edecek** (ana/following'de sidebar yenileniyor mu + Önerilen güncelleniyor mu).
+
+## 🟢 2026-07-13/14 (31) — SETTINGS DASHBOARD: büyük iki-panelli in-Kick modal (cx implement→bağımsız cx review→cx fix pipeline, Claude gate+görsel, ✅ COMMIT'Lİ `7194e16`)
+Owner: "daha büyük ekran + daha güzel frontend, frontend skill kullan." Claude `impeccable` tasarım-yasalarını spec'e çevirdi → cx sol xhigh implement. **Owner-istekli saf-delege pipeline:** implement → **bağımsız cx review** (SHIP-WITH-FIXES, MUST-FIX yok) → **cx fix** (7 SHOULD-FIX + NIT hepsi). (Fix turu bir kez limit/paralel-contention'la killed oldu — iş kayıp değildi, tekrar dispatch'le tamamlandı.)
+- **Sonuç:** ~760px ortalanmış modal + dim backdrop + Esc/backdrop/× + focus-trap; sol kategori-rail (Genel/Sohbet/Oynatıcı/Kısayollar/Hakkında, yeşil-pill aktif) + sağ içerik. OKLCH restrained, tek yeşil accent, hairline-satırlar (kart-grid DEĞİL), kompakt key→value stats, yeşil hotkey-çipleri. Navbar+footer açar. Davranış/wiring değişmedi. Hard-ban yok. Fix'ler: popup+dashboard ortak stats-snapshot (`status.ts`), per-action aria-label, focus-return stable-opener-id, `—` placeholder, log-kontrast, scroll-lock. 313/313 · tsc · build. Görseller `output/playwright/dashboard-*.png` (Claude gözle onayladı).
+
+## 🟢 2026-07-13 (30) — Player QoL toggle'ları + rebindable hotkeys + navbar ayar butonu (cx-sol, Claude review+gate, ✅ COMMIT'Lİ `ac2e034`)
+Owner: "bütün özellikler açılır-kapanır olsun + aksiyonların tuşları değişebilsin (clip=Kick native, boşver)."
+- **(A)** Tüm player özelliklerine on/off flag (rewindControls/liveCatchup/qualityLock/screenshot/speedControls, default açık) — her biri child-lifecycle → canlı OFF = gerçek teardown, "Oynatıcı" bölümünde.
+- **(B)** Rebindable hotkey sistemi (`hotkey-registry.ts`): ⏪← ⏩→ 📷S 🔴L, "Kısayollar" bölümünde tıkla-değiştir + on/off + kalıcı (`kf_hotkey_*`) + çakışma/typing/native-key guard + varsayılana-dön. rewind-hotkeys refactor (round-25 capture-phase + shared clamp korundu).
+- **(C)** Navbar butonu (`navbar-settings.ts`): self-healing #418-safe düz buton, sağ-cluster'ın ilk çocuğu (gift'in soluna, gerçek DOM), mevcut paneli açar; footer buton korundu. 305/305 · tsc · build.
+
+## 🟢 2026-07-13 (29) — Auto Theater toggle + ayar UI redesign + eklenti ikonu (cx-sol, Claude review+görsel, ✅ COMMIT'Lİ `904ef7c`)
+Owner istekleri: auto-theater (toggle olarak), popup çirkin (güzelleştir), ikon yok (gri "K").
+- **Auto Theater** (`auto-theater.ts`, opt-in default KAPALI): açıkken kanala girince tiyatro moduna geçer, locale-bağımsız buton tespiti (teknik-metadata + Kick `(t)` kısayolu), SPA/video-swap self-heal, tek-tık-per-load (elle çıkışla dövüşmez). `autoTheater` flag ortak popup+panel+storage yolunda.
+- **UI redesign:** popup + in-Kick panel gruplu bölümler + toggle-switch'ler + Kick-dark + yeşil accent (davranış aynı). **İkon:** SVG→16/32/48/128 PNG + manifest `icons`+`default_icon` (önceden Chrome default harf). 281/281 · tsc · build.
 
 ## 🟢 2026-07-13 (28) — TAM-EKLENTİ BUG-HUNT: sidebar 404 spam + 17 güvenli defect (cx-sol find+fix, Claude + bağımsız Opus auditor ÇİFT-DOĞRULAMA SHIP, ✅ COMMIT'Lİ `e42be51`)
 Owner: "başka yapılabilecek hata var mı iyi bi incelesin, player her şey dahil bakılsın + şu sidebar 404 hatasına da baksın." cx-sol tüm eklentiyi (player/chat/sidebar/shared/popup) adversarial taradı, **18 güvenli bug fixledi + 18 regresyon testi** (256→274). Açık işlere (round-26 player rewind diagnosis, round-27 pin mirror) dokunulmadı; DVR/live-edge mantığı el değmedi (auditor teyit).
