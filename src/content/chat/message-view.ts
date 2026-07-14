@@ -2,6 +2,7 @@ import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessage
 import { isSafeKickSlug, openUserCard } from './user-card';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
+import { cloneSanitizedNativeDom } from './native-dom-sanitizer';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -485,7 +486,7 @@ export function buildPinnedMessageElement(
   if (preRenderedContent) {
     // Native-pin mirroring passes a detached template cloned from Kick's already-rendered DOM.
     // Clone again because collapse/expand rebuilds the banner and appending consumes fragments.
-    content.appendChild(preRenderedContent.cloneNode(true));
+    content.appendChild(cloneSanitizedNativeDom(preRenderedContent));
     bodyContent.appendChild(content);
   } else {
     const badges = document.createElement('span');
@@ -512,7 +513,11 @@ export function buildPinnedMessageElement(
   // render doubles as the measurement shape even when this pin's session state is expanded.
   queueMicrotask(() => {
     if (!banner.isConnected) return;
-    const overflows = bodyContent.scrollHeight > bodyContent.clientHeight + 1;
+    // Computed CSS resolves the em-based cap to pixels without depending on the rendered box,
+    // which can be unusably small for block-structured mirrored content.
+    const collapsedMaxHeight = Number.parseFloat(getComputedStyle(bodyContent).maxHeight);
+    if (!Number.isFinite(collapsedMaxHeight) || collapsedMaxHeight <= 0) return;
+    const overflows = bodyContent.scrollHeight > collapsedMaxHeight + 1;
     if (!overflows) return;
 
     const toggle = document.createElement('button');

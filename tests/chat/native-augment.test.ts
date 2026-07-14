@@ -47,10 +47,26 @@ function makeRow(id: string, index = 0): HTMLElement {
   const row = document.createElement('div');
   row.dataset.index = String(index);
   row.dataset.kickflowMid = id;
-  const nativeContent = document.createElement('span');
-  nativeContent.className = 'break-words';
-  nativeContent.textContent = `native ${id}`;
-  row.appendChild(nativeContent);
+  row.className = 'relative w-full px-2 py-1';
+  const group = document.createElement('div');
+  group.className = 'group relative flex w-full min-w-0 items-start gap-2';
+  const messageShell = document.createElement('div');
+  messageShell.className = 'flex min-w-0 max-w-full grow flex-col';
+  const identityLine = document.createElement('div');
+  identityLine.className = 'flex min-w-0 items-center gap-1 text-sm';
+  const username = document.createElement('button');
+  username.className = 'truncate font-bold leading-[1.2]';
+  username.textContent = `user-${id}`;
+  identityLine.append(username);
+  const nativeContent = document.createElement('div');
+  nativeContent.className = 'break-words text-sm leading-[1.45] line-clamp-2 max-h-12 overflow-hidden';
+  const contentBlock = document.createElement('div');
+  contentBlock.className = 'min-w-0';
+  contentBlock.textContent = `native ${id}`;
+  nativeContent.append(contentBlock);
+  messageShell.append(identityLine, nativeContent);
+  group.append(messageShell);
+  row.append(group);
   return row;
 }
 
@@ -90,6 +106,26 @@ describe('NativeChatAugmenter', () => {
     expect(row?.classList.contains('kickflow-banned')).toBe(true);
     expect(row?.querySelector('.kickflow-original-content')?.textContent).toContain('merhaba @x https://a.b');
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('banlandı');
+  });
+
+  it('rebuilds rich preserved content beside a nested class-bearing Kick row without copying its utilities', () => {
+    installChat(['m1']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 7, 'bak [emote:123:kek] https://example.com/duyuru'));
+    store.markMessageDeleted('m1');
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    augmenter.markById('m1');
+
+    const row = document.querySelector<HTMLElement>('[data-kickflow-mid="m1"]');
+    const nativeContent = row?.querySelector<HTMLElement>('.break-words');
+    const preserved = row?.querySelector<HTMLElement>('.kickflow-original-content');
+    expect(nativeContent?.classList.contains('line-clamp-2')).toBe(true);
+    expect(nativeContent?.classList.contains('kickflow-native-content-dimmed')).toBe(true);
+    expect(preserved?.parentElement).toBe(row);
+    expect(preserved?.querySelector('img.kickflow-emote')).not.toBeNull();
+    expect(preserved?.querySelector('a.kickflow-link')?.textContent).toBe('https://example.com/duyuru');
+    expect(preserved?.querySelector('[class*="line-clamp"], .truncate, [class*="max-h-"]')).toBeNull();
   });
 
   it('uses the correct deleted and timeout labels', () => {

@@ -146,6 +146,29 @@ function fillContentOnlyPin(inner: HTMLElement, message: string): HTMLElement {
   return card;
 }
 
+function fillBlockStructuredPin(inner: HTMLElement, actor: string, lines: string[]): HTMLElement {
+  const card = fillPin(inner, actor, 'placeholder');
+  const content = card.querySelector<HTMLElement>('.native-rendered-content');
+  if (!content) throw new Error('Block pin fixture is missing its content element');
+
+  const blocks = document.createElement('div');
+  blocks.className = 'native-block-fixture';
+  lines.forEach((line, index) => {
+    const block = document.createElement(index % 2 === 0 ? 'div' : 'p');
+    block.textContent = line;
+    blocks.appendChild(block);
+  });
+  const link = document.createElement('a');
+  link.href = 'https://example.com/block-pin';
+  link.textContent = 'blok bağlantısı';
+  const emote = document.createElement('img');
+  emote.src = 'https://files.kick.com/emotes/789/fullsize';
+  emote.alt = 'BLOCKEMOTE';
+  blocks.append(link, emote);
+  content.replaceChildren(blocks);
+  return card;
+}
+
 function createMirror(fixture: NativePinFixture): {
   lifecycle: Lifecycle;
   host: HTMLElement;
@@ -169,6 +192,137 @@ async function flushMutations(): Promise<void> {
 }
 
 describe('own-mode native pin mirror', () => {
+  it('shows a non-empty compact preview and full expansion for block-structured mirrored content', async () => {
+    const styleText = document.getElementById('kickflow-styles')?.textContent ?? '';
+    // jsdom has no layout engine. Model the live regression: the old line-clamp box yields an
+    // empty block preview, while ordinary max-height clipping preserves the collapsed viewport.
+    const hasBlockSafeCollapse = !styleText.includes('-webkit-line-clamp: 2')
+      && styleText.includes('max-height: 3.4em');
+    const fullHeightFor = (element: HTMLElement): number => {
+      if (element.querySelector('.native-block-fixture')) {
+        return element.querySelectorAll('.native-block-fixture > div, .native-block-fixture > p').length > 1
+          ? 112
+          : 24;
+      }
+      return (element.textContent?.length ?? 0) > 80 ? 84 : 24;
+    };
+    const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      if (!this.classList.contains('kickflow-pinned-message__body-content')) return 0;
+      const fullHeight = fullHeightFor(this);
+      const collapsed = this.closest('.kickflow-pinned-message__body')
+        ?.classList.contains('kickflow-pinned-message__body--text-collapsed') ?? false;
+      if (!collapsed) return fullHeight;
+      if (this.querySelector('.native-block-fixture') && !hasBlockSafeCollapse) return 0;
+      return Math.min(fullHeight, 44);
+    });
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('kickflow-pinned-message__body-content') ? fullHeightFor(this) : 0;
+    });
+    const computedStyle = vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => ({
+      maxHeight: element.classList.contains('kickflow-pinned-message__body-content') ? '44px' : 'none',
+    } as CSSStyleDeclaration));
+
+    try {
+      featureFlags.showPinnedMessage = true;
+      const fixture = createFixture();
+      fillBlockStructuredPin(fixture.inner, 'BotRix', [
+        'Birinci blok satırı uzun sabitlenmiş mesajın başlangıcını gösteriyor.',
+        'İkinci paragraf bağlantı ve emote öncesinde ayrı bir blok oluşturuyor.',
+        'Üçüncü blok, dar sohbet sütununda tam gövde yüksekliğini büyütüyor.',
+      ]);
+      const { lifecycle, host } = createMirror(fixture);
+      await flushMutations();
+
+      const body = host.querySelector<HTMLElement>('.kickflow-pinned-message__body');
+      const bodyContent = host.querySelector<HTMLElement>('.kickflow-pinned-message__body-content');
+      const toggle = host.querySelector<HTMLButtonElement>('.kickflow-pinned-message__text-toggle');
+      expect(bodyContent?.querySelectorAll('.native-block-fixture > div, .native-block-fixture > p')).toHaveLength(3);
+      expect(bodyContent?.textContent?.trim().length).toBeGreaterThan(0);
+      expect(bodyContent?.clientHeight).toBeGreaterThan(0);
+      expect(bodyContent?.clientHeight).toBeLessThan(bodyContent?.scrollHeight ?? 0);
+      expect(toggle?.textContent).toBe('⌄');
+
+      toggle?.click();
+      expect(body?.classList.contains('kickflow-pinned-message__body--text-expanded')).toBe(true);
+      expect(bodyContent?.clientHeight).toBe(bodyContent?.scrollHeight);
+
+      fillBlockStructuredPin(fixture.inner, 'BotRix', ['Kısa blok.']);
+      await flushMutations();
+      expect(host.querySelector('.kickflow-pinned-message__text-toggle')).toBeNull();
+
+      lifecycle.dispose();
+    } finally {
+      computedStyle.mockRestore();
+      scrollHeight.mockRestore();
+      clientHeight.mockRestore();
+    }
+  });
+
+  it('strips leaked native presentation from mirror clones while preserving content classes', () => {
+    featureFlags.showPinnedMessage = true;
+    const fixture = createFixture();
+    const nativeCard = fillPin(fixture.inner, 'BotRix', 'PALWORLD YAMA NOTLARI uzun metin');
+    const nativeContent = nativeCard.querySelector<HTMLElement>('.native-rendered-content');
+    if (!nativeContent) throw new Error('Line-clamp fixture is missing its content element');
+    nativeContent.dataset.testid = 'pinned-message-content';
+    nativeContent.className = [
+      '[&>a:hover]:text-primary-base',
+      'min-w-0',
+      'break-words',
+      'text-sm',
+      'font-semibold',
+      'line-clamp-2',
+      'truncate',
+      'max-h-10',
+      'h-0',
+      'w-full',
+      'overflow-hidden',
+      'leading-none',
+      'transition-all',
+    ].join(' ');
+    nativeContent.style.cssText = 'display:none;max-height:0;overflow:hidden;line-height:0;color:rgb(117,253,70)';
+    const nativeLink = nativeContent.querySelector<HTMLAnchorElement>('a');
+    const nativeEmote = nativeContent.querySelector<HTMLImageElement>('img');
+    nativeLink?.classList.add('keep-link', 'line-clamp-12');
+    nativeEmote?.classList.add('keep-emote', 'line-clamp');
+
+    const { lifecycle, host } = createMirror(fixture);
+    const mirroredContent = host.querySelector<HTMLElement>('[data-testid="pinned-message-content"]');
+    const mirroredLink = mirroredContent?.querySelector<HTMLAnchorElement>('a');
+    const mirroredEmote = mirroredContent?.querySelector<HTMLImageElement>('img');
+
+    expect(mirroredContent?.classList.contains('line-clamp-2')).toBe(false);
+    expect(mirroredContent?.classList.contains('truncate')).toBe(false);
+    expect(mirroredContent?.classList.contains('max-h-10')).toBe(false);
+    expect(mirroredContent?.classList.contains('h-0')).toBe(false);
+    expect(mirroredContent?.classList.contains('w-full')).toBe(false);
+    expect(mirroredContent?.classList.contains('overflow-hidden')).toBe(false);
+    expect(mirroredContent?.classList.contains('leading-none')).toBe(false);
+    expect(mirroredContent?.classList.contains('transition-all')).toBe(false);
+    expect(mirroredContent?.classList.contains('text-sm')).toBe(true);
+    expect(mirroredContent?.classList.contains('font-semibold')).toBe(true);
+    expect(mirroredContent?.classList.contains('break-words')).toBe(true);
+    expect(mirroredLink?.classList.contains('line-clamp-12')).toBe(false);
+    expect(mirroredLink?.classList.contains('keep-link')).toBe(true);
+    expect(mirroredEmote?.classList.contains('line-clamp')).toBe(false);
+    expect(mirroredEmote?.classList.contains('keep-emote')).toBe(true);
+    expect(mirroredContent?.style.display).toBe('');
+    expect(mirroredContent?.style.maxHeight).toBe('');
+    expect(mirroredContent?.style.overflow).toBe('');
+    expect(mirroredContent?.style.lineHeight).toBe('');
+    expect(mirroredContent?.style.color).toBe('rgb(117, 253, 70)');
+    expect(host.querySelector('[class~="line-clamp"], [class^="line-clamp-"]')).toBeNull();
+
+    // Sanitisation is clone-only; Kick's native banner remains untouched.
+    expect(nativeContent.classList.contains('line-clamp-2')).toBe(true);
+    expect(nativeContent.classList.contains('truncate')).toBe(true);
+    expect(nativeContent.style.display).toBe('none');
+    expect(nativeLink?.classList.contains('line-clamp-12')).toBe(true);
+    expect(nativeEmote?.classList.contains('line-clamp')).toBe(true);
+
+    lifecycle.dispose();
+  });
+
   it('backfills a filled native pin, clones rich body content, and marks only the pin overlay hidden', async () => {
     featureFlags.showPinnedMessage = true;
     const fixture = createFixture();

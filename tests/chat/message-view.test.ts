@@ -191,13 +191,22 @@ describe('message-view safe rendering', () => {
   });
 
   it('adds the text chevron only for measured overflow in structured and mirrored pin bodies', async () => {
+    let clientHeightReads = 0;
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains('kickflow-pinned-message__body-content') ? 36 : 0;
+      if (!this.classList.contains('kickflow-pinned-message__body-content')) return 0;
+      clientHeightReads += 1;
+      const fullHeight = (this.textContent?.length ?? 0) > 80 ? 72 : 18;
+      const collapsed = this.closest('.kickflow-pinned-message__body')
+        ?.classList.contains('kickflow-pinned-message__body--text-collapsed') ?? false;
+      return collapsed ? Math.min(fullHeight, 44) : fullHeight;
     });
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
       if (!this.classList.contains('kickflow-pinned-message__body-content')) return 0;
       return (this.textContent?.length ?? 0) > 80 ? 72 : 18;
     });
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => ({
+      maxHeight: element.classList.contains('kickflow-pinned-message__body-content') ? '44px' : 'none',
+    } as CSSStyleDeclaration));
     const pin = (id: string, content: string): PinnedMessage => ({
       message: message('botrix', {}, { id, content }),
       durationSeconds: 1200,
@@ -222,10 +231,14 @@ describe('message-view safe rendering', () => {
     document.body.appendChild(structured);
     await Promise.resolve();
     const structuredToggle = structured.querySelector<HTMLButtonElement>('.kickflow-pinned-message__text-toggle');
+    expect(clientHeightReads).toBe(0);
     expect(structuredToggle?.textContent).toBe('⌄');
     expect(structuredToggle?.title).toBe('Mesajı genişlet');
     expect(structuredToggle?.getAttribute('aria-expanded')).toBe('false');
     expect(structured.querySelector('.kickflow-pinned-message__body--text-collapsed')).not.toBeNull();
+    const structuredContent = structured.querySelector<HTMLElement>('.kickflow-pinned-message__body-content');
+    expect(structuredContent?.clientHeight).toBeGreaterThan(0);
+    expect(structuredContent?.clientHeight).toBeLessThan(structuredContent?.scrollHeight ?? 0);
 
     structuredToggle?.click();
     expect(onToggleTextExpanded).toHaveBeenCalledOnce();
@@ -233,6 +246,7 @@ describe('message-view safe rendering', () => {
     expect(structuredToggle?.textContent).toBe('⌃');
     expect(structuredToggle?.title).toBe('Mesajı küçült');
     expect(structuredToggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(structuredContent?.clientHeight).toBe(structuredContent?.scrollHeight);
 
     const nativeTemplate = document.createDocumentFragment();
     const nativeText = document.createElement('span');

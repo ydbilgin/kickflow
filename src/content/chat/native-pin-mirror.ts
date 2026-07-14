@@ -1,5 +1,6 @@
 import type { Lifecycle } from '../shared/lifecycle';
 import type { PinnedMessage } from './message-store';
+import { cloneSanitizedNativeDom } from './native-dom-sanitizer';
 
 export const NATIVE_PIN_HIDDEN_ATTRIBUTE = 'data-kickflow-native-pin-hidden';
 
@@ -153,7 +154,7 @@ function cloneWithoutNativeButtons(source: HTMLElement | null): DocumentFragment
 
   for (const child of Array.from(source.childNodes)) {
     if (child instanceof HTMLButtonElement) continue;
-    const clone = child.cloneNode(true);
+    const clone = cloneSanitizedNativeDom(child);
     if (clone instanceof Element) {
       clone.querySelectorAll('button').forEach((button) => button.remove());
       clone.removeAttribute('id');

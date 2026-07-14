@@ -67,13 +67,26 @@ function makeRow(id: string, index = 0): HTMLElement {
   const row = document.createElement('div');
   row.dataset.index = String(index);
   row.dataset.kickflowMid = id;
+  row.className = 'relative w-full px-2 py-1';
   const group = document.createElement('div');
-  group.className = 'group';
-  const nativeContent = document.createElement('span');
-  nativeContent.className = 'break-words';
-  nativeContent.textContent = `native ${id}`;
-  group.appendChild(nativeContent);
-  row.appendChild(group);
+  group.className = 'group relative flex w-full min-w-0 items-start gap-2';
+  const messageShell = document.createElement('div');
+  messageShell.className = 'flex min-w-0 max-w-full grow flex-col';
+  const identityLine = document.createElement('div');
+  identityLine.className = 'flex min-w-0 items-center gap-1 text-sm';
+  const username = document.createElement('button');
+  username.className = 'truncate font-bold leading-[1.2]';
+  username.textContent = `user-${id}`;
+  identityLine.append(username);
+  const nativeContent = document.createElement('div');
+  nativeContent.className = 'break-words text-sm leading-[1.45] line-clamp-2 max-h-12 overflow-hidden';
+  const contentBlock = document.createElement('div');
+  contentBlock.className = 'min-w-0';
+  contentBlock.textContent = `native ${id}`;
+  nativeContent.append(contentBlock);
+  messageShell.append(identityLine, nativeContent);
+  group.append(messageShell);
+  row.append(group);
   return row;
 }
 
@@ -182,6 +195,27 @@ describe('NativeChatAugmenter ghost blocks', () => {
     const username = document.querySelector<HTMLElement>('.kickflow-ghost-row__username');
     expect(username?.getAttribute('role')).toBe('link');
     expect(username?.classList.contains('kickflow-ghost-row__username--link')).toBe(true);
+  });
+
+  it('injects parsed ghost content into a realistic nested Kick group without copying native classes', async () => {
+    installChat(['m1', 'ban1', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'before'));
+    store.addMessage(message('ban1', 2, 'bak [emote:123:kek] https://example.com/ghost'));
+    store.addMessage(message('m3', 3, 'after'));
+    store.markUserBanned(2, { permanent: true, bannedBy: 'mod1' });
+    new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    await flushObserver();
+
+    const block = document.querySelector<HTMLElement>('.kickflow-ghost-block');
+    const ghost = block?.querySelector<HTMLElement>('.kickflow-ghost-row');
+    expect(block?.parentElement?.classList.contains('group')).toBe(true);
+    expect(block?.previousElementSibling?.classList.contains('flex')).toBe(true);
+    expect(ghost?.querySelector('img.kickflow-emote')).not.toBeNull();
+    expect(ghost?.querySelector('a.kickflow-link')?.textContent).toBe('https://example.com/ghost');
+    expect(ghost?.querySelector('[class*="line-clamp"], .truncate, [class*="max-h-"]')).toBeNull();
   });
 
   it('removes ghost state when preserved banned messages are evicted', async () => {

@@ -33,6 +33,7 @@ import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
 import { buildPinnedMessageElement, clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
 import { NativePinMirror } from './chat/native-pin-mirror';
+import { cloneSanitizedNativeDom } from './chat/native-dom-sanitizer';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -275,7 +276,7 @@ export function createPinnedMessageController(
     },
     setMirroredPinnedMessage: (pin, content) => {
       if (!state.setActive(pin)) state.updateActive(pin);
-      preRenderedContent = content.cloneNode(true);
+      preRenderedContent = cloneSanitizedNativeDom(content);
       refresh();
     },
     clearPinnedMessage: () => {
@@ -418,12 +419,30 @@ function ensureStyles(): void {
     .kickflow-pinned-message__collapse:hover,
     .kickflow-pinned-message__dismiss:hover { background: rgba(255,255,255,0.1); color: #fff; }
     .kickflow-pinned-message__body { position: relative; padding: 7px 9px 8px; }
-    .kickflow-pinned-message__body-content { word-break: break-word; overflow-wrap: anywhere; }
-    .kickflow-pinned-message__body--text-collapsed .kickflow-pinned-message__body-content {
-      display: -webkit-box; max-height: 2.8em; overflow: hidden;
-      -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    .kickflow-pinned-message__body-content {
+      max-height: none; overflow: visible; word-break: break-word; overflow-wrap: anywhere;
     }
-    .kickflow-pinned-message__body--text-expandable .kickflow-pinned-message__body-content { padding-right: 24px; }
+    .kickflow-pinned-message__body-content,
+    .kickflow-pinned-message__body-content * {
+      -webkit-line-clamp: unset !important;
+    }
+    .kickflow-pinned-message__body-content * { max-height: none !important; }
+    .kickflow-pinned-message__body-content :is(
+      [class~="line-clamp"], [class^="line-clamp-"], [class*=" line-clamp-"]
+    ) {
+      display: revert !important; overflow: visible !important; -webkit-box-orient: initial !important;
+    }
+    .kickflow-pinned-message__body--text-collapsed .kickflow-pinned-message__body-content {
+      max-height: 3.4em; overflow: hidden;
+    }
+    .kickflow-pinned-message__body--text-expanded .kickflow-pinned-message__body-content {
+      max-height: none; overflow: visible;
+    }
+    .kickflow-pinned-message__body--text-expandable .kickflow-pinned-message__body-content { padding-right: 28px; }
+    .kickflow-pinned-message__body--text-expandable.kickflow-pinned-message__body--text-collapsed::after {
+      content: ''; position: absolute; right: 33px; bottom: 8px; left: 9px; height: 1.15em;
+      background: linear-gradient(to bottom, rgba(24,24,27,0), rgba(24,24,27,0.97)); pointer-events: none;
+    }
     .kickflow-pinned-message__text-toggle {
       position: absolute; right: 5px; bottom: 4px; width: 24px; height: 24px; padding: 0;
       border: 0; border-radius: 4px; background: rgba(24,24,27,0.94); color: #c8c8cf;
@@ -505,8 +524,10 @@ function ensureStyles(): void {
     html.kickflow-chat-active [data-kickflow-native-pin-hidden] { display: none !important; }
     a[data-testid^="sidebar-following-channel-"][data-kickflow-live="false"],
     a[data-testid^="sidebar-recommended-channel-"][data-kickflow-live="false"] { display: none !important; }
-    div.rounded-full.h-2.w-2[data-kickflow-live="true"] { background: #22c55e !important; }
-    div.rounded-full.h-2.w-2[data-kickflow-live="false"] { background: #6b7280 !important; }
+    a[data-testid^="sidebar-following-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="true"],
+    a[data-testid^="sidebar-recommended-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="true"] { background: #22c55e !important; }
+    a[data-testid^="sidebar-following-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="false"],
+    a[data-testid^="sidebar-recommended-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="false"] { background: #6b7280 !important; }
     .kickflow-scroll-pill {
       position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
       display: inline-flex; align-items: center; gap: 5px;

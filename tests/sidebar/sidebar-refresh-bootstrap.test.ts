@@ -88,7 +88,9 @@ describe('site-wide sidebar bootstrap', () => {
     expect(row?.querySelector('span[title]')?.textContent).toBe('1\u00a0B');
     expect(row?.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('true');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(document.getElementById('kickflow-styles')?.textContent).toContain('[data-kickflow-live="true"]');
+    const styleText = document.getElementById('kickflow-styles')?.textContent ?? '';
+    expect(styleText).toContain('a[data-testid^="sidebar-following-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="true"]');
+    expect(styleText).not.toMatch(/^\s*div\.rounded-full\.h-2\.w-2\[data-kickflow-live=/mu);
   });
 
   it('reversibly hides an offline live-list row without removing Kick-owned DOM', async () => {
