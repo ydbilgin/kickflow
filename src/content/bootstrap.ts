@@ -50,7 +50,7 @@ import {
   type HotkeyAction,
   type HotkeyBinding,
 } from './player/hotkey-registry';
-import { SidebarRefreshController } from './sidebar/sidebar-refresh';
+import { SIDEBAR_CHANNEL_ROW_SELECTOR, SidebarRefreshController } from './sidebar/sidebar-refresh';
 
 const STYLE_ID = 'kickflow-styles';
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
@@ -1269,11 +1269,28 @@ let currentLifecycle: Lifecycle | null = null;
 let currentSlug: string | null = null;
 let sessionToken = 0;
 let navPollId: number | null = null;
+let sidebarRefreshLifecycle: Lifecycle | null = null;
 let sidebarRefreshController: SidebarRefreshController | null = null;
 
-function initSidebarRefreshSession(lifecycle: Lifecycle): void {
-  whenElementPresent<HTMLAnchorElement>('a[data-testid^="sidebar-following-channel-1"]', lifecycle, () => {
-    if (lifecycle.isDisposed || !featureFlags.showSidebarRefresh || sidebarRefreshController) return;
+function stopSidebarRefresh(): void {
+  const lifecycle = sidebarRefreshLifecycle;
+  sidebarRefreshLifecycle = null;
+  sidebarRefreshController = null;
+  lifecycle?.dispose();
+}
+
+function syncSidebarRefresh(): void {
+  if (!featureFlags.showSidebarRefresh) {
+    stopSidebarRefresh();
+    return;
+  }
+  if (sidebarRefreshLifecycle && !sidebarRefreshLifecycle.isDisposed) return;
+
+  ensureStyles();
+  const lifecycle = new Lifecycle();
+  sidebarRefreshLifecycle = lifecycle;
+  whenElementPresent<HTMLAnchorElement>(SIDEBAR_CHANNEL_ROW_SELECTOR, lifecycle, () => {
+    if (lifecycle.isDisposed || sidebarRefreshLifecycle !== lifecycle || sidebarRefreshController) return;
     sidebarRefreshController = new SidebarRefreshController(lifecycle);
   });
 }
@@ -1296,7 +1313,6 @@ function startSession(slug: string): void {
 
   // Player QoL and chat integrity are started concurrently and never gate each other.
   initPlayerQolSession(lifecycle);
-  initSidebarRefreshSession(lifecycle);
 
   if (!document.querySelector(SELECTORS.chatMessagesContainer)) {
     logger.debug('bootstrap:', SELECTORS.chatMessagesContainer, 'not present yet for', slug, '- chat integrity module waiting');
@@ -1313,7 +1329,6 @@ function startSession(slug: string): void {
 function stopSession(): void {
   currentLifecycle?.dispose();
   currentLifecycle = null;
-  sidebarRefreshController = null;
 }
 
 /** The extension context died (reload/update/disable) while this injected script kept running.
@@ -1332,6 +1347,7 @@ function teardownZombie(): void {
     navPollId = null;
   }
   stopSession();
+  stopSidebarRefresh();
   configureUserCardSession(null);
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.querySelector('.kickflow-panel')?.remove();
@@ -1346,7 +1362,7 @@ function onWindowFlagChange(event: Event): void {
   if (detail && typeof detail.key === 'string') applyFlagChange(detail.key, detail.value);
 }
 
-function handlePotentialNavigation(): void {
+function handlePotentialNavigation(event?: Event): void {
   if (!isExtensionContextValid()) {
     // Belt-and-suspenders: a queued popstate/locationchange can still fire this before
     // teardownZombie's removeEventListener above takes effect.
@@ -1354,6 +1370,10 @@ function handlePotentialNavigation(): void {
     return;
   }
 
+  // The page-wide sidebar controller survives SPA route changes, but a navigation event is still
+  // a useful immediate refresh signal. The event is absent for main's initial bootstrap because
+  // the controller already performs its own initial round.
+  if (event) void sidebarRefreshController?.refresh();
   const slug = getChannelSlugFromLocation();
   if (slug === currentSlug) return;
 
@@ -1379,12 +1399,7 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'autoTheater') syncAutoTheaterFlag();
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
     if (key === 'showSidebarRefresh') {
-      if (value) {
-        if (currentLifecycle) initSidebarRefreshSession(currentLifecycle);
-      } else {
-        sidebarRefreshController?.dispose();
-        sidebarRefreshController = null;
-      }
+      syncSidebarRefresh();
     }
     void safeStorageSet({ ['kf_flag_' + key]: value });
   } else if (key === 'chatMode' && (value === 'native' || value === 'own')) {
@@ -1564,6 +1579,7 @@ async function main(): Promise<void> {
   setDebugLogging(featureFlags.debugLogging);
   installStatusBridge();
   installNavigationHooks();
+  syncSidebarRefresh();
   handlePotentialNavigation();
 }
 

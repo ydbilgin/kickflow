@@ -27,6 +27,17 @@ function mount(rows = 1): HTMLAnchorElement[] {
   return Array.from(document.querySelectorAll('a'));
 }
 
+function appendRecommendedRow(source: HTMLAnchorElement, index: number, slug: string): HTMLAnchorElement {
+  const section = document.createElement('section');
+  section.dataset.sidebarList = 'recommended';
+  const row = source.cloneNode(true) as HTMLAnchorElement;
+  row.dataset.testid = `sidebar-recommended-channel-${index}`;
+  row.setAttribute('href', `/${slug}`);
+  section.append(row);
+  document.body.append(section);
+  return row;
+}
+
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -80,6 +91,86 @@ describe('sidebar refresh', () => {
     expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('2275');
     expect(row.querySelector('span[title]')?.textContent).toBe('2\u00a0B');
     expect(row.querySelector('div.rounded-full.h-2.w-2')?.getAttribute('data-kickflow-live')).toBe('true');
+    lifecycle.dispose();
+  });
+
+  it('patches recommended rows that use the same native markup as followed rows', async () => {
+    const [followedRow] = mount();
+    const recommendedRow = appendRecommendedRow(followedRow, 4, 'recommended_slug');
+    followedRow.closest('section')?.remove();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(true, 1416)));
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    expect(recommendedRow.querySelector('span[title]')?.getAttribute('title')).toBe('1416');
+    expect(recommendedRow.querySelector('span[title]')?.textContent).toBe('1\u00a0B');
+    expect(recommendedRow.querySelector('div.rounded-full.h-2.w-2')?.getAttribute('data-kickflow-live')).toBe('true');
+    lifecycle.dispose();
+  });
+
+  it('fetches a slug present in both lists once and patches every matching row', async () => {
+    const [followedRow] = mount();
+    const recommendedRow = appendRecommendedRow(followedRow, 8, 'jahrein');
+    const fetchMock = vi.fn().mockResolvedValue(response(false, 0));
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    for (const row of [followedRow, recommendedRow]) {
+      expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('0');
+      expect(row.querySelector('span[title]')?.textContent).toBe('0');
+      expect(row.querySelector('div.rounded-full.h-2.w-2')?.getAttribute('data-kickflow-live')).toBe('false');
+    }
+    lifecycle.dispose();
+  });
+
+  it('updates count and live marker through offline, live, and offline transitions', async () => {
+    const [row] = mount();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(false, 0))
+      .mockResolvedValueOnce(response(true, 1416))
+      .mockResolvedValueOnce(response(false, 0));
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    const controller = new SidebarRefreshController(lifecycle);
+    await flush();
+
+    expect(row.querySelector('span[title]')?.textContent).toBe('0');
+    expect(row.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('false');
+
+    await controller.refresh();
+    expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('1416');
+    expect(row.querySelector('span[title]')?.textContent).toBe('1\u00a0B');
+    expect(row.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('true');
+
+    await controller.refresh();
+    expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('0');
+    expect(row.querySelector('span[title]')?.textContent).toBe('0');
+    expect(row.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('false');
+    lifecycle.dispose();
+  });
+
+  it('skips a UUID recommended artifact with no count or live-dot elements', async () => {
+    document.body.innerHTML = `
+      <section>
+        <a class="flex h-11 w-full" data-testid="sidebar-recommended-channel-12"
+          href="/e2209b9b4e164395a4e6b22bf321a0b6">
+          <img class="grayscale" src="...">
+          <span class="text-neutral-700">Unavailable</span>
+          <svg aria-hidden="true"></svg>
+        </a>
+      </section>`;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    expect(getSidebarChannelSlug(document.querySelector('a') as HTMLAnchorElement)).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
     lifecycle.dispose();
   });
 
@@ -140,7 +231,8 @@ describe('sidebar refresh', () => {
 
   it('reapplies cached data after React replaces a row without fetching again', async () => {
     vi.useFakeTimers();
-    const [row] = mount();
+    const [followedRow] = mount();
+    const row = appendRecommendedRow(followedRow, 6, 'jahrein');
     const fetchMock = vi.fn().mockResolvedValue(response(false, 500));
     vi.stubGlobal('fetch', fetchMock);
     const lifecycle = new Lifecycle();

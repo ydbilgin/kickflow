@@ -1,7 +1,10 @@
 import { logger } from '../shared/logger';
 import type { Lifecycle } from '../shared/lifecycle';
 
-const ROW_SELECTOR = 'a[data-testid^="sidebar-following-channel-"]';
+export const SIDEBAR_CHANNEL_ROW_SELECTOR = [
+  'a[data-testid^="sidebar-following-channel-"]',
+  'a[data-testid^="sidebar-recommended-channel-"]',
+].join(', ');
 const VIEWER_COUNT_SELECTOR = 'span[title]';
 const LIVE_DOT_SELECTOR = 'div.rounded-full.h-2.w-2';
 const REFRESH_INTERVAL_MS = 45_000;
@@ -40,7 +43,7 @@ export function formatViewerCount(viewerCount: number): string {
   return viewerCount < 1000 ? String(viewerCount) : `${Math.round(viewerCount / 1000)}\u00a0B`;
 }
 
-/** Keeps Kick's React-owned followed-channel rows fresh without replacing their DOM. */
+/** Keeps Kick's React-owned followed/recommended channel rows fresh without replacing their DOM. */
 export class SidebarRefreshController {
   private readonly cache = new Map<string, SidebarChannelData>();
   private readonly notFoundSlugs = new Set<string>();
@@ -48,6 +51,7 @@ export class SidebarRefreshController {
   private observerTimer: number | null = null;
   private refreshInProgress = false;
   private refreshQueued = false;
+  private activeRefreshSlugs = new Set<string>();
   private disposed = false;
 
   constructor(lifecycle: Lifecycle, enabled = true) {
@@ -56,8 +60,7 @@ export class SidebarRefreshController {
       lifecycle.add(() => this.dispose());
       return;
     }
-    const firstRow = this.discoverRows()[0];
-    this.observer.observe(firstRow?.closest('section') ?? document.body, { childList: true, subtree: true });
+    this.syncObserverRoots(this.discoverRows());
     lifecycle.setInterval(() => void this.refresh(), REFRESH_INTERVAL_MS);
     lifecycle.addEventListener(document, 'visibilitychange', this.handleVisibilityChange);
     lifecycle.add(() => this.dispose());
@@ -77,13 +80,27 @@ export class SidebarRefreshController {
     this.refreshInProgress = true;
     try {
       const rows = this.discoverRows();
-      for (let index = 0; index < rows.length; index++) {
+      this.syncObserverRoots(rows);
+      const rowsBySlug = new Map<string, HTMLAnchorElement[]>();
+      for (const row of rows) {
+        const slug = getSidebarChannelSlug(row);
+        if (!slug || this.notFoundSlugs.has(slug)) continue;
+        const matchingRows = rowsBySlug.get(slug);
+        if (matchingRows) matchingRows.push(row);
+        else rowsBySlug.set(slug, [row]);
+      }
+      this.activeRefreshSlugs = new Set(rowsBySlug.keys());
+
+      let index = 0;
+      for (const [slug, matchingRows] of rowsBySlug) {
         if (this.disposed) return;
         if (index > 0) await this.delay(REQUEST_STAGGER_MS);
         if (this.disposed) return;
-        await this.refreshRow(rows[index]);
+        await this.refreshSlug(slug, matchingRows);
+        index++;
       }
     } finally {
+      this.activeRefreshSlugs.clear();
       this.refreshInProgress = false;
       if (this.refreshQueued && !this.disposed) {
         this.refreshQueued = false;
@@ -93,17 +110,23 @@ export class SidebarRefreshController {
   }
 
   private discoverRows(): HTMLAnchorElement[] {
-    return Array.from(document.querySelectorAll<HTMLAnchorElement>(ROW_SELECTOR));
+    return Array.from(document.querySelectorAll<HTMLAnchorElement>(SIDEBAR_CHANNEL_ROW_SELECTOR));
   }
 
-  private async refreshRow(row: HTMLAnchorElement): Promise<void> {
-    const slug = getSidebarChannelSlug(row);
-    if (!slug || this.notFoundSlugs.has(slug)) return;
+  private syncObserverRoots(rows: HTMLAnchorElement[]): void {
+    const roots = new Set<HTMLElement>();
+    for (const row of rows) roots.add(row.closest('section') ?? row.parentElement ?? document.body);
+    if (roots.size === 0) roots.add(document.body);
+    this.observer.disconnect();
+    for (const root of roots) this.observer.observe(root, { childList: true, subtree: true });
+  }
+
+  private async refreshSlug(slug: string, rows: HTMLAnchorElement[]): Promise<void> {
     try {
       const data = await this.fetchChannel(slug);
       if (!data || this.disposed) return;
       this.cache.set(slug, data);
-      this.patchRow(row, data);
+      for (const row of rows) this.patchRow(row, data);
     } catch (error) {
       if (error instanceof HttpStatusError && error.status === 404) this.notFoundSlugs.add(slug);
       logger.warn('sidebar-refresh: failed to refresh', slug, error);
@@ -156,11 +179,18 @@ export class SidebarRefreshController {
     if (this.observerTimer !== null) window.clearTimeout(this.observerTimer);
     this.observerTimer = window.setTimeout(() => {
       this.observerTimer = null;
-      for (const row of this.discoverRows()) {
+      const rows = this.discoverRows();
+      this.syncObserverRoots(rows);
+      let hasUncachedSlug = false;
+      for (const row of rows) {
         const slug = getSidebarChannelSlug(row);
         const data = slug ? this.cache.get(slug) : undefined;
         if (data) this.patchRow(row, data);
+        else if (slug && !this.notFoundSlugs.has(slug) && !this.activeRefreshSlugs.has(slug)) {
+          hasUncachedSlug = true;
+        }
       }
+      if (hasUncachedSlug) void this.refresh();
     }, OBSERVER_DEBOUNCE_MS);
   }
 
