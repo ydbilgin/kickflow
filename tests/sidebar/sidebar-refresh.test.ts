@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatViewerCount, getSidebarChannelSlug, SidebarRefreshController } from '../../src/content/sidebar/sidebar-refresh';
+import {
+  formatViewerCount,
+  getSidebarChannelSlug,
+  SIDEBAR_REFRESH_POLICY,
+  SidebarRefreshController,
+} from '../../src/content/sidebar/sidebar-refresh';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { logger } from '../../src/content/shared/logger';
 
@@ -36,6 +41,10 @@ function appendRecommendedRow(source: HTMLAnchorElement, index: number, slug: st
   section.append(row);
   document.body.append(section);
   return row;
+}
+
+function fetchedSlugs(fetchMock: ReturnType<typeof vi.fn>): string[] {
+  return fetchMock.mock.calls.map(([url]) => String(url).split('/').pop()!);
 }
 
 async function flush(): Promise<void> {
@@ -205,12 +214,127 @@ describe('sidebar refresh', () => {
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(249);
+    await vi.advanceTimersByTimeAsync(SIDEBAR_REFRESH_POLICY.requestStaggerMs - 1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(45_000);
+    await vi.advanceTimersByTimeAsync(SIDEBAR_REFRESH_POLICY.refreshIntervalMs);
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    lifecycle.dispose();
+  });
+
+  it('caps each cycle, prioritizes followed rows, and rotates deferred rows into the next cycle', async () => {
+    vi.useFakeTimers();
+    const followedRows = mount(8);
+    for (let index = 1; index <= 4; index++) {
+      appendRecommendedRow(followedRows[0], index, `recommended-${index}`);
+    }
+    const fetchMock = vi.fn().mockResolvedValue(response());
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    const controller = new SidebarRefreshController(lifecycle);
+    await flush();
+    await vi.advanceTimersByTimeAsync(7 * SIDEBAR_REFRESH_POLICY.requestStaggerMs);
+
+    expect(SIDEBAR_REFRESH_POLICY.followedPerCycle + SIDEBAR_REFRESH_POLICY.recommendedPerCycle).toBe(8);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(fetchedSlugs(fetchMock)).toEqual([
+      'jahrein',
+      'channel-2',
+      'channel-3',
+      'channel-4',
+      'channel-5',
+      'channel-6',
+      'recommended-1',
+      'recommended-2',
+    ]);
+
+    const nextCycle = controller.refresh();
+    await vi.advanceTimersByTimeAsync(7 * SIDEBAR_REFRESH_POLICY.requestStaggerMs);
+    await nextCycle;
+    expect(fetchMock).toHaveBeenCalledTimes(16);
+    expect(fetchedSlugs(fetchMock).slice(8)).toEqual([
+      'channel-7',
+      'channel-8',
+      'jahrein',
+      'channel-2',
+      'channel-3',
+      'channel-4',
+      'recommended-3',
+      'recommended-4',
+    ]);
+    lifecycle.dispose();
+  });
+
+  it('retries a fetch TypeError with 2s/4s backoff and keeps a transient miss out of WARN', async () => {
+    vi.useFakeTimers();
+    mount();
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(SIDEBAR_REFRESH_POLICY.requestRetryBaseMs - 1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(SIDEBAR_REFRESH_POLICY.requestRetryBaseMs * 2 - 1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await flush();
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledWith(
+      'sidebar-refresh: transient network failure',
+      'jahrein',
+      expect.any(TypeError),
+    );
+    lifecycle.dispose();
+  });
+
+  it('recovers from one transient fetch rejection without warning or losing the row update', async () => {
+    vi.useFakeTimers();
+    const [row] = mount();
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(response(true, 731));
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(SIDEBAR_REFRESH_POLICY.requestRetryBaseMs);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
+    expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('731');
+    lifecycle.dispose();
+  });
+
+  it('continues to later rows after one slug exhausts its network retries', async () => {
+    vi.useFakeTimers();
+    const [, healthyRow] = mount(2);
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      url.endsWith('/jahrein') ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve(response(true, 912)),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    await vi.advanceTimersByTimeAsync(
+      SIDEBAR_REFRESH_POLICY.requestRetryBaseMs * 3 + SIDEBAR_REFRESH_POLICY.requestStaggerMs,
+    );
+
+    expect(fetchedSlugs(fetchMock)).toEqual(['jahrein', 'jahrein', 'jahrein', 'channel-2']);
+    expect(healthyRow.querySelector('span[title]')?.getAttribute('title')).toBe('912');
     lifecycle.dispose();
   });
 

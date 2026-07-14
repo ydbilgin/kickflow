@@ -7,11 +7,17 @@ export const SIDEBAR_CHANNEL_ROW_SELECTOR = [
 ].join(', ');
 const VIEWER_COUNT_SELECTOR = 'span[title]';
 const LIVE_DOT_SELECTOR = 'div.rounded-full.h-2.w-2';
-const REFRESH_INTERVAL_MS = 45_000;
-const REQUEST_STAGGER_MS = 250;
+// Keep each 45s pass below the burst that appeared when recommended rows were added.
+// Followed rows get most of the budget; both tiers rotate independently across passes.
+export const SIDEBAR_REFRESH_POLICY = {
+  refreshIntervalMs: 45_000,
+  requestStaggerMs: 1_000,
+  followedPerCycle: 6,
+  recommendedPerCycle: 2,
+  requestMaxAttempts: 3,
+  requestRetryBaseMs: 2_000,
+} as const;
 const OBSERVER_DEBOUNCE_MS = 150;
-const REQUEST_MAX_ATTEMPTS = 3;
-const REQUEST_RETRY_BASE_MS = 800;
 const CHANNEL_SLUG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
 const UUID_LIKE_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 
@@ -22,6 +28,12 @@ interface SidebarChannelData {
 
 interface ChannelResponse {
   livestream?: { is_live?: boolean; viewer_count?: number } | null;
+}
+
+interface RefreshEntry {
+  slug: string;
+  rows: HTMLAnchorElement[];
+  followed: boolean;
 }
 
 class HttpStatusError extends Error {
@@ -52,6 +64,9 @@ export class SidebarRefreshController {
   private refreshInProgress = false;
   private refreshQueued = false;
   private activeRefreshSlugs = new Set<string>();
+  private readonly knownSlugs = new Set<string>();
+  private followedCursor = 0;
+  private recommendedCursor = 0;
   private disposed = false;
 
   constructor(lifecycle: Lifecycle, enabled = true) {
@@ -61,7 +76,7 @@ export class SidebarRefreshController {
       return;
     }
     this.syncObserverRoots(this.discoverRows());
-    lifecycle.setInterval(() => void this.refresh(), REFRESH_INTERVAL_MS);
+    lifecycle.setInterval(() => void this.refresh(), SIDEBAR_REFRESH_POLICY.refreshIntervalMs);
     lifecycle.addEventListener(document, 'visibilitychange', this.handleVisibilityChange);
     lifecycle.add(() => this.dispose());
     void this.refresh();
@@ -81,20 +96,40 @@ export class SidebarRefreshController {
     try {
       const rows = this.discoverRows();
       this.syncObserverRoots(rows);
-      const rowsBySlug = new Map<string, HTMLAnchorElement[]>();
+      const entriesBySlug = new Map<string, RefreshEntry>();
       for (const row of rows) {
         const slug = getSidebarChannelSlug(row);
         if (!slug || this.notFoundSlugs.has(slug)) continue;
-        const matchingRows = rowsBySlug.get(slug);
-        if (matchingRows) matchingRows.push(row);
-        else rowsBySlug.set(slug, [row]);
+        this.knownSlugs.add(slug);
+        const followed = row.dataset.testid?.startsWith('sidebar-following-channel-') ?? false;
+        const entry = entriesBySlug.get(slug);
+        if (entry) {
+          entry.rows.push(row);
+          entry.followed ||= followed;
+        } else {
+          entriesBySlug.set(slug, { slug, rows: [row], followed });
+        }
       }
-      this.activeRefreshSlugs = new Set(rowsBySlug.keys());
+
+      const entries = Array.from(entriesBySlug.values());
+      const selectedEntries = [
+        ...this.takeCycleEntries(
+          entries.filter((entry) => entry.followed),
+          SIDEBAR_REFRESH_POLICY.followedPerCycle,
+          'followed',
+        ),
+        ...this.takeCycleEntries(
+          entries.filter((entry) => !entry.followed),
+          SIDEBAR_REFRESH_POLICY.recommendedPerCycle,
+          'recommended',
+        ),
+      ];
+      this.activeRefreshSlugs = new Set(selectedEntries.map((entry) => entry.slug));
 
       let index = 0;
-      for (const [slug, matchingRows] of rowsBySlug) {
+      for (const { slug, rows: matchingRows } of selectedEntries) {
         if (this.disposed) return;
-        if (index > 0) await this.delay(REQUEST_STAGGER_MS);
+        if (index > 0) await this.delay(SIDEBAR_REFRESH_POLICY.requestStaggerMs);
         if (this.disposed) return;
         await this.refreshSlug(slug, matchingRows);
         index++;
@@ -107,6 +142,22 @@ export class SidebarRefreshController {
         void this.runRefresh();
       }
     }
+  }
+
+  private takeCycleEntries(
+    entries: RefreshEntry[],
+    limit: number,
+    tier: 'followed' | 'recommended',
+  ): RefreshEntry[] {
+    if (entries.length === 0) return [];
+    const cursor = tier === 'followed' ? this.followedCursor : this.recommendedCursor;
+    const start = cursor % entries.length;
+    const count = Math.min(limit, entries.length);
+    const selected = Array.from({ length: count }, (_, offset) => entries[(start + offset) % entries.length]);
+    const nextCursor = (start + count) % entries.length;
+    if (tier === 'followed') this.followedCursor = nextCursor;
+    else this.recommendedCursor = nextCursor;
+    return selected;
   }
 
   private discoverRows(): HTMLAnchorElement[] {
@@ -128,15 +179,23 @@ export class SidebarRefreshController {
       this.cache.set(slug, data);
       for (const row of rows) this.patchRow(row, data);
     } catch (error) {
-      if (error instanceof HttpStatusError && error.status === 404) this.notFoundSlugs.add(slug);
-      logger.warn('sidebar-refresh: failed to refresh', slug, error);
+      if (error instanceof HttpStatusError && error.status === 404) {
+        this.notFoundSlugs.add(slug);
+        logger.warn('sidebar-refresh: failed to refresh', slug, error);
+      } else if (error instanceof TypeError) {
+        // Fetch rejects with TypeError for connection/WAF failures. The cached native value is
+        // still usable, so an exhausted transient miss is diagnostic noise rather than a warning.
+        logger.debug('sidebar-refresh: transient network failure', slug, error);
+      } else {
+        logger.warn('sidebar-refresh: failed to refresh', slug, error);
+      }
     }
   }
 
   private async fetchChannel(slug: string): Promise<SidebarChannelData> {
     const url = `https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`;
     let lastError: unknown = new Error('request failed');
-    for (let attempt = 0; attempt < REQUEST_MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 0; attempt < SIDEBAR_REFRESH_POLICY.requestMaxAttempts; attempt++) {
       try {
         const response = await fetch(url, { headers: { accept: 'application/json' } });
         if (response.ok) {
@@ -153,7 +212,13 @@ export class SidebarRefreshController {
         lastError = error;
         if (error instanceof HttpStatusError && error.status !== 429 && error.status < 500) throw error;
       }
-      if (attempt < REQUEST_MAX_ATTEMPTS - 1) await this.delay(REQUEST_RETRY_BASE_MS * 2 ** attempt);
+      if (attempt < SIDEBAR_REFRESH_POLICY.requestMaxAttempts - 1) {
+        const backoffMs = SIDEBAR_REFRESH_POLICY.requestRetryBaseMs * 2 ** attempt;
+        if (lastError instanceof TypeError) {
+          logger.debug('sidebar-refresh: transient network failure; retrying', slug, backoffMs);
+        }
+        await this.delay(backoffMs);
+      }
     }
     throw lastError;
   }
@@ -181,16 +246,21 @@ export class SidebarRefreshController {
       this.observerTimer = null;
       const rows = this.discoverRows();
       this.syncObserverRoots(rows);
-      let hasUncachedSlug = false;
+      let hasNewSlug = false;
       for (const row of rows) {
         const slug = getSidebarChannelSlug(row);
         const data = slug ? this.cache.get(slug) : undefined;
         if (data) this.patchRow(row, data);
-        else if (slug && !this.notFoundSlugs.has(slug) && !this.activeRefreshSlugs.has(slug)) {
-          hasUncachedSlug = true;
+        else if (
+          slug &&
+          !this.notFoundSlugs.has(slug) &&
+          !this.activeRefreshSlugs.has(slug) &&
+          !this.knownSlugs.has(slug)
+        ) {
+          hasNewSlug = true;
         }
       }
-      if (hasUncachedSlug) void this.refresh();
+      if (hasNewSlug) void this.refresh();
     }, OBSERVER_DEBOUNCE_MS);
   }
 
