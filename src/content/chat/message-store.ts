@@ -82,12 +82,14 @@ export class ActivePinnedMessageState {
   private activePin: PinnedMessage | null = null;
   private dismissedPinId: string | null = null;
   private collapsed = false;
+  private textExpanded = false;
 
   setActive(pin: PinnedMessage): boolean {
     if (this.activePin?.message.id === pin.message.id) return false;
     this.activePin = pin;
     this.dismissedPinId = null;
     this.collapsed = false;
+    this.textExpanded = false;
     return true;
   }
 
@@ -106,6 +108,14 @@ export class ActivePinnedMessageState {
     return this.collapsed;
   }
 
+  toggleTextExpanded(): void {
+    this.textExpanded = !this.textExpanded;
+  }
+
+  isTextExpanded(): boolean {
+    return this.textExpanded;
+  }
+
   dismiss(pinId: string): boolean {
     if (this.activePin?.message.id !== pinId || this.dismissedPinId === pinId) return false;
     this.dismissedPinId = pinId;
@@ -122,10 +132,11 @@ export class ActivePinnedMessageState {
   }
 
   clearActive(): boolean {
-    if (!this.activePin && this.dismissedPinId === null && !this.collapsed) return false;
+    if (!this.activePin && this.dismissedPinId === null && !this.collapsed && !this.textExpanded) return false;
     this.activePin = null;
     this.dismissedPinId = null;
     this.collapsed = false;
+    this.textExpanded = false;
     return true;
   }
 }

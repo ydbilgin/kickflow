@@ -129,6 +129,7 @@ describe('sidebar refresh', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     for (const row of [followedRow, recommendedRow]) {
+      expect(row.getAttribute('data-kickflow-live')).toBe('false');
       expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('0');
       expect(row.querySelector('span[title]')?.textContent).toBe('0');
       expect(row.querySelector('div.rounded-full.h-2.w-2')?.getAttribute('data-kickflow-live')).toBe('false');
@@ -148,16 +149,19 @@ describe('sidebar refresh', () => {
     await flush();
 
     expect(row.querySelector('span[title]')?.textContent).toBe('0');
+    expect(row.getAttribute('data-kickflow-live')).toBe('false');
     expect(row.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('false');
 
     await controller.refresh();
     expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('1416');
     expect(row.querySelector('span[title]')?.textContent).toBe('1\u00a0B');
+    expect(row.getAttribute('data-kickflow-live')).toBe('true');
     expect(row.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('true');
 
     await controller.refresh();
     expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('0');
     expect(row.querySelector('span[title]')?.textContent).toBe('0');
+    expect(row.getAttribute('data-kickflow-live')).toBe('false');
     expect(row.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('false');
     lifecycle.dispose();
   });
@@ -202,6 +206,64 @@ describe('sidebar refresh', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
     lifecycle.dispose();
+  });
+
+  it('rejects a non-finite or negative API viewer count instead of writing corrupt UI', async () => {
+    vi.useFakeTimers();
+    const [row] = mount();
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ livestream: { is_live: true, viewer_count: -1 } }),
+    } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+    await vi.advanceTimersByTimeAsync(SIDEBAR_REFRESH_POLICY.requestRetryBaseMs * 3);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('11002');
+    expect(row.querySelector('span[title]')?.textContent).toBe('11\u00a0B');
+    expect(row.hasAttribute('data-kickflow-live')).toBe(false);
+    expect(warn).toHaveBeenCalledWith('sidebar-refresh: failed to refresh', 'jahrein', expect.any(Error));
+    lifecycle.dispose();
+  });
+
+  it('does not misclassify a malformed 200 response with no livestream field as offline', async () => {
+    vi.useFakeTimers();
+    const [row] = mount();
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+    await vi.advanceTimersByTimeAsync(SIDEBAR_REFRESH_POLICY.requestRetryBaseMs * 3);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(row.hasAttribute('data-kickflow-live')).toBe(false);
+    expect(row.querySelector('span[title]')?.getAttribute('title')).toBe('11002');
+    lifecycle.dispose();
+  });
+
+  it('removes KickFlow live markers on dispose so an offline row cannot stay hidden', async () => {
+    const [row] = mount();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(false, 0)));
+    const lifecycle = new Lifecycle();
+    new SidebarRefreshController(lifecycle);
+    await flush();
+
+    expect(row.getAttribute('data-kickflow-live')).toBe('false');
+    expect(row.querySelector('div.rounded-full.h-2.w-2')?.getAttribute('data-kickflow-live')).toBe('false');
+    lifecycle.dispose();
+    expect(row.hasAttribute('data-kickflow-live')).toBe(false);
+    expect(row.querySelector('div.rounded-full.h-2.w-2')?.hasAttribute('data-kickflow-live')).toBe(false);
   });
 
   it('stages requests and refreshes again on the periodic interval', async () => {

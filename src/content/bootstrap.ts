@@ -256,6 +256,11 @@ export function createPinnedMessageController(
         refresh();
       },
       preRenderedContent ?? undefined,
+      state.isTextExpanded(),
+      () => {
+        state.toggleTextExpanded();
+        refresh();
+      },
     );
     host.replaceChildren(element);
     host.style.display = '';
@@ -412,7 +417,19 @@ function ensureStyles(): void {
     .kickflow-pinned-message__collapse { margin-left: auto; }
     .kickflow-pinned-message__collapse:hover,
     .kickflow-pinned-message__dismiss:hover { background: rgba(255,255,255,0.1); color: #fff; }
-    .kickflow-pinned-message__body { padding: 7px 9px 8px; word-break: break-word; overflow-wrap: anywhere; }
+    .kickflow-pinned-message__body { position: relative; padding: 7px 9px 8px; }
+    .kickflow-pinned-message__body-content { word-break: break-word; overflow-wrap: anywhere; }
+    .kickflow-pinned-message__body--text-collapsed .kickflow-pinned-message__body-content {
+      display: -webkit-box; max-height: 2.8em; overflow: hidden;
+      -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    }
+    .kickflow-pinned-message__body--text-expandable .kickflow-pinned-message__body-content { padding-right: 24px; }
+    .kickflow-pinned-message__text-toggle {
+      position: absolute; right: 5px; bottom: 4px; width: 24px; height: 24px; padding: 0;
+      border: 0; border-radius: 4px; background: rgba(24,24,27,0.94); color: #c8c8cf;
+      font: 800 18px/20px system-ui, sans-serif; cursor: pointer;
+    }
+    .kickflow-pinned-message__text-toggle:hover { background: rgba(255,255,255,0.12); color: #fff; }
     .kickflow-pinned-message__badges:empty { display: none; }
     .kickflow-pinned-message__badges { margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle; }
     .kickflow-pinned-message__username { font-weight: 700; }
@@ -486,8 +503,10 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
     html.kickflow-chat-active [data-kickflow-native-pin-hidden] { display: none !important; }
-    [data-kickflow-live="true"] { background: #22c55e !important; }
-    [data-kickflow-live="false"] { background: #6b7280 !important; }
+    a[data-testid^="sidebar-following-channel-"][data-kickflow-live="false"],
+    a[data-testid^="sidebar-recommended-channel-"][data-kickflow-live="false"] { display: none !important; }
+    div.rounded-full.h-2.w-2[data-kickflow-live="true"] { background: #22c55e !important; }
+    div.rounded-full.h-2.w-2[data-kickflow-live="false"] { background: #6b7280 !important; }
     .kickflow-scroll-pill {
       position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
       display: inline-flex; align-items: center; gap: 5px;

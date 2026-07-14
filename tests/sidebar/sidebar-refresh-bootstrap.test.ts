@@ -24,11 +24,11 @@ function sidebarRow(index = 7, slug = 'naru'): string {
     </section>`;
 }
 
-function channelResponse(viewerCount: number): Response {
+function channelResponse(viewerCount: number, isLive = true): Response {
   return {
     ok: true,
     status: 200,
-    json: async () => ({ livestream: { is_live: true, viewer_count: viewerCount } }),
+    json: async () => ({ livestream: { is_live: isLive, viewer_count: viewerCount } }),
   } as Response;
 }
 
@@ -89,6 +89,18 @@ describe('site-wide sidebar bootstrap', () => {
     expect(row?.querySelector('[data-kickflow-live]')?.getAttribute('data-kickflow-live')).toBe('true');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(document.getElementById('kickflow-styles')?.textContent).toContain('[data-kickflow-live="true"]');
+  });
+
+  it('reversibly hides an offline live-list row without removing Kick-owned DOM', async () => {
+    vi.spyOn(window, 'setInterval').mockReturnValue(1);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(channelResponse(0, false)));
+
+    await loadBootstrap('/');
+
+    const row = document.querySelector<HTMLAnchorElement>('a[data-testid="sidebar-following-channel-7"]')!;
+    expect(row.isConnected).toBe(true);
+    expect(row.getAttribute('data-kickflow-live')).toBe('false');
+    expect(getComputedStyle(row).display).toBe('none');
   });
 
   it('keeps the controller off initially, then recreates it across enable, disable, and enable', async () => {

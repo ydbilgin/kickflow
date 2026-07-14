@@ -190,6 +190,66 @@ describe('message-view safe rendering', () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
+  it('adds the text chevron only for measured overflow in structured and mirrored pin bodies', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('kickflow-pinned-message__body-content') ? 36 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      if (!this.classList.contains('kickflow-pinned-message__body-content')) return 0;
+      return (this.textContent?.length ?? 0) > 80 ? 72 : 18;
+    });
+    const pin = (id: string, content: string): PinnedMessage => ({
+      message: message('botrix', {}, { id, content }),
+      durationSeconds: 1200,
+      pinnedBy: { id: 2, username: 'mod', slug: 'moderator' },
+    });
+
+    const short = buildPinnedMessageElement(pin('short', 'kısa mesaj'), false, vi.fn(), vi.fn());
+    document.body.appendChild(short);
+    await Promise.resolve();
+    expect(short.querySelector('.kickflow-pinned-message__text-toggle')).toBeNull();
+
+    const onToggleTextExpanded = vi.fn();
+    const structured = buildPinnedMessageElement(
+      pin('long', 'uzun '.repeat(40)),
+      false,
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      false,
+      onToggleTextExpanded,
+    );
+    document.body.appendChild(structured);
+    await Promise.resolve();
+    const structuredToggle = structured.querySelector<HTMLButtonElement>('.kickflow-pinned-message__text-toggle');
+    expect(structuredToggle?.textContent).toBe('⌄');
+    expect(structuredToggle?.title).toBe('Mesajı genişlet');
+    expect(structuredToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(structured.querySelector('.kickflow-pinned-message__body--text-collapsed')).not.toBeNull();
+
+    structuredToggle?.click();
+    expect(onToggleTextExpanded).toHaveBeenCalledOnce();
+    expect(structured.querySelector('.kickflow-pinned-message__body--text-expanded')).not.toBeNull();
+    expect(structuredToggle?.textContent).toBe('⌃');
+    expect(structuredToggle?.title).toBe('Mesajı küçült');
+    expect(structuredToggle?.getAttribute('aria-expanded')).toBe('true');
+
+    const nativeTemplate = document.createDocumentFragment();
+    const nativeText = document.createElement('span');
+    nativeText.textContent = 'aynalı uzun '.repeat(30);
+    nativeTemplate.appendChild(nativeText);
+    const mirrored = buildPinnedMessageElement(
+      pin('mirrored', 'identity only'),
+      false,
+      vi.fn(),
+      vi.fn(),
+      nativeTemplate,
+    );
+    document.body.appendChild(mirrored);
+    await Promise.resolve();
+    expect(mirrored.querySelector('.kickflow-pinned-message__text-toggle')).not.toBeNull();
+  });
+
   it('opens a mention slug in a new tab on middle-click without adding a same-origin anchor', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);

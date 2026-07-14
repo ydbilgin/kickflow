@@ -433,6 +433,8 @@ export function buildPinnedMessageElement(
   onDismiss: (pinId: string) => void,
   onToggleCollapse: () => void,
   preRenderedContent?: Node,
+  textExpanded = false,
+  onToggleTextExpanded: () => void = () => undefined,
 ): HTMLElement {
   const banner = document.createElement('section');
   banner.className = PINNED_MESSAGE_CLASS;
@@ -475,33 +477,66 @@ export function buildPinnedMessageElement(
 
   const body = document.createElement('div');
   body.className = `${PINNED_MESSAGE_CLASS}__body`;
+  const bodyContent = document.createElement('div');
+  bodyContent.className = `${PINNED_MESSAGE_CLASS}__body-content`;
+  body.classList.add(`${PINNED_MESSAGE_CLASS}__body--text-collapsed`);
   const content = document.createElement('span');
   content.className = `${PINNED_MESSAGE_CLASS}__content`;
   if (preRenderedContent) {
     // Native-pin mirroring passes a detached template cloned from Kick's already-rendered DOM.
     // Clone again because collapse/expand rebuilds the banner and appending consumes fragments.
     content.appendChild(preRenderedContent.cloneNode(true));
-    body.appendChild(content);
-    banner.append(header, body);
-    return banner;
+    bodyContent.appendChild(content);
+  } else {
+    const badges = document.createElement('span');
+    badges.className = `${PINNED_MESSAGE_CLASS}__badges`;
+    appendBadges(badges, mergeIdentityBadges(pin.message.sender.identity));
+    const displayName = pin.message.sender.displayName || pin.message.sender.username;
+    const username = document.createElement('span');
+    username.className = `${PINNED_MESSAGE_CLASS}__username`;
+    username.textContent = displayName;
+    wireUsernameProfileLink(username, pin.message.sender, displayName, `${PINNED_MESSAGE_CLASS}__username--link`);
+    username.style.color = pin.message.sender.identity.color || 'inherit';
+    const separator = document.createElement('span');
+    separator.className = `${PINNED_MESSAGE_CLASS}__separator`;
+    separator.textContent = ': ';
+    appendParsedContent(content, pin.message.content);
+    bodyContent.append(badges, username, separator, content);
   }
-
-  const badges = document.createElement('span');
-  badges.className = `${PINNED_MESSAGE_CLASS}__badges`;
-  appendBadges(badges, mergeIdentityBadges(pin.message.sender.identity));
-  const displayName = pin.message.sender.displayName || pin.message.sender.username;
-  const username = document.createElement('span');
-  username.className = `${PINNED_MESSAGE_CLASS}__username`;
-  username.textContent = displayName;
-  wireUsernameProfileLink(username, pin.message.sender, displayName, `${PINNED_MESSAGE_CLASS}__username--link`);
-  username.style.color = pin.message.sender.identity.color || 'inherit';
-  const separator = document.createElement('span');
-  separator.className = `${PINNED_MESSAGE_CLASS}__separator`;
-  separator.textContent = ': ';
-  appendParsedContent(content, pin.message.content);
-  body.append(badges, username, separator, content);
+  body.appendChild(bodyContent);
 
   banner.append(header, body);
+
+  // The banner is still detached while it is built, so defer the real layout comparison until
+  // the controller has mounted it. Short pins never receive a control; the first collapsed
+  // render doubles as the measurement shape even when this pin's session state is expanded.
+  queueMicrotask(() => {
+    if (!banner.isConnected) return;
+    const overflows = bodyContent.scrollHeight > bodyContent.clientHeight + 1;
+    if (!overflows) return;
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = `${PINNED_MESSAGE_CLASS}__text-toggle`;
+    body.classList.add(`${PINNED_MESSAGE_CLASS}__body--text-expandable`);
+    let expanded = textExpanded;
+    const applyExpandedPresentation = (): void => {
+      body.classList.toggle(`${PINNED_MESSAGE_CLASS}__body--text-collapsed`, !expanded);
+      body.classList.toggle(`${PINNED_MESSAGE_CLASS}__body--text-expanded`, expanded);
+      toggle.title = expanded ? 'Mesajı küçült' : 'Mesajı genişlet';
+      toggle.setAttribute('aria-label', toggle.title);
+      toggle.setAttribute('aria-expanded', String(expanded));
+      toggle.textContent = expanded ? '⌃' : '⌄';
+    };
+    applyExpandedPresentation();
+    toggle.addEventListener('click', () => {
+      expanded = !expanded;
+      applyExpandedPresentation();
+      onToggleTextExpanded();
+    });
+    body.appendChild(toggle);
+  });
+
   return banner;
 }
 

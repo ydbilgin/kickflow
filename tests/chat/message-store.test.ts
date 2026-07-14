@@ -210,7 +210,7 @@ describe('ActivePinnedMessageState', () => {
     expect(state.getVisible()?.message.id).toBe('pin-2');
   });
 
-  it('preserves collapsed state for the same pin, resets it for a new pin, and toggles it', () => {
+  it('preserves both UI states for the same pin and resets both for a new pin', () => {
     const state = new ActivePinnedMessageState();
     const pin = (id: string): PinnedMessage => ({
       message: message(id),
@@ -220,18 +220,26 @@ describe('ActivePinnedMessageState', () => {
 
     expect(state.setActive(pin('pin-1'))).toBe(true);
     state.toggleCollapsed();
+    state.toggleTextExpanded();
     expect(state.isCollapsed()).toBe(true);
+    expect(state.isTextExpanded()).toBe(true);
 
     expect(state.setActive(pin('pin-1'))).toBe(false);
     expect(state.isCollapsed()).toBe(true);
+    expect(state.isTextExpanded()).toBe(true);
 
     state.toggleCollapsed();
     expect(state.isCollapsed()).toBe(false);
     state.toggleCollapsed();
     expect(state.isCollapsed()).toBe(true);
+    state.toggleTextExpanded();
+    expect(state.isTextExpanded()).toBe(false);
+    state.toggleTextExpanded();
+    expect(state.isTextExpanded()).toBe(true);
 
     expect(state.setActive(pin('pin-2'))).toBe(true);
     expect(state.isCollapsed()).toBe(false);
+    expect(state.isTextExpanded()).toBe(false);
   });
 });
 

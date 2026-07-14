@@ -200,8 +200,17 @@ export class SidebarRefreshController {
         const response = await fetch(url, { headers: { accept: 'application/json' } });
         if (response.ok) {
           const json = (await response.json()) as ChannelResponse;
-          if (!json.livestream) return { isLive: false, viewerCount: 0 };
-          if (typeof json.livestream.is_live !== 'boolean' || typeof json.livestream.viewer_count !== 'number') {
+          // `null` is Kick's explicit offline shape. A missing field is a malformed/transient
+          // payload and must not be cached as offline, especially now that offline rows hide.
+          if (!Object.prototype.hasOwnProperty.call(json, 'livestream')) throw new Error('invalid channel response');
+          if (json.livestream === null) return { isLive: false, viewerCount: 0 };
+          if (!json.livestream) throw new Error('invalid channel response');
+          if (
+            typeof json.livestream.is_live !== 'boolean'
+            || typeof json.livestream.viewer_count !== 'number'
+            || !Number.isFinite(json.livestream.viewer_count)
+            || json.livestream.viewer_count < 0
+          ) {
             throw new Error('invalid channel response');
           }
           return { isLive: json.livestream.is_live, viewerCount: json.livestream.viewer_count };
@@ -224,6 +233,10 @@ export class SidebarRefreshController {
   }
 
   private patchRow(row: HTMLAnchorElement, data: SidebarChannelData): void {
+    const live = String(data.isLive);
+    // Keep React's row mounted and owned by Kick, but let extension CSS reversibly de-list a
+    // channel after the API says it is offline. A later live response removes the hiding state.
+    if (row.getAttribute('data-kickflow-live') !== live) row.setAttribute('data-kickflow-live', live);
     const count = row.querySelector<HTMLElement>(VIEWER_COUNT_SELECTOR);
     if (count) {
       const title = String(data.viewerCount);
@@ -235,7 +248,6 @@ export class SidebarRefreshController {
       if (count.textContent !== formatted) count.textContent = formatted;
     }
     const dot = row.querySelector<HTMLElement>(LIVE_DOT_SELECTOR);
-    const live = String(data.isLive);
     if (dot?.getAttribute('data-kickflow-live') !== live) dot?.setAttribute('data-kickflow-live', live);
   }
 
@@ -277,5 +289,11 @@ export class SidebarRefreshController {
     this.disposed = true;
     this.observer.disconnect();
     if (this.observerTimer !== null) window.clearTimeout(this.observerTimer);
+    // Visibility is the one patch that cannot safely remain when the feature is disabled: the
+    // extension stylesheet would otherwise keep a Kick-owned offline row hidden indefinitely.
+    for (const row of this.discoverRows()) {
+      row.removeAttribute('data-kickflow-live');
+      row.querySelector<HTMLElement>(LIVE_DOT_SELECTOR)?.removeAttribute('data-kickflow-live');
+    }
   }
 }

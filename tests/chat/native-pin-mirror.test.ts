@@ -340,6 +340,44 @@ describe('own-mode native pin mirror', () => {
     lifecycle.dispose();
   });
 
+  it('preserves text expansion through eye-collapse and resets it for a different mirrored pin', async () => {
+    const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('kickflow-pinned-message__body-content') ? 36 : 0;
+    });
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('kickflow-pinned-message__body-content') ? 72 : 0;
+    });
+    try {
+      featureFlags.showPinnedMessage = true;
+      const fixture = createFixture();
+      fillPin(fixture.inner, 'BotRix', 'first long pin '.repeat(30));
+      const { lifecycle, host } = createMirror(fixture);
+      await flushMutations();
+
+      host.querySelector<HTMLButtonElement>('.kickflow-pinned-message__text-toggle')?.click();
+      await flushMutations();
+      expect(host.querySelector('.kickflow-pinned-message__body--text-expanded')).not.toBeNull();
+      expect(host.querySelector('.kickflow-pinned-message__text-toggle')?.getAttribute('aria-expanded')).toBe('true');
+
+      host.querySelector<HTMLButtonElement>('.kickflow-pinned-message__collapse')?.click();
+      expect(host.querySelector('.kickflow-pinned-message--collapsed')).not.toBeNull();
+      host.querySelector<HTMLElement>('.kickflow-pinned-message--collapsed')?.click();
+      await flushMutations();
+      expect(host.querySelector('.kickflow-pinned-message__body--text-expanded')).not.toBeNull();
+      expect(host.querySelector('.kickflow-pinned-message__text-toggle')?.getAttribute('aria-expanded')).toBe('true');
+
+      fillPin(fixture.inner, 'BotRix', 'different long pin '.repeat(30));
+      await flushMutations();
+      expect(host.querySelector('.kickflow-pinned-message__body--text-collapsed')).not.toBeNull();
+      expect(host.querySelector('.kickflow-pinned-message__body--text-expanded')).toBeNull();
+      expect(host.querySelector('.kickflow-pinned-message__text-toggle')?.getAttribute('aria-expanded')).toBe('false');
+      lifecycle.dispose();
+    } finally {
+      clientHeight.mockRestore();
+      scrollHeight.mockRestore();
+    }
+  });
+
   it('normalizes whitespace for identity and updates same-id actor presentation without resetting identity', async () => {
     featureFlags.showPinnedMessage = true;
     const fixture = createFixture();
