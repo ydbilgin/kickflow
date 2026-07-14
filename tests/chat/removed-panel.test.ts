@@ -36,7 +36,7 @@ function settingsControl(section: HTMLElement, labelText: string): HTMLInputElem
   return label?.querySelector<HTMLInputElement | HTMLSelectElement>('input, select') ?? null;
 }
 
-type TestDashboardSection = 'general' | 'chat' | 'player' | 'hotkeys' | 'about';
+type TestDashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'hotkeys' | 'about';
 
 function openDashboardSection(
   panel: RemovedMessagesPanel,
@@ -131,6 +131,21 @@ describe('RemovedMessagesPanel', () => {
     lifecycle.dispose();
   });
 
+  it('toggle("removed") opens directly on Kaldırılanlar and toggles that view closed', () => {
+    const lifecycle = new Lifecycle();
+    const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+    const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+
+    panel.toggle('removed');
+    expect(panel.isOpen()).toBe(true);
+    expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Kaldırılanlar');
+    expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="removed"]')?.hidden).toBe(false);
+
+    panel.toggle('removed');
+    expect(panel.isOpen()).toBe(false);
+    lifecycle.dispose();
+  });
+
   it('removedCount() reflects the store\'s preserved messages, independent of open state', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
@@ -162,7 +177,7 @@ describe('RemovedMessagesPanel', () => {
     panel.toggle();
 
     const section = document.querySelector<HTMLElement>('.kickflow-panel');
-    const row = section?.querySelector<HTMLElement>('.kickflow-ghost-row');
+    const row = section?.querySelector<HTMLElement>('.kickflow-removed-row');
     expect(row?.textContent).toContain('user1');
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('banlandı');
     lifecycle.dispose();
@@ -180,12 +195,12 @@ describe('RemovedMessagesPanel', () => {
     panel.render();
     panel.toggle();
 
-    const row = document.querySelector<HTMLElement>('.kickflow-ghost-row');
-    const username = row?.querySelector<HTMLElement>('.kickflow-ghost-row__username');
+    const row = document.querySelector<HTMLElement>('.kickflow-removed-row');
+    const username = row?.querySelector<HTMLElement>('.kickflow-removed-row__username');
     expect(username?.tagName).toBe('SPAN');
     expect(username?.getAttribute('role')).toBe('link');
     expect(username?.tabIndex).toBe(0);
-    expect(username?.classList.contains('kickflow-ghost-row__username--link')).toBe(true);
+    expect(username?.classList.contains('kickflow-removed-row__username--link')).toBe(true);
 
     username?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
 
@@ -206,7 +221,7 @@ describe('RemovedMessagesPanel', () => {
     panel.render();
     panel.toggle();
 
-    const row = document.querySelector<HTMLElement>('.kickflow-ghost-row');
+    const row = document.querySelector<HTMLElement>('.kickflow-removed-row');
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('silindi');
     expect(row?.querySelector('.kickflow-mod-label')?.textContent).toBe('· modname');
     lifecycle.dispose();
@@ -236,9 +251,9 @@ describe('RemovedMessagesPanel', () => {
     const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.toggle();
 
-    const empty = document.querySelector<HTMLElement>('.kickflow-ghost-empty');
+    const empty = document.querySelector<HTMLElement>('.kickflow-removed-empty');
     expect(empty).not.toBeNull();
-    expect(empty?.textContent).toBe('henüz kaldırılan mesaj yok');
+    expect(empty?.textContent).toBe('Henüz kaldırılan mesaj yok');
     lifecycle.dispose();
   });
 
@@ -285,17 +300,17 @@ describe('RemovedMessagesPanel', () => {
     store.markMessageDeleted(item.id);
     const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.toggle();
-    expect(document.querySelector('.kickflow-ghost-row')?.textContent).toContain('self-heal');
+    expect(document.querySelector('.kickflow-removed-row')?.textContent).toContain('self-heal');
 
     document.querySelector('.kickflow-panel')?.remove();
     panel.render();
 
-    expect(document.querySelector('.kickflow-ghost-row')?.textContent).toContain('self-heal');
+    expect(document.querySelector('.kickflow-removed-row')?.textContent).toContain('self-heal');
     lifecycle.dispose();
   });
 
   describe('dashboard structure and modal interaction', () => {
-    it('builds one labelled modal with all five category panes and switches sections in place', () => {
+    it('builds one labelled modal with all six panes and switches sections in place', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
@@ -307,7 +322,9 @@ describe('RemovedMessagesPanel', () => {
 
       expect(dialog.getAttribute('aria-modal')).toBe('true');
       expect(dialog.getAttribute('aria-labelledby')).toBe('kickflow-dashboard-title');
-      expect(buttons.map((button) => button.textContent)).toEqual(['Genel', 'Sohbet', 'Oynatıcı', 'Kısayollar', 'Hakkında']);
+      expect(buttons.map((button) => button.textContent)).toEqual([
+        'Genel', 'Kaldırılanlar', 'Sohbet', 'Oynatıcı', 'Kısayollar', 'Hakkında',
+      ]);
       expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
       expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(false);
 
@@ -317,6 +334,43 @@ describe('RemovedMessagesPanel', () => {
       expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(true);
       expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="hotkeys"]')?.hidden).toBe(false);
       expect(buttons.find((button) => button.dataset.section === 'hotkeys')?.getAttribute('aria-current')).toBe('page');
+      lifecycle.dispose();
+    });
+
+    it('keeps the moderation log out of Genel and renders it only in Kaldırılanlar', () => {
+      const lifecycle = new Lifecycle();
+      const store = new ChatIntegrityStore();
+      store.addMessage(message('removed-only', 4, 'yalnızca log görünümünde'));
+      store.markUserBanned(4, { permanent: true, bannedBy: 'mod4' });
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+
+      const general = openDashboardSection(panel, 'general').pane;
+      expect(general.querySelector('.kickflow-panel__removed-list')).toBeNull();
+
+      const removed = openDashboardSection(panel, 'removed').pane;
+      expect(removed.querySelector('.kickflow-removed-row')?.textContent).toContain('yalnızca log görünümünde');
+      lifecycle.dispose();
+    });
+
+    it('renders newest messages first with distinct action metadata and original content', () => {
+      const lifecycle = new Lifecycle();
+      const store = new ChatIntegrityStore();
+      store.addMessage(message('oldest', 1, 'ilk mesaj'));
+      store.addMessage(message('middle', 2, 'ikinci mesaj'));
+      store.addMessage(message('newest', 3, 'son mesaj'));
+      store.markUserBanned(1, { permanent: true, bannedBy: 'banmod' });
+      store.markMessageDeleted('middle', { deletedBy: 'deletemod' });
+      store.markUserBanned(3, { permanent: false, durationMin: 10, bannedBy: 'timeoutmod' });
+      const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+      const removed = openDashboardSection(panel, 'removed').pane;
+      const rows = Array.from(removed.querySelectorAll<HTMLElement>('.kickflow-removed-row'));
+
+      expect(rows.map((row) => row.dataset.kickflowRemovedMid)).toEqual(['newest', 'middle', 'oldest']);
+      expect(rows[0].querySelector('.kickflow-removed-row__content')?.textContent).toBe('son mesaj');
+      expect(rows[0].querySelector('.kickflow-status-label--timeout')?.textContent).toBe('timeout 10dk');
+      expect(rows[0].querySelector('.kickflow-mod-label')?.textContent).toBe('· timeoutmod');
+      expect(rows[1].querySelector('.kickflow-status-label--deleted')?.textContent).toBe('silindi');
+      expect(rows[2].querySelector('.kickflow-status-label--banned')?.textContent).toBe('banlandı');
       lifecycle.dispose();
     });
 
@@ -704,6 +758,22 @@ describe('RemovedMessagesPanel', () => {
       expect(panel.isOpen()).toBe(true);
       expect(section.style.display).toBe('flex');
       expect(section.querySelector<HTMLElement>('.kickflow-panel__settings')?.style.display).toBe('');
+      expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
+      lifecycle.dispose();
+    });
+
+    it('showSettings(section) opens the requested tab and its default returns to Genel', () => {
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+
+      panel.showSettings('removed');
+      const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Kaldırılanlar');
+      expect(section.querySelector<HTMLElement>('[data-section="removed"]')?.getAttribute('aria-current')).toBe('page');
+
+      panel.showSettings();
+      expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
+      expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(false);
       lifecycle.dispose();
     });
 

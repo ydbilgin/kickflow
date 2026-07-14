@@ -2,8 +2,8 @@ import type { Lifecycle } from '../shared/lifecycle';
 import type { StatusSnapshotProvider } from '../status';
 import type { FooterTogglePanel } from './footer-toggle';
 import { featureFlags } from './feature-flags';
-import { mergeIdentityBadges, type ChatIntegrityStore, type ChatMessage } from './message-store';
-import { appendBadges, appendParsedContent, applyPreservedMarking, wireUsernameProfileLink } from './message-view';
+import type { ChatIntegrityStore, ChatMessage } from './message-store';
+import { appendParsedContent, applyPreservedMarking, wireUsernameProfileLink } from './message-view';
 import {
   HOTKEY_ACTIONS,
   HOTKEY_DEFINITIONS,
@@ -26,18 +26,19 @@ const PANEL_COUNT_CLASS = 'kickflow-panel__count';
 const PANEL_BTN_CLASS = 'kickflow-panel__btn';
 const PANEL_CLOSE_CLASS = 'kickflow-panel__close';
 const PANEL_SETTINGS_CLASS = 'kickflow-panel__settings';
-const PANEL_BODY_CLASS = 'kickflow-panel__body';
-const GHOST_ROW_CLASS = 'kickflow-ghost-row';
-const GHOST_EMPTY_CLASS = 'kickflow-ghost-empty';
+const PANEL_BODY_CLASS = 'kickflow-panel__removed-list';
+const REMOVED_ROW_CLASS = 'kickflow-removed-row';
+const REMOVED_EMPTY_CLASS = 'kickflow-removed-empty';
 
 // Bounded so a high-moderation channel (mass bans) can't grow the panel without limit — keep the
 // newest N removed messages only.
 const MAX_PANEL_ROWS = 60;
 
-type DashboardSection = 'general' | 'chat' | 'player' | 'hotkeys' | 'about';
+export type DashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'hotkeys' | 'about';
 
 const DASHBOARD_SECTIONS: ReadonlyArray<{ key: DashboardSection; label: string }> = [
   { key: 'general', label: 'Genel' },
+  { key: 'removed', label: 'Kaldırılanlar' },
   { key: 'chat', label: 'Sohbet' },
   { key: 'player', label: 'Oynatıcı' },
   { key: 'hotkeys', label: 'Kısayollar' },
@@ -85,15 +86,14 @@ function dispatchFlag(key: string, value: boolean | string): void {
   window.dispatchEvent(new CustomEvent('kickflow:setFlag', { detail: { key, value } }));
 }
 
-/** Body-level KickFlow dashboard. Its General pane also lists every removed (banned/timeout/
- * deleted) message the session's `ChatIntegrityStore` still holds. Mode-independent (Mode A
- * own-render and Mode B native-augment both instantiate one against the same store) so neither
- * mode duplicates settings or removed-message rendering.
+/** Body-level KickFlow dashboard. Its Removed pane lists every banned, timed-out, or deleted
+ * message the session's `ChatIntegrityStore` still holds. Mode-independent (Mode A own-render
+ * and Mode B native-augment both instantiate one against the same store) so neither mode
+ * duplicates settings or removed-message rendering.
  *
  * Hidden by default: it still instantiates immediately (subscribes to the store, builds its DOM)
  * so the footer button's `isOpen()`/`removedCount()` reads are correct from the first tick, but
- * the section stays `display:none` until `toggle()`'d open — by the footer button
- * (footer-toggle.ts), never by anything inside the panel itself.
+   * the section stays `display:none` until opened by the footer or navbar entry point.
  *
  * Session/channel isolation: data comes only from the in-memory store — never any persisted,
  * cross-tab-shared storage — and the panel is torn down via the session `Lifecycle` — a channel
@@ -144,14 +144,23 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     lifecycle.add(() => this.dispose());
   }
 
-  /** Flips the one shared dashboard open/closed for the footer entry point. */
-  toggle(): void {
+  /** Toggles the shared dashboard. A different requested section is selected without closing. */
+  toggle(section?: DashboardSection): void {
+    if (section !== undefined && this.open && section !== this.activeSection) {
+      this.showDashboardSection(section);
+      return;
+    }
+    const opening = !this.open;
+    if (section !== undefined) this.activeSection = section;
     this.setOpen(!this.open);
+    if (opening && section !== undefined) this.showDashboardSection(section);
   }
 
-  /** Navbar entry point: opens the same dashboard instance as the footer entry point. */
-  showSettings(): void {
+  /** Opens the shared dashboard on a specific section. Navbar callers use the General default. */
+  showSettings(section: DashboardSection = 'general'): void {
+    this.activeSection = section;
     this.setOpen(true);
+    this.showDashboardSection(section);
   }
 
   isOpen(): boolean {
@@ -168,16 +177,21 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   render(): void {
     const removed = this.store.getPreserved()
       .filter((message) => message.preserved === true)
-      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
 
     const section = this.ensureSection();
     section.style.display = this.open ? 'flex' : 'none';
     section.setAttribute('aria-hidden', this.open ? 'false' : 'true');
 
     if (this.countChip) {
-      this.countChip.textContent = String(removed.length);
+      this.countChip.textContent = removed.length > 0 ? String(removed.length) : '';
       this.countChip.style.display = removed.length > 0 ? '' : 'none';
     }
+    const removedNav = this.navButtons.get('removed');
+    removedNav?.setAttribute(
+      'aria-label',
+      removed.length > 0 ? `Kaldırılanlar, ${removed.length} mesaj` : 'Kaldırılanlar',
+    );
 
     // Keep displayed values current when the popup changes a flag, without replacing nodes and
     // stealing focus from a select or hotkey button.
@@ -186,7 +200,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const body = section.querySelector<HTMLElement>(`.${PANEL_BODY_CLASS}`);
     if (!body) return;
-    const shown = removed.slice(-MAX_PANEL_ROWS);
+    const shown = removed.slice(0, MAX_PANEL_ROWS);
     // The panel can change without its count or final id changing: a metadata enrichment (e.g.
     // deletedBy arriving in a later event) alters an existing row, as can an expiry+preserve that
     // keeps the same shape. Sign every field buildRow reads, not merely the list shape.
@@ -204,8 +218,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.lastSig = sig;
     if (shown.length === 0) {
       const empty = document.createElement('div');
-      empty.className = GHOST_EMPTY_CLASS;
-      empty.textContent = 'henüz kaldırılan mesaj yok';
+      empty.className = REMOVED_EMPTY_CLASS;
+      empty.textContent = 'Henüz kaldırılan mesaj yok';
       body.replaceChildren(empty);
     } else {
       body.replaceChildren(...shown.map((message) => this.buildRow(message)));
@@ -272,17 +286,28 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const railCaption = document.createElement('p');
     railCaption.className = 'kickflow-panel__rail-caption';
-    railCaption.textContent = 'Ayarlar';
+    railCaption.textContent = 'Kontrol paneli';
 
     const nav = document.createElement('nav');
     nav.className = 'kickflow-panel__nav';
-    nav.setAttribute('aria-label', 'Ayar kategorileri');
+    nav.setAttribute('aria-label', 'KickFlow bölümleri');
     for (const item of DASHBOARD_SECTIONS) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'kickflow-panel__nav-item';
       button.dataset.section = item.key;
-      button.textContent = item.label;
+      const label = document.createElement('span');
+      label.className = 'kickflow-panel__nav-label';
+      label.textContent = item.label;
+      button.append(label);
+      if (item.key === 'removed') {
+        const count = document.createElement('span');
+        count.className = PANEL_COUNT_CLASS;
+        count.style.display = 'none';
+        count.setAttribute('aria-hidden', 'true');
+        button.append(count);
+        this.countChip = count;
+      }
       button.setAttribute('aria-controls', `kickflow-dashboard-${item.key}`);
       button.addEventListener('click', () => this.showDashboardSection(item.key));
       nav.append(button);
@@ -310,7 +335,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     close.type = 'button';
     close.className = `${PANEL_BTN_CLASS} ${PANEL_CLOSE_CLASS}`;
     close.title = 'Kapat';
-    close.setAttribute('aria-label', 'KickFlow ayarlarını kapat');
+    close.setAttribute('aria-label', 'KickFlow panelini kapat');
     close.textContent = '×';
     close.addEventListener('click', () => this.setOpen(false));
 
@@ -408,18 +433,16 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     modeGroup.append(modeLabel);
     this.chatModeSelect = modeSelect;
 
-    const removedGroup = document.createElement('section');
-    removedGroup.className = 'kickflow-panel__group kickflow-panel__group--removed';
-    const removedHeading = this.buildGroupTitle('Kaldırılan mesajlar');
-    const count = document.createElement('span');
-    count.className = PANEL_COUNT_CLASS;
-    count.style.display = 'none';
-    removedHeading.append(count);
-    this.countChip = count;
+    general.append(statusGroup, modeGroup);
+
+    const removed = this.buildDashboardPane('removed');
+    removed.append(this.buildPaneIntro('Bu kanalda banlanan, zaman aşımına uğrayan ve silinen mesajları incele.'));
     const body = document.createElement('div');
     body.className = PANEL_BODY_CLASS;
-    removedGroup.append(removedHeading, body);
-    general.append(statusGroup, modeGroup, removedGroup);
+    body.setAttribute('role', 'list');
+    body.setAttribute('aria-label', 'Kaldırılan mesajlar');
+    body.setAttribute('aria-live', 'polite');
+    removed.append(body);
 
     const chat = this.buildDashboardPane('chat');
     chat.append(this.buildPaneIntro('Sohbet akışında hangi KickFlow iyileştirmelerinin görüneceğini seç.'));
@@ -581,7 +604,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     about.append(aboutMark, aboutText, aboutFacts);
 
-    settings.append(general, chat, player, hotkeys, about);
+    settings.append(general, removed, chat, player, hotkeys, about);
     return settings;
   }
 
@@ -885,41 +908,46 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.refreshHotkeyControls();
   }
 
-  /** Mirrors the row shape native-augment.ts uses for its inline ghost blocks: time + badges +
-   * colored username + struck-through content + the preserved status label. */
+  /** Builds a moderation-ledger row without changing the store's preservation annotations. */
   private buildRow(message: ChatMessage): HTMLElement {
     const row = document.createElement('div');
-    row.className = GHOST_ROW_CLASS;
-    row.dataset.kickflowGhostMid = message.id;
+    row.className = REMOVED_ROW_CLASS;
+    row.dataset.kickflowRemovedMid = message.id;
+    row.setAttribute('role', 'listitem');
 
-    const time = document.createElement('span');
-    time.className = 'kickflow-ghost-row__time';
+    const time = document.createElement('time');
+    time.className = 'kickflow-removed-row__time';
     const createdAt = new Date(message.createdAt);
     time.textContent = Number.isNaN(createdAt.getTime())
       ? ''
-      : createdAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      : createdAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+    if (!Number.isNaN(createdAt.getTime())) time.dateTime = message.createdAt;
 
-    const badges = document.createElement('span');
-    badges.className = 'kickflow-ghost-row__badges';
-    appendBadges(badges, mergeIdentityBadges(message.sender.identity));
+    const messageCopy = document.createElement('div');
+    messageCopy.className = 'kickflow-removed-row__message';
 
     const username = document.createElement('span');
-    username.className = 'kickflow-ghost-row__username';
+    username.className = 'kickflow-removed-row__username';
     const displayName = message.sender.displayName || message.sender.username;
     username.textContent = displayName;
-    wireUsernameProfileLink(username, message.sender, displayName, 'kickflow-ghost-row__username--link');
+    wireUsernameProfileLink(username, message.sender, displayName, 'kickflow-removed-row__username--link');
     username.style.color = message.sender.identity.color || 'inherit';
 
-    const separator = document.createElement('span');
-    separator.className = 'kickflow-ghost-row__separator';
-    separator.textContent = ': ';
-
     const content = document.createElement('span');
-    content.className = 'kickflow-ghost-row__content';
+    content.className = 'kickflow-removed-row__content';
     appendParsedContent(content, message.content);
+    messageCopy.append(username, content);
 
-    row.append(time, badges, username, separator, content);
+    row.append(time, messageCopy);
     applyPreservedMarking(row, message);
+
+    const action = document.createElement('div');
+    action.className = 'kickflow-removed-row__action';
+    const status = row.querySelector<HTMLElement>('.kickflow-status-label');
+    const moderator = row.querySelector<HTMLElement>('.kickflow-mod-label');
+    if (status) action.append(status);
+    if (moderator) action.append(moderator);
+    row.append(action);
     return row;
   }
 

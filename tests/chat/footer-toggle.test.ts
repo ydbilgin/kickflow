@@ -31,9 +31,11 @@ class FakePanel implements FooterTogglePanel {
   open = false;
   count = 0;
   toggleCalls = 0;
+  lastSection: 'removed' | undefined;
 
-  toggle(): void {
+  toggle(section?: 'removed'): void {
     this.toggleCalls++;
+    this.lastSection = section;
     this.open = !this.open;
   }
 
@@ -86,7 +88,7 @@ describe('FooterToggleButton', () => {
     expect(document.getElementById('kickflow-footer-toggle')).toBeNull();
   });
 
-  it('clicking the button calls panel.toggle()', () => {
+  it('clicking the button targets the removed section through panel.toggle()', () => {
     installSendButton();
     const panel = new FakePanel();
     const lifecycle = new FakeLifecycle();
@@ -96,6 +98,7 @@ describe('FooterToggleButton', () => {
     button.click();
 
     expect(panel.toggleCalls).toBe(1);
+    expect(panel.lastSection).toBe('removed');
     expect(panel.open).toBe(true);
   });
 

@@ -639,9 +639,11 @@ function ensureStyles(): void {
     .kickflow-panel__nav-item {
       appearance: none; width: 100%; min-height: 38px; padding: 0 12px; border: 0; border-radius: 9px;
       background: transparent; color: oklch(0.74 0.01 150); cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
       font: 600 13px/1 'Inter','Segoe UI',system-ui,sans-serif; text-align: left;
       transition: background-color 140ms ease, color 140ms ease;
     }
+    .kickflow-panel__nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .kickflow-panel__nav-item:hover { background: oklch(0.26 0.01 150); color: oklch(0.90 0.008 150); }
     .kickflow-panel__nav-item--active,
     .kickflow-panel__nav-item--active:hover {
@@ -660,9 +662,10 @@ function ensureStyles(): void {
       font-size: 18px; font-weight: 700; letter-spacing: -.015em;
     }
     .kickflow-panel__count {
-      min-width: 22px; margin-left: 8px; padding: 2px 7px; border-radius: 999px;
-      background: oklch(0.25 0.012 150); color: oklch(0.76 0.01 150);
-      font-size: 10px; font-weight: 700; line-height: 1.4; text-align: center;
+      min-width: 21px; margin-left: auto; padding: 2px 6px; border: 1px solid oklch(0.86 0.24 145 / .28);
+      border-radius: 999px; background: oklch(0.86 0.24 145 / .11); color: oklch(0.86 0.24 145);
+      font-size: 10px; font-weight: 800; line-height: 1.35; text-align: center;
+      font-variant-numeric: tabular-nums;
     }
     .kickflow-panel__btn {
       appearance: none; width: 32px; height: 32px; padding: 0; margin: 0; border: 0;
@@ -788,21 +791,56 @@ function ensureStyles(): void {
     .kickflow-panel__hotkey-reset { flex: none; height: 32px; padding: 0 11px; }
     .kickflow-panel__hotkey-change:focus-visible,
     .kickflow-panel__hotkey-reset:focus-visible { outline: 2px solid oklch(0.86 0.24 145); outline-offset: 2px; }
-    .kickflow-panel__group--removed { padding-bottom: 4px; }
-    .kickflow-panel__body {
-      max-height: 152px; overflow: auto; border-top: 1px solid oklch(0.30 0.01 150);
-      border-bottom: 1px solid oklch(0.27 0.01 150); padding: 7px 0;
-      scrollbar-color: oklch(0.34 0.01 150) transparent; scrollbar-width: thin;
+    .kickflow-panel__removed-list {
+      border-top: 1px solid oklch(0.31 0.01 150);
+      border-bottom: 1px solid oklch(0.27 0.01 150);
     }
-    .kickflow-panel .kickflow-ghost-row {
-      padding: 5px 2px; color: oklch(0.84 0.009 150); opacity: 1; font-size: 12px;
+    .kickflow-removed-row {
+      display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(104px, auto);
+      align-items: start; gap: 14px; padding: 15px 2px 14px;
+      border-bottom: 1px solid oklch(0.27 0.01 150);
+      color: oklch(0.91 0.007 150); word-break: break-word; overflow-wrap: anywhere;
     }
-    .kickflow-panel .kickflow-ghost-row__time { color: oklch(0.66 0.01 150); }
-    .kickflow-panel .kickflow-status-label {
-      background: oklch(0.25 0.012 150); color: oklch(0.80 0.01 150);
+    .kickflow-removed-row:last-child { border-bottom: 0; }
+    .kickflow-removed-row__time {
+      padding-top: 2px; color: oklch(0.65 0.01 150); font-size: 10px; font-weight: 600;
+      font-variant-numeric: tabular-nums; line-height: 1.4;
     }
-    .kickflow-panel .kickflow-mod-label { color: oklch(0.66 0.01 150); opacity: 1; }
-    .kickflow-panel .kickflow-ghost-empty { color: oklch(0.60 0.01 150); padding: 18px 8px; font-size: 11px; }
+    .kickflow-removed-row__message { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+    .kickflow-removed-row__username {
+      width: fit-content; color: oklch(0.94 0.007 150); font-size: 13px; font-weight: 750; line-height: 1.25;
+    }
+    .kickflow-removed-row__username--link { cursor: pointer; }
+    .kickflow-removed-row__username--link:hover { text-decoration: underline; }
+    .kickflow-removed-row__content {
+      color: oklch(0.77 0.01 150); font-size: 12px; line-height: 1.5;
+      text-decoration-line: line-through; text-decoration-color: oklch(0.58 0.01 150);
+      text-decoration-thickness: 1px;
+    }
+    .kickflow-removed-row__action {
+      min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+    }
+    .kickflow-panel .kickflow-removed-row .kickflow-status-label {
+      margin: 0; padding: 3px 7px; border: 1px solid transparent; background: transparent;
+      font-size: 9px; line-height: 1.2; letter-spacing: .045em;
+    }
+    .kickflow-panel .kickflow-removed-row .kickflow-status-label--banned {
+      border-color: oklch(0.50 0.10 25 / .42); background: oklch(0.35 0.07 25 / .52); color: oklch(0.84 0.11 25);
+    }
+    .kickflow-panel .kickflow-removed-row .kickflow-status-label--timeout {
+      border-color: oklch(0.57 0.09 78 / .38); background: oklch(0.36 0.055 78 / .48); color: oklch(0.86 0.10 84);
+    }
+    .kickflow-panel .kickflow-removed-row .kickflow-status-label--deleted {
+      border-color: oklch(0.43 0.012 150 / .52); background: oklch(0.26 0.012 150); color: oklch(0.76 0.01 150);
+    }
+    .kickflow-panel .kickflow-removed-row .kickflow-mod-label {
+      max-width: 128px; margin: 0; overflow: hidden; color: oklch(0.65 0.01 150); opacity: 1;
+      font-size: 10px; font-weight: 550; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .kickflow-removed-empty {
+      min-height: 300px; display: grid; place-items: center; padding: 28px;
+      color: oklch(0.66 0.01 150); font-size: 12px; text-align: center;
+    }
     .kickflow-panel__about-mark {
       margin-top: 28px; color: oklch(0.95 0.006 150); font-size: 28px; font-weight: 800; letter-spacing: -.045em;
     }
@@ -832,6 +870,7 @@ function ensureStyles(): void {
       }
       .kickflow-panel__nav::-webkit-scrollbar { display: none; }
       .kickflow-panel__nav-item { width: auto; min-height: 32px; flex: 0 0 auto; padding: 0 12px; border-radius: 999px; white-space: nowrap; }
+      .kickflow-panel__count { margin-left: 2px; }
       .kickflow-panel__header { min-height: 56px; padding: 0 18px; }
       .kickflow-panel__settings { padding: 0 18px 24px; }
       .kickflow-panel__section { padding-top: 18px; }
@@ -845,6 +884,10 @@ function ensureStyles(): void {
       .kickflow-panel__hotkey-chip { min-width: 36px; padding-inline: 7px; }
       .kickflow-panel__hotkey-chip--capturing { min-width: 82px; }
       .kickflow-panel__hotkey-change { min-width: 62px; padding-inline: 7px; }
+      .kickflow-removed-row { grid-template-columns: 40px minmax(0, 1fr); gap: 10px; }
+      .kickflow-removed-row__action {
+        grid-column: 2; flex-direction: row; align-items: center; justify-content: flex-start; flex-wrap: wrap;
+      }
     }
     @media (prefers-reduced-motion: reduce) {
       .kickflow-panel__shell, .kickflow-panel__hotkey-chip--capturing { animation: none; }
@@ -1442,7 +1485,8 @@ export function countUniqueStatusMessages(selector: string): number {
   document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
     const id = element.dataset.messageId
       ?? element.dataset.kickflowMid
-      ?? element.dataset.kickflowGhostMid;
+      ?? element.dataset.kickflowGhostMid
+      ?? element.dataset.kickflowRemovedMid;
     if (id) ids.add(id);
     else anonymous++;
   });

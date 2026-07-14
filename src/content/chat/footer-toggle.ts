@@ -11,7 +11,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 /** What removed-panel.ts's `RemovedMessagesPanel` exposes to this button — kept as its own
  * narrow interface so this file never needs to import the panel implementation. */
 export interface FooterTogglePanel {
-  toggle(): void;
+  toggle(section?: 'removed'): void;
   isOpen(): boolean;
   removedCount(): number;
 }
@@ -84,8 +84,8 @@ export class FooterToggleButton {
     button.type = 'button';
     button.id = BUTTON_ID;
     button.className = BUTTON_CLASS;
-    button.title = 'KickFlow — kaldırılanlar & ayarlar';
-    button.setAttribute('aria-label', 'KickFlow kaldırılan mesajlar ve ayarlar');
+    button.title = 'KickFlow kaldırılan mesajlar';
+    button.setAttribute('aria-label', 'KickFlow kaldırılan mesajları aç');
     button.appendChild(buildIcon());
 
     const badge = document.createElement('span');
@@ -95,7 +95,7 @@ export class FooterToggleButton {
     this.badge = badge;
 
     button.addEventListener('click', () => {
-      this.panel.toggle();
+      this.panel.toggle('removed');
       this.refresh();
     });
 

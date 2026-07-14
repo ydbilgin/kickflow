@@ -209,7 +209,7 @@ describe('NativeChatAugmenter ghost blocks', () => {
     expect(augmenter.getGhostStats().ghostEvicted).toBe(1);
   });
 
-  it('never prunes removed-panel rows while re-anchoring inline ghosts', async () => {
+  it('never prunes removed-log rows while re-anchoring inline ghosts', async () => {
     installChat(['m1', 'ban1', 'm3']);
     const store = new ChatIntegrityStore();
     store.addMessage(message('m1', 1, 'before'));
@@ -229,8 +229,8 @@ describe('NativeChatAugmenter ghost blocks', () => {
     await flushObserver();
 
     const panelRows = document.querySelector('.kickflow-panel');
-    expect(panelRows?.querySelector('[data-kickflow-ghost-mid="ban1"]')).not.toBeNull();
-    expect(panelRows?.querySelector('[data-kickflow-ghost-mid="deleted1"]')).not.toBeNull();
+    expect(panelRows?.querySelector('[data-kickflow-removed-mid="ban1"]')).not.toBeNull();
+    expect(panelRows?.querySelector('[data-kickflow-removed-mid="deleted1"]')).not.toBeNull();
     panelLifecycle.dispose();
   });
 });

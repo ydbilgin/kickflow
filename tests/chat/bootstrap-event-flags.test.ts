@@ -348,7 +348,9 @@ describe('bootstrap event display flags', () => {
       <div class="kickflow-preserved kickflow-banned" data-message-id="same"></div>
       <div class="kickflow-preserved kickflow-banned" data-kickflow-mid="same"></div>
       <div class="kickflow-preserved kickflow-banned" data-kickflow-ghost-mid="same"></div>
+      <div class="kickflow-preserved kickflow-banned" data-kickflow-removed-mid="same"></div>
       <div class="kickflow-preserved kickflow-deleted" data-kickflow-ghost-mid="deleted"></div>
+      <div class="kickflow-preserved kickflow-deleted" data-kickflow-removed-mid="deleted"></div>
     `;
 
     expect(bootstrap.countUniqueStatusMessages('.kickflow-preserved')).toBe(2);
