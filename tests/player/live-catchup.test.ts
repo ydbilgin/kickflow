@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catchupLiveEdge, decideCatchup, initLiveCatchup, isLiveStream, type CatchupAction } from '../../src/content/player/live-catchup';
 import { setAutoMode, setManualRate } from '../../src/content/player/player-state';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { fakeTimeRanges } from '../helpers/timeRanges';
+import { setLang } from '../../src/content/shared/i18n';
+
+beforeEach(() => setLang('tr'));
 
 afterEach(() => {
   vi.restoreAllMocks();

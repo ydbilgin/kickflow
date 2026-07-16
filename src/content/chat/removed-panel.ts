@@ -1,6 +1,7 @@
 import type { Lifecycle } from '../shared/lifecycle';
 import type { StatusSnapshotProvider } from '../status';
 import type { FooterTogglePanel } from './footer-toggle';
+import { getLang, hotkeyLabel, setLang, subscribeLang, t, type MessageKey } from '../shared/i18n';
 import { featureFlags } from './feature-flags';
 import type { ChatIntegrityStore, ChatMessage } from './message-store';
 import { appendParsedContent, applyPreservedMarking, wireUsernameProfileLink } from './message-view';
@@ -36,13 +37,13 @@ const MAX_PANEL_ROWS = 60;
 
 export type DashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'hotkeys' | 'about';
 
-const DASHBOARD_SECTIONS: ReadonlyArray<{ key: DashboardSection; label: string }> = [
-  { key: 'general', label: 'Genel' },
-  { key: 'removed', label: 'Kaldırılanlar' },
-  { key: 'chat', label: 'Sohbet' },
-  { key: 'player', label: 'Oynatıcı' },
-  { key: 'hotkeys', label: 'Kısayollar' },
-  { key: 'about', label: 'Hakkında' },
+const DASHBOARD_SECTIONS: ReadonlyArray<{ key: DashboardSection; labelKey: MessageKey }> = [
+  { key: 'general', labelKey: 'tab.general' },
+  { key: 'removed', labelKey: 'tab.removed' },
+  { key: 'chat', labelKey: 'tab.chat' },
+  { key: 'player', labelKey: 'tab.player' },
+  { key: 'hotkeys', labelKey: 'tab.shortcuts' },
+  { key: 'about', labelKey: 'tab.about' },
 ];
 
 const FOCUSABLE_SELECTOR = [
@@ -138,6 +139,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     private readonly getStatusSnapshot: StatusSnapshotProvider,
   ) {
     this.render();
+    lifecycle.add(subscribeLang(() => this.rebuildForLanguage()));
     lifecycle.setInterval(() => this.render(), 1000);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onHotkeyCapture(event as KeyboardEvent), true);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onDashboardKeydown(event as KeyboardEvent), true);
@@ -190,7 +192,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     const removedNav = this.navButtons.get('removed');
     removedNav?.setAttribute(
       'aria-label',
-      removed.length > 0 ? `Kaldırılanlar, ${removed.length} mesaj` : 'Kaldırılanlar',
+      removed.length > 0 ? t('panel.removed_count', { n: removed.length }) : t('tab.removed'),
     );
 
     // Keep displayed values current when the popup changes a flag, without replacing nodes and
@@ -219,7 +221,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (shown.length === 0) {
       const empty = document.createElement('div');
       empty.className = REMOVED_EMPTY_CLASS;
-      empty.textContent = 'Henüz kaldırılan mesaj yok';
+      empty.textContent = t('panel.removed_empty');
       body.replaceChildren(empty);
     } else {
       body.replaceChildren(...shown.map((message) => this.buildRow(message)));
@@ -286,11 +288,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const railCaption = document.createElement('p');
     railCaption.className = 'kickflow-panel__rail-caption';
-    railCaption.textContent = 'Kontrol paneli';
+    railCaption.textContent = t('panel.control_panel');
 
     const nav = document.createElement('nav');
     nav.className = 'kickflow-panel__nav';
-    nav.setAttribute('aria-label', 'KickFlow bölümleri');
+    nav.setAttribute('aria-label', t('panel.sections'));
     for (const item of DASHBOARD_SECTIONS) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -298,7 +300,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       button.dataset.section = item.key;
       const label = document.createElement('span');
       label.className = 'kickflow-panel__nav-label';
-      label.textContent = item.label;
+      label.textContent = t(item.labelKey);
       button.append(label);
       if (item.key === 'removed') {
         const count = document.createElement('span');
@@ -334,8 +336,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     const close = document.createElement('button');
     close.type = 'button';
     close.className = `${PANEL_BTN_CLASS} ${PANEL_CLOSE_CLASS}`;
-    close.title = 'Kapat';
-    close.setAttribute('aria-label', 'KickFlow panelini kapat');
+    close.title = t('common.close');
+    close.setAttribute('aria-label', t('panel.close_aria'));
     close.textContent = '×';
     close.addEventListener('click', () => this.setOpen(false));
 
@@ -362,27 +364,27 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.dashboardSections.clear();
 
     const general = this.buildDashboardPane('general');
-    general.append(this.buildPaneIntro('Oturum durumunu izle ve temel sohbet görünümünü seç.'));
+    general.append(this.buildPaneIntro(t('panel.general_intro')));
 
     const statusGroup = document.createElement('section');
     statusGroup.className = 'kickflow-panel__group';
-    statusGroup.append(this.buildGroupTitle('Canlı durum'));
+    statusGroup.append(this.buildGroupTitle(t('panel.live_status')));
     const statsList = document.createElement('dl');
     statsList.className = 'kickflow-panel__stats';
-    const connection = this.buildStat('Bağlantı');
+    const connection = this.buildStat(t('stat.connection'));
     const connectionDot = document.createElement('span');
     connectionDot.className = 'kickflow-panel__live-dot';
     connection.value.prepend(connectionDot);
-    const channel = this.buildStat('Kanal');
-    const chatroom = this.buildStat('Chatroom ID');
-    const messages = this.buildStat('Mesaj');
-    const preserved = this.buildStat('Korunmuş');
-    const banned = this.buildStat('Ban');
-    const deleted = this.buildStat('Silme');
-    const ghostAnchored = this.buildStat('Ghost inline');
-    const ghostPending = this.buildStat('Ghost bekleyen');
-    const ghostEvicted = this.buildStat('Ghost evict');
-    const lastBan = this.buildStat('Son ban');
+    const channel = this.buildStat(t('stat.channel'));
+    const chatroom = this.buildStat(t('stat.chatroom_id'));
+    const messages = this.buildStat(t('stat.messages'));
+    const preserved = this.buildStat(t('stat.preserved'));
+    const banned = this.buildStat(t('stat.bans'));
+    const deleted = this.buildStat(t('stat.deletions'));
+    const ghostAnchored = this.buildStat(t('stat.ghost_inline'));
+    const ghostPending = this.buildStat(t('stat.ghost_pending'));
+    const ghostEvicted = this.buildStat(t('stat.ghost_evicted'));
+    const lastBan = this.buildStat(t('stat.last_ban'));
     statsList.append(
       connection.row,
       channel.row,
@@ -414,12 +416,12 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const modeGroup = document.createElement('section');
     modeGroup.className = 'kickflow-panel__group';
-    modeGroup.append(this.buildGroupTitle('Sohbet görünümü'));
+    modeGroup.append(this.buildGroupTitle(t('panel.chat_view')));
     const modeLabel = document.createElement('label');
     modeLabel.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--mode';
-    const modeCopy = this.buildRowCopy('Chat modu', 'Kick’in yerel sohbetini veya KickFlow listesini kullan.');
+    const modeCopy = this.buildRowCopy(t('panel.chat_mode'), t('panel.chat_mode_desc'));
     const modeSelect = document.createElement('select');
-    modeSelect.setAttribute('aria-label', 'Chat modu');
+    modeSelect.setAttribute('aria-label', t('panel.chat_mode'));
     const nativeOption = document.createElement('option');
     nativeOption.value = 'native';
     nativeOption.textContent = 'Native';
@@ -433,65 +435,84 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     modeGroup.append(modeLabel);
     this.chatModeSelect = modeSelect;
 
+    const languageLabel = document.createElement('label');
+    languageLabel.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--mode';
+    const languageCopy = this.buildRowCopy(t('panel.language'), t('panel.language_desc'));
+    const languageSelect = document.createElement('select');
+    languageSelect.setAttribute('aria-label', t('panel.language'));
+    for (const [value, label] of [['en', 'EN'], ['tr', 'TR']] as const) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      languageSelect.append(option);
+    }
+    languageSelect.value = getLang();
+    languageSelect.addEventListener('change', () => {
+      const next = languageSelect.value;
+      if (next === 'en' || next === 'tr') setLang(next);
+    });
+    languageLabel.append(languageCopy, languageSelect);
+    modeGroup.append(languageLabel);
+
     general.append(statusGroup, modeGroup);
 
     const removed = this.buildDashboardPane('removed');
-    removed.append(this.buildPaneIntro('Bu kanalda banlanan, zaman aşımına uğrayan ve silinen mesajları incele.'));
+    removed.append(this.buildPaneIntro(t('panel.removed_intro')));
     const body = document.createElement('div');
     body.className = PANEL_BODY_CLASS;
     body.setAttribute('role', 'list');
-    body.setAttribute('aria-label', 'Kaldırılan mesajlar');
+    body.setAttribute('aria-label', t('panel.removed_aria'));
     body.setAttribute('aria-live', 'polite');
     removed.append(body);
 
     const chat = this.buildDashboardPane('chat');
-    chat.append(this.buildPaneIntro('Sohbet akışında hangi KickFlow iyileştirmelerinin görüneceğini seç.'));
+    chat.append(this.buildPaneIntro(t('panel.chat_intro')));
     const chatGroup = document.createElement('section');
     chatGroup.className = 'kickflow-panel__group';
 
     const { label: deletedLabel, checkbox: deletedCheckbox } = this.buildSettingsToggle(
-      'Silinenleri göster',
-      'Moderatörlerin sildiği mesajları görünür tutar.',
+      t('setting.show_deleted'),
+      t('setting.show_deleted_desc'),
       'showDeletedMessages',
       featureFlags.showDeletedMessages,
     );
     this.showDeletedCheckbox = deletedCheckbox;
 
     const { label: banLabel, checkbox: banCheckbox } = this.buildSettingsToggle(
-      'Ban satır-içi',
-      'Banlanan kullanıcıların son mesajlarını akışta korur.',
+      t('setting.inline_bans'),
+      t('setting.inline_bans_desc'),
       'preserveBansInline',
       featureFlags.preserveBansInline,
     );
     this.banInlineCheckbox = banCheckbox;
 
     const { label: subscriptionsLabel, checkbox: subscriptionsCheckbox } = this.buildSettingsToggle(
-      'Abonelikler', 'Yeni abonelik etkinliklerini gösterir.', 'showSubscriptions', featureFlags.showSubscriptions,
+      t('setting.subscriptions'), t('setting.subscriptions_desc'), 'showSubscriptions', featureFlags.showSubscriptions,
     );
     this.subscriptionsCheckbox = subscriptionsCheckbox;
 
     const { label: giftedSubsLabel, checkbox: giftedSubsCheckbox } = this.buildSettingsToggle(
-      'Hediye abonelikler', 'Hediye abonelik etkinliklerini gösterir.', 'showGiftedSubs', featureFlags.showGiftedSubs,
+      t('setting.gifted_subscriptions'), t('setting.gifted_subscriptions_desc'), 'showGiftedSubs', featureFlags.showGiftedSubs,
     );
     this.giftedSubsCheckbox = giftedSubsCheckbox;
 
     const { label: kicksLabel, checkbox: kicksCheckbox } = this.buildSettingsToggle(
-      'Kicks / bağışlar', 'Ücretli Kicks bağış etkinliklerini sohbet akışına ekler.', 'showKicks', featureFlags.showKicks,
+      t('setting.kicks'), t('setting.kicks_desc'), 'showKicks', featureFlags.showKicks,
     );
     this.kicksCheckbox = kicksCheckbox;
 
     const { label: hostRaidLabel, checkbox: hostRaidCheckbox } = this.buildSettingsToggle(
-      'Host / Raid', 'Host ve raid etkinliklerini sohbet akışına ekler.', 'showHostRaid', featureFlags.showHostRaid,
+      t('setting.host_raid'), t('setting.host_raid_desc'), 'showHostRaid', featureFlags.showHostRaid,
     );
     this.hostRaidCheckbox = hostRaidCheckbox;
 
     const { label: modeChangesLabel, checkbox: modeChangesCheckbox } = this.buildSettingsToggle(
-      'Mod değişiklikleri', 'Yavaş mod gibi sohbet ayarı değişikliklerini bildirir.', 'showModeChanges', featureFlags.showModeChanges,
+      t('setting.mode_changes'), t('setting.mode_changes_desc'), 'showModeChanges', featureFlags.showModeChanges,
     );
     this.modeChangesCheckbox = modeChangesCheckbox;
 
     const { label: sidebarRefreshLabel, checkbox: sidebarRefreshCheckbox } = this.buildSettingsToggle(
-      'Sidebar yenileme', 'Takip edilen kanalların canlı durumunu güncel tutar.', 'showSidebarRefresh', featureFlags.showSidebarRefresh,
+      t('setting.sidebar_refresh'), t('setting.sidebar_refresh_desc'), 'showSidebarRefresh', featureFlags.showSidebarRefresh,
     );
     this.sidebarRefreshCheckbox = sidebarRefreshCheckbox;
 
@@ -508,37 +529,37 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     chat.append(chatGroup);
 
     const player = this.buildDashboardPane('player');
-    player.append(this.buildPaneIntro('Yayın oynatımını ve yerel kontrol çubuğuna eklenen araçları yönet.'));
+    player.append(this.buildPaneIntro(t('panel.player_intro')));
     const playerGroup = document.createElement('section');
     playerGroup.className = 'kickflow-panel__group';
 
     const { label: autoTheaterLabel, checkbox: autoTheaterCheckbox } = this.buildSettingsToggle(
-      'Otomatik tiyatro modu', 'Kanal açıldığında geniş oynatıcı düzenine geçer.', 'autoTheater', featureFlags.autoTheater,
+      t('setting.auto_theater'), t('setting.auto_theater_desc'), 'autoTheater', featureFlags.autoTheater,
     );
     this.autoTheaterCheckbox = autoTheaterCheckbox;
 
     const { label: rewindControlsLabel, checkbox: rewindControlsCheckbox } = this.buildSettingsToggle(
-      'Geri / ileri sarma', 'Kontrol çubuğuna 10 saniyelik sarma düğmeleri ekler.', 'rewindControls', featureFlags.rewindControls,
+      t('setting.seek'), t('setting.seek_desc'), 'rewindControls', featureFlags.rewindControls,
     );
     this.rewindControlsCheckbox = rewindControlsCheckbox;
 
     const { label: liveCatchupLabel, checkbox: liveCatchupCheckbox } = this.buildSettingsToggle(
-      'Canlıya yetişme', 'Geride kalınca yayını kontrollü biçimde hızlandırır.', 'liveCatchup', featureFlags.liveCatchup,
+      t('setting.live_catchup'), t('setting.live_catchup_desc'), 'liveCatchup', featureFlags.liveCatchup,
     );
     this.liveCatchupCheckbox = liveCatchupCheckbox;
 
     const { label: qualityLockLabel, checkbox: qualityLockCheckbox } = this.buildSettingsToggle(
-      'En yüksek kalite', 'Mevcut en yüksek yayın kalitesini seçer.', 'qualityLock', featureFlags.qualityLock,
+      t('setting.quality_lock'), t('setting.quality_lock_desc'), 'qualityLock', featureFlags.qualityLock,
     );
     this.qualityLockCheckbox = qualityLockCheckbox;
 
     const { label: screenshotLabel, checkbox: screenshotCheckbox } = this.buildSettingsToggle(
-      'Ekran görüntüsü', 'Kontrol çubuğuna kare yakalama düğmesi ekler.', 'screenshot', featureFlags.screenshot,
+      t('setting.screenshot'), t('setting.screenshot_desc'), 'screenshot', featureFlags.screenshot,
     );
     this.screenshotCheckbox = screenshotCheckbox;
 
     const { label: speedControlsLabel, checkbox: speedControlsCheckbox } = this.buildSettingsToggle(
-      'Hız kontrolleri', 'Manuel ve otomatik oynatma hızı araçlarını gösterir.', 'speedControls', featureFlags.speedControls,
+      t('setting.speed'), t('setting.speed_desc'), 'speedControls', featureFlags.speedControls,
     );
     this.speedControlsCheckbox = speedControlsCheckbox;
 
@@ -553,11 +574,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     player.append(playerGroup);
 
     const hotkeys = this.buildDashboardPane('hotkeys');
-    hotkeys.append(this.buildPaneIntro('Oynatıcı eylemlerini tek tuşla çalıştır. Yazı alanındayken kısayollar devre dışıdır.'));
+    hotkeys.append(this.buildPaneIntro(t('panel.shortcuts_intro')));
 
     const hotkeyList = document.createElement('div');
     hotkeyList.className = 'kickflow-panel__hotkeys';
-    for (const definition of HOTKEY_DEFINITIONS) hotkeyList.append(this.buildHotkeyRow(definition.action, definition.label));
+    for (const definition of HOTKEY_DEFINITIONS) hotkeyList.append(this.buildHotkeyRow(definition.action, hotkeyLabel(definition.action)));
 
     const hotkeyFooter = document.createElement('div');
     hotkeyFooter.className = 'kickflow-panel__hotkey-footer';
@@ -568,19 +589,19 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     const reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'kickflow-panel__hotkey-reset';
-    reset.textContent = 'Varsayılana dön';
+    reset.textContent = t('common.reset_defaults');
     reset.addEventListener('click', () => {
       this.finishHotkeyCapture();
       resetHotkeyBindings();
       this.refreshHotkeyControls();
-      this.setHotkeyStatus('Kısayollar sıfırlandı.');
+      this.setHotkeyStatus(t('hotkey.reset'));
     });
     hotkeyFooter.append(hotkeyStatus, reset);
     this.hotkeyStatus = hotkeyStatus;
 
     const hint = document.createElement('p');
     hint.className = 'kickflow-panel__settings-hint';
-    hint.textContent = 'Değişiklikler anında uygulanır.';
+    hint.textContent = t('panel.changes_live');
 
     hotkeys.append(hotkeyList, hotkeyFooter, hint);
 
@@ -590,10 +611,10 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     aboutMark.textContent = 'KickFlow';
     const aboutText = document.createElement('p');
     aboutText.className = 'kickflow-panel__about-copy';
-    aboutText.textContent = 'Kick sohbetini ve canlı yayın deneyimini sadeleştiren kişisel bir tarayıcı eklentisi.';
+    aboutText.textContent = t('about.copy');
     const aboutFacts = document.createElement('dl');
     aboutFacts.className = 'kickflow-panel__about-facts';
-    for (const [label, value] of [['Sürüm', '0.2.0'], ['Platform', 'Chrome MV3'], ['Uygulama', 'kick.com içinde çalışır']]) {
+    for (const [label, value] of [[t('about.version'), '0.2.0'], [t('about.platform'), 'Chrome MV3'], [t('about.application'), t('about.application_value')]]) {
       const row = document.createElement('div');
       const term = document.createElement('dt');
       term.textContent = label;
@@ -667,7 +688,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     enabled.type = 'checkbox';
     enabled.className = 'kickflow-panel__settings-toggle kickflow-panel__hotkey-enabled';
     enabled.checked = binding.enabled;
-    enabled.setAttribute('aria-label', `${labelText} kısayolunu etkinleştir`);
+    enabled.setAttribute('aria-label', t('hotkey.enable_aria', { name: labelText }));
     enabled.addEventListener('change', () => {
       updateHotkeyBinding(action, { enabled: enabled.checked });
       this.refreshHotkeyControls();
@@ -684,8 +705,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     const change = document.createElement('button');
     change.type = 'button';
     change.className = 'kickflow-panel__hotkey-change';
-    change.setAttribute('aria-label', `${labelText} kısayolunu değiştir`);
-    change.textContent = 'Değiştir';
+    change.setAttribute('aria-label', t('hotkey.change_aria', { name: labelText }));
+    change.textContent = t('common.change');
     change.addEventListener('click', () => this.startHotkeyCapture(action));
 
     row.append(label, chip, change, enabled);
@@ -696,7 +717,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private startHotkeyCapture(action: HotkeyAction): void {
     this.captureAction = action;
     setHotkeyCaptureActive(true);
-    this.setHotkeyStatus('Bir tuşa bas…  Esc: iptal');
+    this.setHotkeyStatus(t('hotkey.press_key_cancel'));
     this.refreshHotkeyControls();
   }
 
@@ -714,28 +735,28 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     event.stopImmediatePropagation();
 
     if (event.key === 'Escape') {
-      this.finishHotkeyCapture('Değişiklik iptal edildi.');
+      this.finishHotkeyCapture(t('hotkey.cancelled'));
       return;
     }
     const key = normalizeHotkeyKey(event.key);
     if (key === null) {
-      this.setHotkeyStatus('Tek başına bir değiştirici tuş kullanılamaz.');
+      this.setHotkeyStatus(t('hotkey.modifier_invalid'));
       return;
     }
 
     const result = updateHotkeyBinding(action, { key });
     if (!result.ok) {
       if (result.reason === 'collision' && result.conflictingAction) {
-        const conflict = HOTKEY_DEFINITIONS.find((item) => item.action === result.conflictingAction)?.label ?? result.conflictingAction;
-        this.setHotkeyStatus(`Bu tuş “${conflict}” için kullanımda.`);
+        const conflict = hotkeyLabel(result.conflictingAction);
+        this.setHotkeyStatus(t('hotkey.collision', { name: conflict }));
       } else {
-        this.setHotkeyStatus('Bu tuş bağlanamıyor.');
+        this.setHotkeyStatus(t('hotkey.invalid'));
       }
       return;
     }
 
     this.finishHotkeyCapture(
-      result.nativeConflict ? 'Kaydedildi: Kick’in kendi kısayoluyla çakışabilir.' : 'Kısayol kaydedildi.',
+      result.nativeConflict ? t('hotkey.saved_native_conflict') : t('hotkey.saved'),
     );
   }
 
@@ -750,9 +771,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       if (!controls) continue;
       const capturing = this.captureAction === action;
       controls.enabled.checked = bindings[action].enabled;
-      controls.chip.textContent = capturing ? 'bir tuşa bas…' : formatHotkeyKey(bindings[action].key);
+      controls.chip.textContent = capturing ? t('hotkey.press_key').toLocaleLowerCase(getLang() === 'tr' ? 'tr-TR' : 'en-US') : formatHotkeyKey(bindings[action].key);
       controls.chip.classList.toggle('kickflow-panel__hotkey-chip--capturing', capturing);
-      controls.change.textContent = 'Değiştir';
+      controls.change.textContent = t('common.change');
       controls.change.classList.toggle('kickflow-panel__hotkey-change--capturing', capturing);
     }
   }
@@ -786,7 +807,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
         button.classList.toggle('kickflow-panel__nav-item--active', active);
         button.setAttribute('aria-current', active ? 'page' : 'false');
       }
-      if (active && this.titleHeading) this.titleHeading.textContent = item.label;
+      if (active && this.titleHeading) this.titleHeading.textContent = t(item.labelKey);
     }
     if (resetScroll) {
       const settings = this.main?.querySelector<HTMLElement>(`.${PANEL_SETTINGS_CLASS}`);
@@ -802,7 +823,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     const missingConnection = !connected && !snapshot.slug;
     stats.connection.replaceChildren(
       stats.connectionDot,
-      document.createTextNode(connected ? 'Bağlı' : (snapshot.slug ? 'Bekliyor' : '—')),
+      document.createTextNode(connected ? t('common.connected') : (snapshot.slug ? t('common.waiting') : '—')),
     );
     stats.connection.classList.toggle('kickflow-panel__stat-value--missing', missingConnection);
     stats.connectionDot.classList.toggle('kickflow-panel__live-dot--connected', connected);
@@ -827,9 +848,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private formatAgo(timestamp: number | null): string {
     if (timestamp === null) return '—';
     const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-    if (seconds < 60) return `${seconds} sn önce`;
+    if (seconds < 60) return t('time.seconds_ago', { n: seconds });
     const minutes = Math.round(seconds / 60);
-    return minutes < 60 ? `${minutes} dk önce` : `${Math.round(minutes / 60)} sa önce`;
+    return minutes < 60
+      ? t('time.minutes_ago', { n: minutes })
+      : t('time.hours_ago', { n: Math.round(minutes / 60) });
   }
 
   private onDashboardKeydown(event: KeyboardEvent): void {
@@ -949,6 +972,16 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (moderator) action.append(moderator);
     row.append(action);
     return row;
+  }
+
+  /** Rebuilds the open dashboard from catalog values. Existing chat rows intentionally keep
+   * their creation-time copy; newly rendered rows use the current language. */
+  private rebuildForLanguage(): void {
+    this.finishHotkeyCapture();
+    this.removeSection();
+    this.lastSig = '';
+    this.render();
+    if (this.open) this.showDashboardSection(this.activeSection, false);
   }
 
   /** Drops all DOM references so an externally removed body-level dashboard can self-heal. */

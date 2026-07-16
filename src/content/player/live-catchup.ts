@@ -12,6 +12,7 @@ import {
 } from './player-state';
 import type { Lifecycle } from '../shared/lifecycle';
 import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
+import { subscribeLang, t } from '../shared/i18n';
 
 const CONTROLS_ID = 'kickflow-catchup-controls';
 
@@ -132,13 +133,19 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   let catchingUp = false;
   let liveButtonEl: HTMLButtonElement | null = null;
   let lastLiveLabel = '';
+  let lastBehindSeconds: number | null = null;
 
   const updateHotkeyTitle = (): void => {
     if (!liveButtonEl) return;
     const binding = getHotkeyBinding('goLive');
-    liveButtonEl.title = `Canlı yayına dön${binding.enabled ? ` (${formatHotkeyKey(binding.key)})` : ''}`;
+    liveButtonEl.title = `${t('player.go_live')}${binding.enabled ? ` (${formatHotkeyKey(binding.key)})` : ''}`;
   };
   lifecycle.add(subscribeHotkeyBindings(updateHotkeyTitle));
+  lifecycle.add(subscribeLang(() => {
+    updateHotkeyTitle();
+    lastLiveLabel = '';
+    setLiveButtonState(lastBehindSeconds);
+  }));
 
   // Live detection must NOT depend on the control bar: Kick auto-hides it (and its go-to-live
   // button) when the mouse leaves the player, and `findLiveButton()` would then go null and
@@ -168,23 +175,26 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   /** ≥100s the seconds form ("-3600sn") would overflow the button's fixed min-width and
    * shove the controls to its right — switch to minutes, which stays within 2-3 chars. */
   const formatBehind = (roundedSeconds: number): string =>
-    roundedSeconds > 99 ? `-${Math.round(roundedSeconds / 60)}dk` : `-${roundedSeconds}sn`;
+    roundedSeconds > 99
+      ? t('player.behind_minutes', { n: Math.round(roundedSeconds / 60) })
+      : t('player.behind_seconds', { n: roundedSeconds });
 
   /** The single "CANLI" button doubles as the behind-live indicator: at the edge it is a
    * quiet red-dot pill, when behind it turns amber and appends "-Xsn" in place (no extra
    * indicator element appearing/disappearing, so nothing to its right ever shifts). */
   const setLiveButtonState = (behindSeconds: number | null): void => {
     if (!liveButtonEl) return;
+    lastBehindSeconds = behindSeconds;
     const behind = behindSeconds !== null;
     const rounded = behind ? Math.max(0, Math.round(behindSeconds)) : 0;
     liveButtonEl.classList.toggle('kickflow-player-btn--behind', behind);
-    const label = behind ? `CANLI ${formatBehind(rounded)}` : 'CANLI';
+    const label = behind ? `${t('player.live')} ${formatBehind(rounded)}` : t('player.live');
     if (label === lastLiveLabel) return;
     lastLiveLabel = label;
     liveButtonEl.textContent = label;
     liveButtonEl.setAttribute(
       'aria-label',
-      behind ? `Canlı yayına dön, ${rounded} saniye geridesin` : 'Canlı yayına dön',
+      behind ? t('player.go_live_behind', { n: rounded }) : t('player.go_live'),
     );
   };
 

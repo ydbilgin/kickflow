@@ -12,6 +12,7 @@ import {
   subscribePlayerState,
 } from './player-state';
 import type { Lifecycle } from '../shared/lifecycle';
+import { subscribeLang, t } from '../shared/i18n';
 
 const CONTROLS_ID = 'kickflow-speed-controls';
 const MANUAL_RATES = [3, 2.5, 2, 1.5, 1.25, 1, 0.75, 0.5, 0.25] as const;
@@ -78,7 +79,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
     clearWarning();
     const warning = document.createElement('div');
     warning.className = 'kickflow-speed-warning';
-    warning.textContent = 'Buffer zorlandı; hız 1.5x oldu';
+    warning.textContent = t('player.buffer_warning');
     host.append(warning);
     warningEl = warning;
     warningTimer = window.setTimeout(clearWarning, 2500);
@@ -89,16 +90,16 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
     const playerState = getPlayerState();
     if (playerState.mode === 'manual') {
       buttonEl.textContent = `${formatRate(playerState.manualRate)} ▾`;
-      buttonEl.title = `Manuel hız: ${formatRate(playerState.manualRate)}`;
+      buttonEl.title = t('player.manual_speed', { rate: formatRate(playerState.manualRate) });
       buttonEl.setAttribute('aria-pressed', 'true');
       return;
     }
 
     const observedRate = getVideoElement()?.playbackRate ?? NORMAL_PLAYBACK_RATE;
     const label =
-      Math.abs(observedRate - NORMAL_PLAYBACK_RATE) > 0.05 ? `⚡${displayObservedRate(observedRate)}` : 'OTO';
+      Math.abs(observedRate - NORMAL_PLAYBACK_RATE) > 0.05 ? `⚡${displayObservedRate(observedRate)}` : t('player.auto');
     buttonEl.textContent = `${label} ▾`;
-    buttonEl.title = 'Oynatma hızını seç';
+    buttonEl.title = t('player.select_speed');
     buttonEl.setAttribute('aria-pressed', 'false');
   };
 
@@ -171,7 +172,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
     menu.setAttribute('role', 'menu');
     menu.style.visibility = 'hidden';
 
-    appendMenuItem(menu, '⚡ OTO', playerState.mode === 'auto', selectAuto);
+    appendMenuItem(menu, `⚡ ${t('player.auto')}`, playerState.mode === 'auto', selectAuto);
 
     const separator = document.createElement('div');
     separator.className = 'kickflow-speed-menu__separator';
@@ -261,6 +262,11 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
       setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
     }
     if (menuEl) closeMenu();
+  }));
+  lifecycle.add(subscribeLang(() => {
+    updateButtonVisual();
+    if (menuEl) closeMenu();
+    if (warningEl) warningEl.textContent = t('player.buffer_warning');
   }));
   lifecycle.add(closeMenu);
   lifecycle.add(clearWarning);

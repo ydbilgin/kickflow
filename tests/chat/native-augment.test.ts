@@ -3,6 +3,7 @@ import { featureFlags } from '../../src/content/chat/feature-flags';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { NativeChatAugmenter } from '../../src/content/chat/native-augment';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
+import { setLang } from '../../src/content/shared/i18n';
 
 class FakeLifecycle implements Pick<Lifecycle, 'add' | 'setInterval' | 'isDisposed'> {
   readonly disposers: Array<() => void> = [];
@@ -80,6 +81,7 @@ describe('NativeChatAugmenter', () => {
   const originalShowDeleted = featureFlags.showDeletedMessages;
 
   beforeEach(() => {
+    setLang('tr');
     featureFlags.showDeletedMessages = true;
     Object.defineProperty(globalThis, 'CSS', {
       configurable: true,
@@ -105,7 +107,7 @@ describe('NativeChatAugmenter', () => {
     expect(row?.classList.contains('kickflow-preserved')).toBe(true);
     expect(row?.classList.contains('kickflow-banned')).toBe(true);
     expect(row?.querySelector('.kickflow-original-content')?.textContent).toContain('merhaba @x https://a.b');
-    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('banlandı');
+    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI');
   });
 
   it('rebuilds rich preserved content beside a nested class-bearing Kick row without copying its utilities', () => {
@@ -145,9 +147,9 @@ describe('NativeChatAugmenter', () => {
     const deleted = document.querySelector<HTMLElement>('[data-kickflow-mid="m1"]');
     const timeout = document.querySelector<HTMLElement>('[data-kickflow-mid="m2"]');
     expect(deleted?.classList.contains('kickflow-deleted')).toBe(true);
-    expect(deleted?.querySelector('.kickflow-status-label')?.textContent).toBe('silindi');
+    expect(deleted?.querySelector('.kickflow-status-label')?.textContent).toBe('SİLİNDİ');
     expect(timeout?.classList.contains('kickflow-timeout')).toBe(true);
-    expect(timeout?.querySelector('.kickflow-status-label')?.textContent).toBe('timeout 1sa 30dk');
+    expect(timeout?.querySelector('.kickflow-status-label')?.textContent).toBe('TIMEOUT 1SA 30DK');
   });
 
   it('makes the preserved-inline username clickable like Mode A/removed-panel usernames', () => {

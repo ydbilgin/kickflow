@@ -33,7 +33,7 @@ const status: KickFlowStatus = {
   slug: null,
   chatroomId: null,
   active: false,
-  reason: 'başlatılıyor',
+  reason: t('status.starting'),
   pusherConnected: false,
   lastBanAt: null,
 };
@@ -51,7 +51,8 @@ export function resetStatus(slug: string | null): void {
   status.slug = slug;
   status.chatroomId = null;
   status.active = false;
-  status.reason = slug ? 'kanal çözülüyor…' : 'kanal sayfası değil';
+  status.reason = slug ? t('status.resolving_channel') : t('status.not_channel');
   status.pusherConnected = false;
   status.lastBanAt = null;
 }
+import { t } from './shared/i18n';

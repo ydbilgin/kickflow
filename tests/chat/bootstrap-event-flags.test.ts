@@ -4,6 +4,7 @@ import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from '../../src
 import { buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { configureUserCardSession, openUserCard } from '../../src/content/chat/user-card';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
+import { setLang } from '../../src/content/shared/i18n';
 
 type BootstrapModule = typeof import('../../src/content/bootstrap');
 
@@ -28,6 +29,7 @@ beforeAll(async () => {
       },
     },
   });
+  setLang('tr');
 
   bootstrap = await import('../../src/content/bootstrap');
   await Promise.resolve();

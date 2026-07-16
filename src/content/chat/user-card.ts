@@ -3,6 +3,7 @@ import { mergeIdentityBadges } from './message-store';
 import { makeDraggable } from '../shared/draggable';
 import { openInNewTab, wireNewTabGestures } from '../shared/new-tab';
 import type { ChatBadge } from './message-store';
+import { formatNumber, getLang, t } from '../shared/i18n';
 
 const SAFE_SLUG_RE = /^[a-zA-Z0-9_-]+$/;
 const TRUSTED_IMAGE_HOST = 'kick.com';
@@ -115,12 +116,12 @@ function formatDate(value: unknown): string | null {
   if (typeof value !== 'string' || value.trim() === '') return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat(getLang() === 'tr' ? 'tr-TR' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
 }
 
 function formatFollowers(value: unknown): string | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-  return new Intl.NumberFormat('tr-TR').format(value);
+  return formatNumber(value);
 }
 
 function roleFrom(raw: KickUserCardResponse): string | null {
@@ -148,8 +149,8 @@ export function mapUserCardResponse(
   const slug = typeof card.slug === 'string' && SAFE_SLUG_RE.test(card.slug) ? card.slug : fallbackSlug;
   const username = typeof card.username === 'string' && card.username ? card.username : fallbackName;
   const subscribedFor = typeof card.subscribed_for === 'number' && card.subscribed_for > 0
-    ? `${card.subscribed_for} ay abone`
-    : 'abone değil';
+    ? t('user.subscribed_months', { n: card.subscribed_for })
+    : t('user.not_subscribed');
   const badges = mergeIdentityBadges({
     badges: normalizeBadges(card.badges),
     badgesV2: normalizeBadges(card.badges_v2),
@@ -165,7 +166,7 @@ export function mapUserCardResponse(
     bio,
     followers: formatFollowers(channel?.followers_count),
     createdAt: formatDate(card.created_at) ?? '-',
-    followingSince: formatDate(card.following_since) ?? 'takip etmiyor',
+    followingSince: formatDate(card.following_since) ?? t('user.not_following'),
     subscribedFor,
     badges,
   };
@@ -227,7 +228,7 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   close.type = 'button';
   close.className = 'kickflow-user-card__close';
   close.textContent = '×';
-  close.setAttribute('aria-label', 'kapat');
+  close.setAttribute('aria-label', t('user.close'));
   close.addEventListener('click', () => dismissUserCard());
   card.appendChild(close);
 
@@ -253,7 +254,7 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   // Middle/ctrl-click on the card's own title opens the profile in a new tab (owner ask,
   // 2026-07-10). Plain left-click stays free: the header doubles as the drag handle.
   if (SAFE_SLUG_RE.test(model.slug)) {
-    name.title = `kick.com/${model.slug} — orta tıkla yeni sekmede aç`;
+    name.title = t('user.open_middle', { slug: model.slug });
     wireNewTabGestures(name, `https://kick.com/${model.slug}`);
   }
   nameRow.appendChild(name);
@@ -261,7 +262,7 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
     const verified = document.createElement('span');
     verified.className = 'kickflow-user-card__verified';
     verified.textContent = '✔';
-    verified.title = 'doğrulanmış';
+    verified.title = t('user.verified');
     nameRow.appendChild(verified);
   }
   title.appendChild(nameRow);
@@ -282,10 +283,10 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
     card.appendChild(bio);
   }
 
-  if (model.followers) appendField(card, 'takipçi', model.followers);
-  appendField(card, 'hesap oluşturma', model.createdAt);
-  appendField(card, 'takip', model.followingSince);
-  appendField(card, 'abonelik', model.subscribedFor);
+  if (model.followers) appendField(card, t('user.followers'), model.followers);
+  appendField(card, t('user.created'), model.createdAt);
+  appendField(card, t('user.following'), model.followingSince);
+  appendField(card, t('user.subscription'), model.subscribedFor);
 
   if (model.badges.length > 0) {
     const badges = document.createElement('div');
@@ -299,7 +300,7 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   link.href = `https://kick.com/${model.slug}`;
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = `kick.com/${model.slug} → aç`;
+  link.textContent = `kick.com/${model.slug} → ${t('user.open')}`;
   // Same-origin link inside our overlay — open it ourselves so a plain left-click can't bubble to
   // Kick's SPA router and navigate the current page instead of opening the profile in a new tab.
   link.addEventListener('click', (event) => {
@@ -322,8 +323,8 @@ function buildMinimalCard(displayName: string, slug: string): HTMLElement {
     bio: null,
     followers: null,
     createdAt: '-',
-    followingSince: 'takip etmiyor',
-    subscribedFor: 'abone değil',
+    followingSince: t('user.not_following'),
+    subscribedFor: t('user.not_subscribed'),
     badges: [],
   });
   return card;

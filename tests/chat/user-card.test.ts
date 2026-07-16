@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildUserCardElement, configureUserCardSession, mapUserCardResponse, openUserCard } from '../../src/content/chat/user-card';
+import { setLang } from '../../src/content/shared/i18n';
 
 describe('user-card', () => {
+  beforeEach(() => setLang('tr'));
   afterEach(() => {
     configureUserCardSession(null);
     document.body.innerHTML = '';

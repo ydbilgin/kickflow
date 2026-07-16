@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { getHotkeyBindings, resetHotkeyBindings } from '../../src/content/player/hotkey-registry';
 import type { KickFlowStatusSnapshot, StatusSnapshotProvider } from '../../src/content/status';
+import { setLang } from '../../src/content/shared/i18n';
 
 function statusSnapshot(overrides: Partial<KickFlowStatusSnapshot> = {}): KickFlowStatusSnapshot {
   return {
@@ -97,9 +98,29 @@ function message(id: string, userId: number, content = id): ChatMessage {
 }
 
 describe('RemovedMessagesPanel', () => {
+  beforeAll(() => setLang('tr'));
   afterEach(() => {
     vi.restoreAllMocks();
     document.body.innerHTML = '';
+  });
+
+  it('switches the open dashboard between English and Turkish from General', () => {
+    setLang('en');
+    const lifecycle = new Lifecycle();
+    const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+    panel.showSettings('general');
+    let section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+    expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('General');
+
+    const language = settingsControl(section, 'Language') as HTMLSelectElement;
+    expect(language.value).toBe('en');
+    language.value = 'tr';
+    language.dispatchEvent(new Event('change', { bubbles: true }));
+
+    section = document.querySelector<HTMLElement>('.kickflow-panel')!;
+    expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
+    expect((settingsControl(section, 'Dil') as HTMLSelectElement).value).toBe('tr');
+    lifecycle.dispose();
   });
 
   it('is hidden by default (section present but display:none) even though it already instantiates', () => {
@@ -179,7 +200,7 @@ describe('RemovedMessagesPanel', () => {
     const section = document.querySelector<HTMLElement>('.kickflow-panel');
     const row = section?.querySelector<HTMLElement>('.kickflow-removed-row');
     expect(row?.textContent).toContain('user1');
-    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('banlandı');
+    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI');
     lifecycle.dispose();
   });
 
@@ -238,7 +259,7 @@ describe('RemovedMessagesPanel', () => {
     panel.toggle();
 
     const row = document.querySelector<HTMLElement>('.kickflow-removed-row');
-    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('silindi');
+    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('SİLİNDİ');
     expect(row?.querySelector('.kickflow-mod-label')?.textContent).toBe('· modname');
     lifecycle.dispose();
   });
@@ -383,10 +404,10 @@ describe('RemovedMessagesPanel', () => {
 
       expect(rows.map((row) => row.dataset.kickflowRemovedMid)).toEqual(['newest', 'middle', 'oldest']);
       expect(rows[0].querySelector('.kickflow-removed-row__content')?.textContent).toBe('son mesaj');
-      expect(rows[0].querySelector('.kickflow-status-label--timeout')?.textContent).toBe('timeout 10dk');
+      expect(rows[0].querySelector('.kickflow-status-label--timeout')?.textContent).toBe('TIMEOUT 10DK');
       expect(rows[0].querySelector('.kickflow-mod-label')?.textContent).toBe('· timeoutmod');
-      expect(rows[1].querySelector('.kickflow-status-label--deleted')?.textContent).toBe('silindi');
-      expect(rows[2].querySelector('.kickflow-status-label--banned')?.textContent).toBe('banlandı');
+      expect(rows[1].querySelector('.kickflow-status-label--deleted')?.textContent).toBe('SİLİNDİ');
+      expect(rows[2].querySelector('.kickflow-status-label--banned')?.textContent).toBe('BANLANDI');
       lifecycle.dispose();
     });
 
@@ -533,7 +554,7 @@ describe('RemovedMessagesPanel', () => {
       panel.showSettings();
       const section = document.querySelector<HTMLElement>('.kickflow-panel')!;
       const first = section.querySelector<HTMLButtonElement>('.kickflow-panel__nav-item')!;
-      const last = settingsControl(section, 'Chat modu') as HTMLSelectElement;
+      const last = settingsControl(section, 'Dil') as HTMLSelectElement;
 
       last.focus();
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));

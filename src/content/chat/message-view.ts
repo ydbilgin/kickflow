@@ -2,6 +2,7 @@ import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessage
 import { isSafeKickSlug, openUserCard } from './user-card';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
+import { formatNumber, t, type MessageKey } from '../shared/i18n';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -12,7 +13,7 @@ export const EVENT_ROW_CLASS = 'kickflow-event-row';
 
 // Bulk gifts name at most this many recipients inline (a Kick bulk can be 50+; three ~25-char
 // usernames is about one wrapped line at the panel's 13px width). The rest collapse into
-// "ve N kişi daha", with every known name still reachable on the preview's hover title.
+// a localized "and N more", with every known name still reachable on the preview's hover title.
 export const GIFT_RECIPIENTS_SHOWN_MAX = 3;
 
 // Kick official emotes only (confirmed scope — no 7TV/BTTV). Live-verified 2026-07-04:
@@ -241,7 +242,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       if (url) {
         const img = document.createElement('img');
         img.src = url.href;
-        const title = badge.level != null ? `${badge.level}. Seviye` : (badge.name || badge.text || 'rozet');
+        const title = badge.level != null ? t('badge.level', { n: badge.level }) : (badge.name || badge.text || t('badge.badge'));
         img.alt = title;
         img.title = title;
         img.className = 'kickflow-badge-icon';
@@ -257,8 +258,9 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
     if (asset) {
       const img = document.createElement('img');
       img.src = asset.uri;
-      img.alt = asset.label;
-      img.title = asset.label;
+      const label = roleBadgeLabel(badge.type, asset.label);
+      img.alt = label;
+      img.title = label;
       img.className = 'kickflow-badge-icon';
       img.loading = 'lazy';
       parent.appendChild(img);
@@ -272,14 +274,14 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       if (subUrl) {
         const img = document.createElement('img');
         img.src = subUrl.href;
-        const title = `Abone${badge.count ? ` — ${badge.count} ay` : ''}`;
+        const title = badge.count ? t('badge.subscriber_months', { n: badge.count }) : t('badge.subscriber');
         img.alt = title;
         img.title = title;
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
         parent.appendChild(img);
       } else {
-        appendRoleBadge(parent, 'Abone', SUBSCRIBER_FALLBACK_STYLE, badge.count);
+        appendRoleBadge(parent, t('badge.subscriber'), SUBSCRIBER_FALLBACK_STYLE, badge.count);
       }
       continue;
     }
@@ -287,7 +289,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
     // 4. Labelled chip fallback (no captured asset for this role type).
     const fallbackStyle = badge.type ? ROLE_BADGE_FALLBACK_STYLES[badge.type] : undefined;
     if (fallbackStyle) {
-      const label = (badge.type && ROLE_BADGE_FALLBACK_LABELS[badge.type]) || badge.type || '';
+      const label = roleBadgeLabel(badge.type, (badge.type && ROLE_BADGE_FALLBACK_LABELS[badge.type]) || badge.type || '');
       appendRoleBadge(parent, label, fallbackStyle, badge.count);
       continue;
     }
@@ -304,6 +306,23 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
   }
 }
 
+function roleBadgeLabel(type: string | undefined, fallback: string): string {
+  const keys: Record<string, MessageKey> = {
+    moderator: 'badge.moderator',
+    vip: 'badge.vip',
+    og: 'badge.og',
+    sub_gifter: 'badge.gift_subscriber',
+    verified: 'badge.verified_streamer',
+    staff: 'badge.kick_staff',
+    broadcaster: 'badge.broadcaster',
+    founder: 'badge.founder',
+    sidekick: 'badge.sidekick',
+    bot: 'badge.bot',
+    trainwreckstv: 'badge.trainwreckstv',
+  };
+  return type && keys[type] ? t(keys[type]) : fallback;
+}
+
 export function appendStatusLabel(row: HTMLElement, text: string, modifier: string): void {
   const label = document.createElement('span');
   label.className = `kickflow-status-label kickflow-status-label--${modifier}`;
@@ -311,16 +330,16 @@ export function appendStatusLabel(row: HTMLElement, text: string, modifier: stri
   row.appendChild(label);
 }
 
-/** Compact Turkish duration from minutes: "5dk", "1sa 30dk", "2g". Empty when unknown. */
+/** Compact localized duration from minutes. Empty when unknown. */
 export function formatTimeoutDuration(min: number | null | undefined): string {
   if (min == null || !Number.isFinite(min) || min <= 0) return '';
-  if (min < 60) return `${Math.round(min)}dk`;
+  if (min < 60) return t('duration.minutes_short', { n: Math.round(min) });
   if (min < 60 * 24) {
     const h = Math.floor(min / 60);
     const m = Math.round(min % 60);
-    return m ? `${h}sa ${m}dk` : `${h}sa`;
+    return m ? t('duration.hours_minutes_short', { h, m }) : t('duration.hours_short', { n: h });
   }
-  return `${Math.round(min / (60 * 24))}g`;
+  return t('duration.days_short', { n: Math.round(min / (60 * 24)) });
 }
 
 /** The moderator who issued the action, as a subtle non-uppercase suffix (e.g. "· Chhatto"). */
@@ -367,16 +386,16 @@ export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): v
     if (meta.permanent === false) {
       row.classList.add(TIMEOUT_CLASS);
       const dur = formatTimeoutDuration(meta.durationMin);
-      appendStatusLabel(row, dur ? `timeout ${dur}` : 'timeout', 'timeout');
+      appendStatusLabel(row, dur ? `${t('message.timeout')} ${dur}` : t('message.timeout'), 'timeout');
       appendModLabel(row, meta.bannedBy);
     } else {
       row.classList.add(BANNED_CLASS);
-      appendStatusLabel(row, 'banlandı', 'banned');
+      appendStatusLabel(row, t('message.banned'), 'banned');
       appendModLabel(row, meta.bannedBy);
     }
   } else if (message.preservedReason === 'deleted') {
     row.classList.add(DELETED_CLASS);
-    appendStatusLabel(row, 'silindi', 'deleted');
+    appendStatusLabel(row, t('message.deleted'), 'deleted');
     appendModLabel(row, deleteAttribution(meta));
   }
 }
@@ -424,7 +443,7 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
   }
   const label = document.createElement('span');
   label.className = 'kickflow-message__reply-label';
-  label.textContent = ' isimli kullanıcıya yanıt veriyor';
+  label.textContent = t('message.replying_to');
   text.appendChild(label);
   reply.appendChild(text);
   row.appendChild(reply);
@@ -471,15 +490,28 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
   body.className = `${EVENT_ROW_CLASS}__body`;
   body.appendChild(username);
 
+  const appendCountTemplate = (key: MessageKey, value: number, formatted = String(value)): HTMLElement | null => {
+    const localized = t(key, { n: value });
+    const raw = String(value);
+    const splitAt = localized.indexOf(raw);
+    body.appendChild(document.createTextNode(' '));
+    if (splitAt < 0) {
+      body.appendChild(document.createTextNode(localized));
+      return null;
+    }
+    body.appendChild(document.createTextNode(localized.slice(0, splitAt)));
+    const count = document.createElement('span');
+    count.className = `${EVENT_ROW_CLASS}__count`;
+    count.textContent = formatted;
+    body.append(count, document.createTextNode(localized.slice(splitAt + raw.length)));
+    return count;
+  };
+
   if (event.kind === 'subscription') {
     if (event.months === 1) {
-      body.appendChild(document.createTextNode(' abone oldu'));
+      body.appendChild(document.createTextNode(` ${t('event.subscription.new')}`));
     } else {
-      body.appendChild(document.createTextNode(' '));
-      const count = document.createElement('span');
-      count.className = `${EVENT_ROW_CLASS}__count`;
-      count.textContent = String(event.months);
-      body.append(count, document.createTextNode(' ay abone oldu'));
+      appendCountTemplate('event.subscription.months', event.months);
     }
   } else if (event.kind === 'gifted-subscription') {
     // Recipient usernames are attacker-controlled → textContent only, same as every name here.
@@ -490,21 +522,19 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
       // ("kullanıcısına"), never to the username itself — arbitrary usernames (digits, no
       // vowels, emoji) make proper Turkish vowel-harmony unsolvable, and a wrong suffix reads
       // worse than the neutral construction.
-      body.appendChild(document.createTextNode(', '));
+      const localized = t('event.gift.single', { name: recipients[0] });
+      const splitAt = localized.indexOf(recipients[0]);
+      body.appendChild(document.createTextNode(localized.slice(0, splitAt)));
       const recipient = document.createElement('span');
       recipient.className = `${EVENT_ROW_CLASS}__recipient`;
       recipient.textContent = recipients[0];
-      body.append(recipient, document.createTextNode(' kullanıcısına abonelik hediye etti'));
+      body.append(recipient, document.createTextNode(localized.slice(splitAt + recipients[0].length)));
     } else {
       // Kick's gifted_total is authoritative, but the headline must never contradict the
       // visible names — if the array is somehow longer, the larger number wins, and the
       // "ve N kişi daha" remainder is derived from the same headline so the row always adds up.
       const effectiveTotal = Math.max(event.giftCount, recipients.length);
-      body.appendChild(document.createTextNode(' '));
-      const count = document.createElement('span');
-      count.className = `${EVENT_ROW_CLASS}__count`;
-      count.textContent = String(effectiveTotal);
-      body.append(count, document.createTextNode(' kişiye abonelik hediye etti'));
+      appendCountTemplate('event.gift.bulk', effectiveTotal);
       if (recipients.length > 0) {
         const preview = document.createElement('span');
         preview.className = `${EVENT_ROW_CLASS}__recipients`;
@@ -539,7 +569,7 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
           more.className = `${EVENT_ROW_CLASS}__more`;
           more.setAttribute('role', 'button');
           more.setAttribute('tabindex', '0');
-          more.textContent = ` ve ${effectiveTotal - shown.length} kişi daha`;
+          more.textContent = t('event.gift.more', { n: effectiveTotal - shown.length });
           const expand = (): void => {
             for (const name of hiddenKnown) {
               preview.insertBefore(document.createTextNode(', '), more);
@@ -550,7 +580,7 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
               more.removeAttribute('role');
               more.removeAttribute('tabindex');
               more.className = '';
-              more.textContent = ` ve ${unknownRemainder} kişi daha`;
+              more.textContent = t('event.gift.more', { n: unknownRemainder });
             } else {
               more.remove();
             }
@@ -565,21 +595,16 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
           preview.appendChild(more);
         } else if (unknownRemainder > 0) {
           // All known names already shown, but the count is higher — nothing to expand.
-          preview.appendChild(document.createTextNode(` ve ${unknownRemainder} kişi daha`));
+          preview.appendChild(document.createTextNode(t('event.gift.more', { n: unknownRemainder })));
         }
 
         body.append(document.createTextNode(': '), preview);
       }
     }
   } else if (event.kind === 'kicks') {
-    body.appendChild(document.createTextNode(' '));
-    const count = document.createElement('span');
-    count.className = `${EVENT_ROW_CLASS}__count`;
-    // Group large amounts for readability; the exact value stays on the count title (below).
-    count.textContent = new Intl.NumberFormat('tr-TR').format(event.amount);
+    const count = appendCountTemplate('event.kicks', event.amount, formatNumber(event.amount));
     // Keep the precise integer available to screen readers / hover even when Intl groups it.
-    count.title = String(event.amount);
-    body.append(count, document.createTextNode(' KICKs hediye etti'));
+    if (count) count.title = String(event.amount);
     // gift.name and the sender's message are attacker-controlled → same safe emote/link/mention
     // path as ordinary chat content (appendParsedContent), never innerHTML.
     if (event.giftName) {
@@ -595,13 +620,9 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
       body.append(document.createTextNode(' — '), note);
     }
   } else if (event.numberViewers > 0) {
-    body.appendChild(document.createTextNode(' '));
-    const count = document.createElement('span');
-    count.className = `${EVENT_ROW_CLASS}__count`;
-    count.textContent = new Intl.NumberFormat('tr-TR').format(event.numberViewers);
-    body.append(count, document.createTextNode(' izleyiciyle host etti'));
+    appendCountTemplate('event.host.viewers', event.numberViewers, formatNumber(event.numberViewers));
   } else {
-    body.appendChild(document.createTextNode(' host etti'));
+    body.appendChild(document.createTextNode(` ${t('event.host')}`));
   }
 
   row.append(icon, body);

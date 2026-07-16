@@ -3,6 +3,7 @@ import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
 import type { Lifecycle } from '../shared/lifecycle';
 import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
+import { subscribeLang, t } from '../shared/i18n';
 
 const CONTROLS_ID = 'kickflow-screenshot-controls';
 
@@ -97,9 +98,11 @@ export function initScreenshot(lifecycle: Lifecycle): void {
   const updateHotkeyTitle = (): void => {
     if (!buttonEl) return;
     const binding = getHotkeyBinding('screenshot');
-    buttonEl.title = `Ekran görüntüsü al${binding.enabled ? ` (${formatHotkeyKey(binding.key)})` : ''}`;
+    buttonEl.title = `${t('player.screenshot')}${binding.enabled ? ` (${formatHotkeyKey(binding.key)})` : ''}`;
+    buttonEl.setAttribute('aria-label', t('player.screenshot'));
   };
   lifecycle.add(subscribeHotkeyBindings(updateHotkeyTitle));
+  lifecycle.add(subscribeLang(updateHotkeyTitle));
 
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
@@ -109,7 +112,6 @@ export function initScreenshot(lifecycle: Lifecycle): void {
     button.type = 'button';
     button.className = 'kickflow-player-btn';
     button.append(createCameraIcon());
-    button.setAttribute('aria-label', 'Ekran görüntüsü al');
     buttonEl = button;
     updateHotkeyTitle();
 

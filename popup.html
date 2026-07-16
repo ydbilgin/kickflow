@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -119,81 +119,81 @@
     <img class="brand-icon" src="icons/icon-32.png" alt="" />
     <div class="brand-wrap">
       <div class="brand"><span class="kf">Kick</span>Flow</div>
-      <div class="tagline">Kick deneyimi, sadeleştirilmiş.</div>
+      <div class="tagline">A streamlined Kick experience.</div>
     </div>
-    <span id="dot" class="dot dot--off" title="Bağlantı durumu"></span>
+    <span id="dot" class="dot dot--off" title="Connection status"></span>
   </header>
 
-  <div id="reason">durum okunuyor…</div>
+  <div id="reason">Reading status…</div>
 
   <div id="toggles" class="toggles">
     <div class="mode-card">
-      <div class="mode-copy"><strong>Sohbet görünümü</strong><span>Kick veya KickFlow listesi</span></div>
-      <select id="t-chat-mode" aria-label="Chat modu"><option value="native">Native</option><option value="own">KickFlow</option></select>
+      <div class="mode-copy"><strong>Chat view</strong><span>Kick or KickFlow list</span></div>
+      <select id="t-chat-mode" aria-label="Chat mode"><option value="native">Native</option><option value="own">KickFlow</option></select>
     </div>
 
     <section class="section">
-      <h2 class="section-title">Durum / İstatistik</h2>
+      <h2 class="section-title">Status / Statistics</h2>
       <div class="status-card">
         <div id="stats" class="stats">
           <div class="identity-grid">
-            <div class="stat"><span class="k">Kanal</span><span class="v missing" id="slug">—</span></div>
+            <div class="stat"><span class="k">Channel</span><span class="v missing" id="slug">—</span></div>
             <div class="stat"><span class="k">Chatroom ID</span><span class="v missing" id="chatroomId">—</span></div>
             <div class="stat"><span class="k">Pusher</span><span class="v missing" id="pusher">—</span></div>
           </div>
           <div class="counter-grid">
-            <div class="stat"><span class="k">Mesaj</span><span class="v missing" id="messages">—</span></div>
-            <div class="stat"><span class="k">Korunmuş</span><span class="v green missing" id="preserved">—</span></div>
-            <div class="stat"><span class="k">Ban</span><span class="v ember missing" id="banned">—</span></div>
-            <div class="stat"><span class="k">Silme</span><span class="v ochre missing" id="deleted">—</span></div>
+            <div class="stat"><span class="k">Messages</span><span class="v missing" id="messages">—</span></div>
+            <div class="stat"><span class="k">Preserved</span><span class="v green missing" id="preserved">—</span></div>
+            <div class="stat"><span class="k">Bans</span><span class="v ember missing" id="banned">—</span></div>
+            <div class="stat"><span class="k">Deletions</span><span class="v ochre missing" id="deleted">—</span></div>
             <div class="stat"><span class="k">Ghost inline</span><span class="v ember missing" id="ghostAnchored">—</span></div>
-            <div class="stat"><span class="k">Ghost bekleyen</span><span class="v ochre missing" id="ghostPending">—</span></div>
-            <div class="stat"><span class="k">Ghost evict</span><span class="v missing" id="ghostEvicted">—</span></div>
-            <div class="stat"><span class="k">Son ban</span><span class="v missing" id="lastBan">—</span></div>
+            <div class="stat"><span class="k">Ghost pending</span><span class="v ochre missing" id="ghostPending">—</span></div>
+            <div class="stat"><span class="k">Ghost evicted</span><span class="v missing" id="ghostEvicted">—</span></div>
+            <div class="stat"><span class="k">Last ban</span><span class="v missing" id="lastBan">—</span></div>
           </div>
         </div>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Sohbet</h2>
+      <h2 class="section-title">Chat</h2>
       <div class="control-list">
-        <label class="row" for="t-deleted"><span>Silinen mesajları göster</span><input type="checkbox" id="t-deleted" /></label>
-        <label class="row" for="t-bans-inline"><span>Banları satır içinde koru</span><input type="checkbox" id="t-bans-inline" /></label>
-        <label class="row" for="t-subscriptions"><span>Abonelikler</span><input type="checkbox" id="t-subscriptions" /></label>
-        <label class="row" for="t-gifted-subs"><span>Hediye abonelikler</span><input type="checkbox" id="t-gifted-subs" /></label>
-        <label class="row" for="t-kicks"><span>Kicks / bağışlar</span><input type="checkbox" id="t-kicks" /></label>
+        <label class="row" for="t-deleted"><span>Show deleted messages</span><input type="checkbox" id="t-deleted" /></label>
+        <label class="row" for="t-bans-inline"><span>Preserve bans inline</span><input type="checkbox" id="t-bans-inline" /></label>
+        <label class="row" for="t-subscriptions"><span>Subscriptions</span><input type="checkbox" id="t-subscriptions" /></label>
+        <label class="row" for="t-gifted-subs"><span>Gifted subscriptions</span><input type="checkbox" id="t-gifted-subs" /></label>
+        <label class="row" for="t-kicks"><span>Kicks / donations</span><input type="checkbox" id="t-kicks" /></label>
         <label class="row" for="t-host-raid"><span>Host / Raid</span><input type="checkbox" id="t-host-raid" /></label>
-        <label class="row" for="t-mode-changes"><span>Mod değişiklikleri</span><input type="checkbox" id="t-mode-changes" /></label>
-        <label class="row" for="t-sidebar-refresh"><span>Sidebar yenileme</span><input type="checkbox" id="t-sidebar-refresh" /></label>
-        <label class="row" for="t-debug"><span>Debug günlüğü (F12)</span><input type="checkbox" id="t-debug" /></label>
+        <label class="row" for="t-mode-changes"><span>Mode changes</span><input type="checkbox" id="t-mode-changes" /></label>
+        <label class="row" for="t-sidebar-refresh"><span>Sidebar refresh</span><input type="checkbox" id="t-sidebar-refresh" /></label>
+        <label class="row" for="t-debug"><span>Debug log (F12)</span><input type="checkbox" id="t-debug" /></label>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Oynatıcı</h2>
+      <h2 class="section-title">Player</h2>
       <div class="control-list">
-        <label class="row" for="t-auto-theater"><span>Otomatik tiyatro modu</span><input type="checkbox" id="t-auto-theater" /></label>
-        <label class="row" for="t-rewind-controls"><span>Geri / ileri sarma</span><input type="checkbox" id="t-rewind-controls" /></label>
-        <label class="row" for="t-live-catchup"><span>Canlıya yetişme</span><input type="checkbox" id="t-live-catchup" /></label>
-        <label class="row" for="t-quality-lock"><span>En yüksek kalite</span><input type="checkbox" id="t-quality-lock" /></label>
-        <label class="row" for="t-screenshot"><span>Ekran görüntüsü</span><input type="checkbox" id="t-screenshot" /></label>
-        <label class="row" for="t-speed-controls"><span>Hız kontrolleri</span><input type="checkbox" id="t-speed-controls" /></label>
+        <label class="row" for="t-auto-theater"><span>Automatic theater mode</span><input type="checkbox" id="t-auto-theater" /></label>
+        <label class="row" for="t-rewind-controls"><span>Seek back / forward</span><input type="checkbox" id="t-rewind-controls" /></label>
+        <label class="row" for="t-live-catchup"><span>Live catch-up</span><input type="checkbox" id="t-live-catchup" /></label>
+        <label class="row" for="t-quality-lock"><span>Highest quality</span><input type="checkbox" id="t-quality-lock" /></label>
+        <label class="row" for="t-screenshot"><span>Screenshot</span><input type="checkbox" id="t-screenshot" /></label>
+        <label class="row" for="t-speed-controls"><span>Speed controls</span><input type="checkbox" id="t-speed-controls" /></label>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Kısayollar</h2>
+      <h2 class="section-title">Shortcuts</h2>
       <div class="hotkey-list">
-        <div class="hotkey-row" data-hotkey-action="rewind"><input class="hotkey-enabled" type="checkbox" id="hk-rewind-enabled" aria-label="10 sn geri kısayolunu etkinleştir" /><span>10 sn geri</span><kbd class="key-chip" id="hk-rewind-key">←</kbd><button class="hotkey-change" id="hk-rewind-change" type="button" aria-label="10 sn geri kısayolunu değiştir">Değiştir</button></div>
-        <div class="hotkey-row" data-hotkey-action="forward"><input class="hotkey-enabled" type="checkbox" id="hk-forward-enabled" aria-label="10 sn ileri kısayolunu etkinleştir" /><span>10 sn ileri</span><kbd class="key-chip" id="hk-forward-key">→</kbd><button class="hotkey-change" id="hk-forward-change" type="button" aria-label="10 sn ileri kısayolunu değiştir">Değiştir</button></div>
-        <div class="hotkey-row" data-hotkey-action="screenshot"><input class="hotkey-enabled" type="checkbox" id="hk-screenshot-enabled" aria-label="Ekran görüntüsü kısayolunu etkinleştir" /><span>Ekran görüntüsü</span><kbd class="key-chip" id="hk-screenshot-key">S</kbd><button class="hotkey-change" id="hk-screenshot-change" type="button" aria-label="Ekran görüntüsü kısayolunu değiştir">Değiştir</button></div>
-        <div class="hotkey-row" data-hotkey-action="goLive"><input class="hotkey-enabled" type="checkbox" id="hk-goLive-enabled" aria-label="Canlıya dön kısayolunu etkinleştir" /><span>Canlıya dön</span><kbd class="key-chip" id="hk-goLive-key">L</kbd><button class="hotkey-change" id="hk-goLive-change" type="button" aria-label="Canlıya dön kısayolunu değiştir">Değiştir</button></div>
+        <div class="hotkey-row" data-hotkey-action="rewind"><input class="hotkey-enabled" type="checkbox" id="hk-rewind-enabled" aria-label="Enable 10s back shortcut" /><span>10s back</span><kbd class="key-chip" id="hk-rewind-key">←</kbd><button class="hotkey-change" id="hk-rewind-change" type="button" aria-label="Change 10s back shortcut">Change</button></div>
+        <div class="hotkey-row" data-hotkey-action="forward"><input class="hotkey-enabled" type="checkbox" id="hk-forward-enabled" aria-label="Enable 10s forward shortcut" /><span>10s forward</span><kbd class="key-chip" id="hk-forward-key">→</kbd><button class="hotkey-change" id="hk-forward-change" type="button" aria-label="Change 10s forward shortcut">Change</button></div>
+        <div class="hotkey-row" data-hotkey-action="screenshot"><input class="hotkey-enabled" type="checkbox" id="hk-screenshot-enabled" aria-label="Enable Screenshot shortcut" /><span>Screenshot</span><kbd class="key-chip" id="hk-screenshot-key">S</kbd><button class="hotkey-change" id="hk-screenshot-change" type="button" aria-label="Change Screenshot shortcut">Change</button></div>
+        <div class="hotkey-row" data-hotkey-action="goLive"><input class="hotkey-enabled" type="checkbox" id="hk-goLive-enabled" aria-label="Enable Go live shortcut" /><span>Go live</span><kbd class="key-chip" id="hk-goLive-key">L</kbd><button class="hotkey-change" id="hk-goLive-change" type="button" aria-label="Change Go live shortcut">Change</button></div>
       </div>
-      <div class="hotkey-footer"><span class="hotkey-status" id="hotkey-status" role="status" aria-live="polite"></span><button class="hotkey-reset" id="hotkey-reset" type="button">Varsayılana dön</button></div>
+      <div class="hotkey-footer"><span class="hotkey-status" id="hotkey-status" role="status" aria-live="polite"></span><button class="hotkey-reset" id="hotkey-reset" type="button">Reset to defaults</button></div>
     </section>
 
-    <div class="hint">Değişiklik anında uygulanır; kanal yeniden yüklenince de korunur.</div>
+    <div class="hint">Changes apply immediately and persist after reload.</div>
   </div>
 
   <script src="dist/popup.js"></script>

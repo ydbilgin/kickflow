@@ -1,4 +1,5 @@
 import type { Lifecycle } from '../shared/lifecycle';
+import { subscribeLang, t } from '../shared/i18n';
 
 const BUTTON_ID = 'kickflow-footer-toggle';
 const SEND_BUTTON_ID = 'send-message-button';
@@ -53,6 +54,7 @@ export class FooterToggleButton {
     private readonly panel: FooterTogglePanel,
   ) {
     this.ensureInjected();
+    lifecycle.add(subscribeLang(() => this.refresh()));
     lifecycle.setInterval(() => this.ensureInjected(), ENSURE_INTERVAL_MS);
     lifecycle.add(() => this.dispose());
   }
@@ -84,8 +86,8 @@ export class FooterToggleButton {
     button.type = 'button';
     button.id = BUTTON_ID;
     button.className = BUTTON_CLASS;
-    button.title = 'KickFlow kaldırılan mesajlar';
-    button.setAttribute('aria-label', 'KickFlow kaldırılan mesajları aç');
+    button.title = t('entry.footer_title');
+    button.setAttribute('aria-label', t('entry.footer_aria'));
     button.appendChild(buildIcon());
 
     const badge = document.createElement('span');
@@ -109,6 +111,8 @@ export class FooterToggleButton {
   private refresh(): void {
     const button = this.button;
     if (!button) return;
+    button.title = t('entry.footer_title');
+    button.setAttribute('aria-label', t('entry.footer_aria'));
     button.classList.toggle(ACTIVE_CLASS, this.panel.isOpen());
 
     const badge = this.badge ?? button.querySelector<HTMLSpanElement>(`.${BADGE_CLASS}`);

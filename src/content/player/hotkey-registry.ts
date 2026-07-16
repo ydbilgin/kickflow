@@ -1,4 +1,5 @@
 import { safeStorageGet, safeStorageSet } from '../shared/extension-context';
+import { hotkeyLabel, t } from '../shared/i18n';
 
 export const HOTKEY_ACTIONS = ['rewind', 'forward', 'screenshot', 'goLive'] as const;
 
@@ -26,11 +27,15 @@ export interface HotkeyUpdateResult {
 }
 
 export const HOTKEY_DEFINITIONS: readonly HotkeyDefinition[] = [
-  { action: 'rewind', label: '10 sn geri', defaultKey: 'ArrowLeft' },
-  { action: 'forward', label: '10 sn ileri', defaultKey: 'ArrowRight' },
-  { action: 'screenshot', label: 'Ekran görüntüsü', defaultKey: 's' },
-  { action: 'goLive', label: 'Canlıya dön', defaultKey: 'l' },
+  { action: 'rewind', label: '10s back', defaultKey: 'ArrowLeft' },
+  { action: 'forward', label: '10s forward', defaultKey: 'ArrowRight' },
+  { action: 'screenshot', label: 'Screenshot', defaultKey: 's' },
+  { action: 'goLive', label: 'Go live', defaultKey: 'l' },
 ];
+
+export function getHotkeyLabel(action: HotkeyAction): string {
+  return hotkeyLabel(action);
+}
 
 const NATIVE_KEYS = new Set(['c', 't', 'f', 'm', 'k', ' ', 'i']);
 const MODIFIER_KEYS = new Set(['Alt', 'AltGraph', 'Control', 'Meta', 'Shift', 'CapsLock', 'NumLock', 'ScrollLock']);
@@ -76,7 +81,7 @@ export function formatHotkeyKey(key: string): string {
   if (key === 'ArrowRight') return '→';
   if (key === 'ArrowUp') return '↑';
   if (key === 'ArrowDown') return '↓';
-  if (key === ' ') return 'Boşluk';
+  if (key === ' ') return t('common.space');
   if (key === 'Escape') return 'Esc';
   return key.length === 1 ? key.toUpperCase() : key;
 }

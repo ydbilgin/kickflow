@@ -3,6 +3,7 @@ import { Lifecycle } from './shared/lifecycle';
 import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
 import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
+import { loadLang, t } from './shared/i18n';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus, type KickFlowStatusSnapshot } from './status';
 import {
@@ -201,32 +202,33 @@ export function createSystemEventCallbacks(
         changes.push({
           mode: 'slow_mode',
           text: payload.slowMode.enabled
-            ? `Yavaş mod açıldı (${payload.slowMode.messageInterval}sn)`
-            : 'Yavaş mod kapandı',
+            ? t('event.mode.slow_on', { n: payload.slowMode.messageInterval })
+            : t('event.mode.slow_off'),
         });
       }
       if (
         previous.followersMode.enabled !== payload.followersMode.enabled ||
         (payload.followersMode.enabled && previous.followersMode.minDuration !== payload.followersMode.minDuration)
       ) {
-        const duration = payload.followersMode.minDuration > 0 ? ` (${payload.followersMode.minDuration}dk)` : '';
         changes.push({
           mode: 'followers_mode',
           text: payload.followersMode.enabled
-            ? `Sadece takipçi modu açıldı${duration}`
-            : 'Sadece takipçi modu kapandı',
+            ? payload.followersMode.minDuration > 0
+              ? t('event.mode.followers_on_minutes', { n: payload.followersMode.minDuration })
+              : t('event.mode.followers_on')
+            : t('event.mode.followers_off'),
         });
       }
       if (previous.subscribersMode.enabled !== payload.subscribersMode.enabled) {
         changes.push({
           mode: 'subscribers_mode',
-          text: payload.subscribersMode.enabled ? 'Sadece abone modu açıldı' : 'Sadece abone modu kapandı',
+          text: payload.subscribersMode.enabled ? t('event.mode.subscribers_on') : t('event.mode.subscribers_off'),
         });
       }
       if (previous.emotesMode.enabled !== payload.emotesMode.enabled) {
         changes.push({
           mode: 'emotes_mode',
-          text: payload.emotesMode.enabled ? 'Sadece emote modu açıldı' : 'Sadece emote modu kapandı',
+          text: payload.emotesMode.enabled ? t('event.mode.emotes_on') : t('event.mode.emotes_off'),
         });
       }
       if (!featureFlags.showModeChanges) return;
@@ -1000,21 +1002,21 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     if (lifecycle.isDisposed) return;
     if (!resolved) {
       logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
-      setStatus({ reason: 'chatroom-id çözülemedi' });
+      setStatus({ reason: t('status.chatroom_unresolved') });
       return;
     }
     setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId, channelId } = resolved;
-    setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
+    setStatus({ chatroomId, reason: t('status.pusher_connecting') });
     const client = new PusherClient(chatroomId, channelId, {
       onConnected: () => {
-        setStatus({ reason: 'Pusher soketi bağlı — chatroom aboneliği bekleniyor…' });
+        setStatus({ reason: t('status.socket_waiting') });
       },
       onPrimarySubscriptionReady: () => {
-        setStatus({ pusherConnected: true, active: true, reason: 'aktif — native chat işaretleniyor' });
+        setStatus({ pusherConnected: true, active: true, reason: t('status.active_native') });
       },
       onPrimarySubscriptionUnavailable: () => {
-        setStatus({ pusherConnected: false, active: false, reason: 'chatroom aboneliği bekleniyor — native chat' });
+        setStatus({ pusherConnected: false, active: false, reason: t('status.subscription_waiting_native') });
       },
       onDisconnected: () => {
         setStatus({ pusherConnected: false });
@@ -1076,7 +1078,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   const scrollPill = document.createElement('button');
   scrollPill.type = 'button';
   scrollPill.className = 'kickflow-scroll-pill';
-  scrollPill.textContent = '↓ Yeni mesajlar';
+  scrollPill.textContent = t('chat.new_messages');
   scrollPill.style.display = 'none';
   scrollPill.style.pointerEvents = 'auto';
   const scrollFollow = new ScrollFollowController(ownList, {
@@ -1102,7 +1104,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     onFlush: (appended /*, wasAtBottom */) => {
       mount.noteContentAppended(appended);
       if (mount.state === 'active') {
-        setStatus({ active: true, reason: 'aktif — kendi liste render ediliyor' });
+        setStatus({ active: true, reason: t('status.active_own') });
       }
 
       const decision = decideScrollFollow(scrollFollow.isPinned, appended.length);
@@ -1128,7 +1130,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   lifecycle.setTimeout(() => {
     mount.initialNoContentDeadline();
     if (mount.state === 'fallback') {
-      setStatus({ active: false, reason: 'içerik hazır değil — native chat, arka planda yeniden deneniyor' });
+      setStatus({ active: false, reason: t('status.content_not_ready') });
     }
   }, INITIAL_NO_CONTENT_FALLBACK_MS);
 
@@ -1137,12 +1139,12 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     if (!resolved) {
       logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
       mount.failOpen('channel-resolution-failed');
-      setStatus({ active: false, reason: 'chatroom-id çözülemedi — native chat' });
+      setStatus({ active: false, reason: t('status.chatroom_unresolved_native') });
       return;
     }
     setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId, channelId } = resolved;
-    setStatus({ chatroomId, reason: 'Pusher bağlanıyor…' });
+    setStatus({ chatroomId, reason: t('status.pusher_connecting') });
     let primaryReady = false;
     let hasPrimaryReadyOnce = false;
     let reconnectGraceTimer: number | null = null;
@@ -1162,12 +1164,12 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
       onResult: (result) => {
         if (result.status === 'success') {
           if (result.messages.length === 0 && !primaryReady && mount.state !== 'active') {
-            setStatus({ reason: 'geçmiş boş — canlı chatroom aboneliği bekleniyor…' });
+            setStatus({ reason: t('status.history_empty') });
           }
           return;
         }
         if (mount.state !== 'active') {
-          setStatus({ reason: 'geçmiş alınamadı — canlı chatroom aboneliği bekleniyor…' });
+          setStatus({ reason: t('status.history_failed') });
         }
       },
     });
@@ -1177,7 +1179,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     const systemEventCallbacks = createSystemEventCallbacks(enqueueOnce);
     const client = new PusherClient(chatroomId, channelId, {
       onConnected: () => {
-        if (!getStatus().active) setStatus({ reason: 'Pusher soketi bağlı — chatroom aboneliği bekleniyor…' });
+        if (!getStatus().active) setStatus({ reason: t('status.socket_waiting') });
       },
       onPrimarySubscriptionReady: () => {
         primaryReady = true;
@@ -1187,8 +1189,8 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
           pusherConnected: true,
           active: mount.state === 'active',
           reason: mount.state === 'active'
-            ? 'aktif — chatroom aboneliği hazır'
-            : 'chatroom hazır — görünür chat alanı bekleniyor',
+            ? t('status.active_ready')
+            : t('status.chatroom_ready_waiting'),
         });
         if (hasPrimaryReadyOnce) historyBackfill.request();
         hasPrimaryReadyOnce = true;
@@ -1200,7 +1202,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
         setStatus({
           pusherConnected: false,
           active: false,
-          reason: `chatroom bağlantısı hazır değil (${reason}) — native chat`,
+          reason: t('status.primary_unavailable', { reason }),
         });
       },
       onDisconnected: () => {
@@ -1209,13 +1211,13 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
         setStatus({ pusherConnected: false });
         if (!keepDuringGrace) return;
         mount.setReconnecting();
-        setStatus({ active: true, reason: 'yeniden bağlanıyor…' });
+        setStatus({ active: true, reason: t('status.reconnecting') });
         clearReconnectGrace();
         reconnectGraceTimer = window.setTimeout(() => {
           reconnectGraceTimer = null;
           if (primaryReady || lifecycle.isDisposed) return;
           mount.setPrimaryUnavailable('primary-reconnect-grace-expired');
-          setStatus({ active: false, reason: 'chatroom yeniden bağlanamadı — native chat' });
+          setStatus({ active: false, reason: t('status.reconnect_failed') });
         }, PRIMARY_RECONNECT_GRACE_MS);
       },
       onMessage: (message) => {
@@ -1358,7 +1360,7 @@ function startSession(slug: string): void {
 
   if (!document.querySelector(SELECTORS.chatMessagesContainer)) {
     logger.debug('bootstrap:', SELECTORS.chatMessagesContainer, 'not present yet for', slug, '- chat integrity module waiting');
-    setStatus({ reason: 'chat paneli bekleniyor…' }); // popup parity while we observe for a late panel
+    setStatus({ reason: t('status.waiting_chat_panel') }); // popup parity while we observe for a late panel
   }
   whenElementPresent(SELECTORS.chatMessagesContainer, lifecycle, () => {
     if (token !== sessionToken || lifecycle.isDisposed) return;
@@ -1620,7 +1622,7 @@ function installNavigationHooks(): void {
 }
 
 async function main(): Promise<void> {
-  await Promise.all([applySavedFlags(), loadHotkeyBindings()]);
+  await Promise.all([applySavedFlags(), loadHotkeyBindings(), loadLang()]);
   setDebugLogging(featureFlags.debugLogging);
   installStatusBridge();
   installNavigationHooks();

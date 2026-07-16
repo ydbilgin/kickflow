@@ -4,7 +4,6 @@
 
 import {
   HOTKEY_ACTIONS,
-  HOTKEY_DEFINITIONS,
   createDefaultHotkeyBindings,
   formatHotkeyKey,
   normalizeHotkeyKey,
@@ -13,6 +12,7 @@ import {
   type HotkeyUpdateResult,
 } from '../content/player/hotkey-registry';
 import type { KickFlowStatusSnapshot } from '../content/status';
+import { hotkeyLabel, loadLang, t, type MessageKey } from '../content/shared/i18n';
 
 interface StatusResponse extends KickFlowStatusSnapshot {
   flags: {
@@ -42,6 +42,56 @@ const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElemen
 let capturingAction: HotkeyAction | null = null;
 let lastHotkeys: HotkeyBindings | null = null;
 
+function applyStaticTranslations(): void {
+  const setText = (selector: string, key: MessageKey): void => {
+    const element = document.querySelector<HTMLElement>(selector);
+    if (element) element.textContent = t(key);
+  };
+  setText('.tagline', 'popup.tagline');
+  setText('#reason', 'popup.reading_status');
+  $('dot').title = t('popup.connection_status');
+  setText('.mode-copy strong', 'panel.chat_view');
+  setText('.mode-copy span', 'popup.mode_desc');
+  $('t-chat-mode').setAttribute('aria-label', t('panel.chat_mode'));
+  const sectionTitles = document.querySelectorAll<HTMLElement>('.section-title');
+  const titleKeys: MessageKey[] = ['popup.status_stats', 'tab.chat', 'tab.player', 'tab.shortcuts'];
+  sectionTitles.forEach((element, index) => { if (titleKeys[index]) element.textContent = t(titleKeys[index]); });
+  const statKeys: Array<[string, MessageKey]> = [
+    ['slug', 'stat.channel'], ['chatroomId', 'stat.chatroom_id'], ['pusher', 'stat.pusher'],
+    ['messages', 'stat.messages'], ['preserved', 'stat.preserved'], ['banned', 'stat.bans'],
+    ['deleted', 'stat.deletions'], ['ghostAnchored', 'stat.ghost_inline'],
+    ['ghostPending', 'stat.ghost_pending'], ['ghostEvicted', 'stat.ghost_evicted'], ['lastBan', 'stat.last_ban'],
+  ];
+  for (const [id, key] of statKeys) {
+    const label = $(id).parentElement?.querySelector<HTMLElement>('.k');
+    if (label) label.textContent = t(key);
+  }
+  const settingKeys: Array<[string, MessageKey]> = [
+    ['t-deleted', 'setting.show_deleted'], ['t-bans-inline', 'setting.inline_bans'],
+    ['t-subscriptions', 'setting.subscriptions'], ['t-gifted-subs', 'setting.gifted_subscriptions'],
+    ['t-kicks', 'setting.kicks'], ['t-host-raid', 'setting.host_raid'],
+    ['t-mode-changes', 'setting.mode_changes'], ['t-sidebar-refresh', 'setting.sidebar_refresh'],
+    ['t-debug', 'popup.debug_log'], ['t-auto-theater', 'setting.auto_theater'],
+    ['t-rewind-controls', 'setting.seek'], ['t-live-catchup', 'setting.live_catchup'],
+    ['t-quality-lock', 'setting.quality_lock'], ['t-screenshot', 'setting.screenshot'],
+    ['t-speed-controls', 'setting.speed'],
+  ];
+  for (const [id, key] of settingKeys) {
+    const label = document.querySelector<HTMLElement>(`label[for="${id}"] > span`);
+    if (label) label.textContent = t(key);
+  }
+  for (const action of HOTKEY_ACTIONS) {
+    const label = hotkeyLabel(action);
+    const row = document.querySelector<HTMLElement>(`[data-hotkey-action="${action}"]`);
+    const copy = row?.querySelector<HTMLElement>('span');
+    if (copy) copy.textContent = label;
+    $(`hk-${action}-enabled`).setAttribute('aria-label', t('hotkey.enable_aria', { name: label }));
+    $(`hk-${action}-change`).setAttribute('aria-label', t('hotkey.change_aria', { name: label }));
+  }
+  $('hotkey-reset').textContent = t('common.reset_defaults');
+  setText('.hint', 'popup.changes_hint');
+}
+
 async function activeTabId(): Promise<number | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.id;
@@ -55,9 +105,9 @@ function setDot(state: 'active' | 'native' | 'off'): void {
 function fmtAgo(ms: number | null): string | null {
   if (!ms) return null;
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 60) return s + ' sn önce';
+  if (s < 60) return t('time.seconds_ago', { n: s });
   const m = Math.round(s / 60);
-  return m < 60 ? m + ' dk önce' : Math.round(m / 60) + ' sa önce';
+  return m < 60 ? t('time.minutes_ago', { n: m }) : t('time.hours_ago', { n: Math.round(m / 60) });
 }
 
 function setStatValue(id: string, value: string | number | null): void {
@@ -79,7 +129,7 @@ function renderHotkeys(bindings: HotkeyBindings): void {
     const change = $(`hk-${action}-change`) as HTMLButtonElement;
     enabled.checked = bindings[action].enabled;
     chip.textContent = formatHotkeyKey(bindings[action].key);
-    change.textContent = capturingAction === action ? 'Bir tuşa bas…' : 'Değiştir';
+    change.textContent = capturingAction === action ? t('hotkey.press_key') : t('common.change');
     change.classList.toggle('hotkey-change--capturing', capturingAction === action);
   }
 }
@@ -93,7 +143,7 @@ function finishHotkeyCapture(message?: string): void {
 function render(res: StatusResponse | null, error?: string): void {
   if (error || !res) {
     setDot('off');
-    $('reason').textContent = error || 'bağlanamadı';
+    $('reason').textContent = error || t('popup.not_connected');
     $('stats').style.display = 'none';
     $('toggles').style.display = 'none';
     return;
@@ -101,11 +151,11 @@ function render(res: StatusResponse | null, error?: string): void {
   $('stats').style.display = '';
   $('toggles').style.display = '';
   setDot(res.active ? 'active' : (res.slug ? 'native' : 'off'));
-  $('reason').textContent = res.active ? `KickFlow aktif · ${res.flags.chatMode} chat` : res.reason.split('\u2014').join('·');
+  $('reason').textContent = res.active ? t('popup.active', { mode: res.flags.chatMode }) : res.reason.split('\u2014').join('·');
 
   setStatValue('slug', res.slug);
   setStatValue('chatroomId', res.chatroomId);
-  setStatValue('pusher', res.pusherConnected ? 'bağlı' : 'değil');
+  setStatValue('pusher', res.pusherConnected ? t('popup.pusher_connected') : t('popup.pusher_disconnected'));
   setStatValue('messages', res.messageCount);
   setStatValue('preserved', res.preservedCount);
   setStatValue('banned', res.bannedCount);
@@ -136,13 +186,13 @@ function render(res: StatusResponse | null, error?: string): void {
 
 async function refresh(): Promise<void> {
   const id = await activeTabId();
-  if (id === undefined) return render(null, 'aktif sekme yok');
+  if (id === undefined) return render(null, t('popup.no_active_tab'));
   try {
     const res = (await chrome.tabs.sendMessage(id, { type: 'kickflow:getStatus' })) as StatusResponse | undefined;
-    if (!res) return render(null, 'Kick sekmesi değil / içerik betiği yok');
+    if (!res) return render(null, t('popup.not_kick_tab'));
     render(res);
   } catch {
-    render(null, 'Kick sekmesinde değilsin (kick.com aç)');
+    render(null, t('popup.open_kick'));
   }
 }
 
@@ -171,7 +221,7 @@ async function setHotkey(action: HotkeyAction, patch: { enabled?: boolean; key?:
   try {
     return await chrome.tabs.sendMessage(id, { type: 'kickflow:setHotkey', action, patch }) as HotkeyUpdateResult;
   } catch {
-    setHotkeyStatus('Kick sekmesine bağlanılamadı.');
+    setHotkeyStatus(t('popup.tab_unavailable'));
     return null;
   }
 }
@@ -182,9 +232,9 @@ async function resetHotkeys(): Promise<void> {
   try {
     const result = await chrome.tabs.sendMessage(id, { type: 'kickflow:resetHotkeys' }) as { ok: boolean; bindings: HotkeyBindings };
     if (result?.bindings) renderHotkeys(result.bindings);
-    setHotkeyStatus('Kısayollar sıfırlandı.');
+    setHotkeyStatus(t('hotkey.reset'));
   } catch {
-    setHotkeyStatus('Kick sekmesine bağlanılamadı.');
+    setHotkeyStatus(t('popup.tab_unavailable'));
   }
 }
 
@@ -213,7 +263,7 @@ for (const action of HOTKEY_ACTIONS) {
   });
   $(`hk-${action}-change`).addEventListener('click', () => {
     capturingAction = action;
-    setHotkeyStatus('Bir tuşa bas…  Esc: iptal');
+    setHotkeyStatus(t('hotkey.press_key_cancel'));
     if (lastHotkeys) renderHotkeys(lastHotkeys);
   });
 }
@@ -224,29 +274,29 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault();
   event.stopImmediatePropagation();
   if (event.key === 'Escape') {
-    finishHotkeyCapture('Değişiklik iptal edildi.');
+    finishHotkeyCapture(t('hotkey.cancelled'));
     return;
   }
   const key = normalizeHotkeyKey(event.key);
   if (key === null) {
-    setHotkeyStatus('Tek başına bir değiştirici tuş kullanılamaz.');
+    setHotkeyStatus(t('hotkey.modifier_invalid'));
     return;
   }
   void setHotkey(action, { key }).then((result) => {
     if (!result) return;
     if (!result.ok) {
       if (result.reason === 'collision' && result.conflictingAction) {
-        const conflict = HOTKEY_DEFINITIONS.find((item) => item.action === result.conflictingAction)?.label ?? result.conflictingAction;
-        setHotkeyStatus(`Bu tuş “${conflict}” için kullanımda.`);
+        const conflict = hotkeyLabel(result.conflictingAction);
+        setHotkeyStatus(t('hotkey.collision', { name: conflict }));
       } else {
-        setHotkeyStatus('Bu tuş bağlanamıyor.');
+        setHotkeyStatus(t('hotkey.invalid'));
       }
       if (result.bindings) renderHotkeys(result.bindings);
       return;
     }
     if (result.bindings) lastHotkeys = result.bindings;
     finishHotkeyCapture(
-      result.nativeConflict ? 'Kaydedildi: Kick’in kendi kısayoluyla çakışabilir.' : 'Kısayol kaydedildi.',
+      result.nativeConflict ? t('hotkey.saved_native_conflict') : t('hotkey.saved'),
     );
   });
 }, true);
@@ -256,5 +306,11 @@ $('hotkey-reset').addEventListener('click', () => {
   void resetHotkeys();
 });
 
-void refresh();
-window.setInterval(refresh, 1000);
+async function main(): Promise<void> {
+  await loadLang();
+  applyStaticTranslations();
+  await refresh();
+  window.setInterval(refresh, 1000);
+}
+
+void main();

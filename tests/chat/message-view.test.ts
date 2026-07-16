@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
-import { ROLE_BADGE_ASSETS } from '../../src/content/chat/badge-assets';
 import type { ChatMessage } from '../../src/content/chat/message-store';
+import { setLang } from '../../src/content/shared/i18n';
+
+beforeEach(() => setLang('tr'));
 
 function message(
   slug: string,
@@ -503,7 +505,7 @@ describe('message-view safe rendering', () => {
     expect(row.classList.contains('kickflow-deleted')).toBe(false);
     expect(row.classList.contains('kickflow-banned')).toBe(true);
     expect(row.querySelectorAll('.kickflow-status-label')).toHaveLength(1);
-    expect(row.querySelector('.kickflow-status-label')?.textContent).toBe('banlandı');
+    expect(row.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI');
     expect(row.querySelector('.kickflow-mod-label')?.textContent).toBe('· ban-mod');
   });
 
@@ -514,7 +516,6 @@ describe('message-view safe rendering', () => {
 
     const img = parent.querySelector<HTMLImageElement>('img.kickflow-badge-icon');
     expect(img?.src.startsWith('data:image/svg+xml')).toBe(true);
-    expect(img?.title).toBe(ROLE_BADGE_ASSETS.moderator.label);
     expect(img?.title).toBe('Moderatör');
   });
 

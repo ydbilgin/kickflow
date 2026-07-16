@@ -3,6 +3,7 @@ import { getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
 import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 import type { Lifecycle } from '../shared/lifecycle';
+import { subscribeLang, t } from '../shared/i18n';
 
 const CONTROLS_ID = 'kickflow-rewind-controls';
 const STEP_SECONDS = 10;
@@ -226,10 +227,17 @@ export function initRewindControls(lifecycle: Lifecycle): void {
   const updateHotkeyTitles = (): void => {
     const rewindHotkey = getHotkeyBinding('rewind');
     const forwardHotkey = getHotkeyBinding('forward');
-    if (rewindButton) rewindButton.title = `${STEP_SECONDS} sn geri${rewindHotkey.enabled ? ` (${formatHotkeyKey(rewindHotkey.key)})` : ''}`;
-    if (forwardButton) forwardButton.title = `${STEP_SECONDS} sn ileri${forwardHotkey.enabled ? ` (${formatHotkeyKey(forwardHotkey.key)})` : ''}`;
+    if (rewindButton) {
+      rewindButton.title = `${t('player.seek_back_title', { n: STEP_SECONDS })}${rewindHotkey.enabled ? ` (${formatHotkeyKey(rewindHotkey.key)})` : ''}`;
+      rewindButton.setAttribute('aria-label', t('player.seek_back_aria', { n: STEP_SECONDS }));
+    }
+    if (forwardButton) {
+      forwardButton.title = `${t('player.seek_forward_title', { n: STEP_SECONDS })}${forwardHotkey.enabled ? ` (${formatHotkeyKey(forwardHotkey.key)})` : ''}`;
+      forwardButton.setAttribute('aria-label', t('player.seek_forward_aria', { n: STEP_SECONDS }));
+    }
   };
   lifecycle.add(subscribeHotkeyBindings(updateHotkeyTitles));
+  lifecycle.add(subscribeLang(updateHotkeyTitles));
 
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
@@ -242,13 +250,11 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     rewind.type = 'button';
     rewind.className = 'kickflow-player-btn kickflow-seek-pill__btn';
     rewind.append(createChevronIcon(REWIND_PATHS), createStepLabel());
-    rewind.setAttribute('aria-label', `${STEP_SECONDS} saniye geri sar`);
 
     const forward = document.createElement('button');
     forward.type = 'button';
     forward.className = 'kickflow-player-btn kickflow-seek-pill__btn';
     forward.append(createStepLabel(), createChevronIcon(FORWARD_PATHS));
-    forward.setAttribute('aria-label', `${STEP_SECONDS} saniye ileri sar`);
     rewindButton = rewind;
     forwardButton = forward;
     updateHotkeyTitles();

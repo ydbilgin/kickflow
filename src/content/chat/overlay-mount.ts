@@ -1,5 +1,6 @@
 import { Lifecycle } from '../shared/lifecycle';
 import { SELECTORS } from '../shared/selectors';
+import { t } from '../shared/i18n';
 
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
 const OWN_LIST_ID = 'kickflow-message-list';
@@ -268,7 +269,7 @@ export class ChatOverlayMount {
   setPrimaryReady(): void {
     if (this.disposed) return;
     this.primaryReady = true;
-    if (!this.contentReady) this.setStatus('connected', 'Bağlandı — mesajlar bekleniyor…');
+    if (!this.contentReady) this.setStatus('connected', t('overlay.connected'));
     else this.setStatus(null);
     this.takeoverState = 'ready';
     this.transitionToActive();
@@ -279,7 +280,7 @@ export class ChatOverlayMount {
   setReconnecting(): void {
     if (this.disposed || this.takeoverState !== 'active') return;
     this.primaryReady = false;
-    this.setStatus('reconnecting', 'Yeniden bağlanıyor…');
+    this.setStatus('reconnecting', t('overlay.reconnecting'));
     this.syncNow();
   }
 
@@ -473,7 +474,7 @@ export class ChatOverlayMount {
   private refreshContentReadiness(): void {
     if (this.contentReady && !this.hasVisibleOwnRow()) this.contentReady = false;
     if (!this.contentReady && this.primaryReady && !this.hasVisibleStatus()) {
-      this.setStatus('connected', 'Bağlandı — mesajlar bekleniyor…');
+      this.setStatus('connected', t('overlay.connected'));
     }
   }
 

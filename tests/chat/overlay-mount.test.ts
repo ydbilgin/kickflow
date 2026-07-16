@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatOverlayMount, resolveNativeEventStackGeometry } from '../../src/content/chat/overlay-mount';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
+import { setLang } from '../../src/content/shared/i18n';
 
 class FakeResizeObserver {
   static readonly instances: FakeResizeObserver[] = [];
@@ -201,6 +202,7 @@ function addOwnRow(mount: ChatOverlayMount, id: string): HTMLElement {
 
 describe('ChatOverlayMount takeover readiness', () => {
   beforeEach(() => {
+    setLang('tr');
     vi.useFakeTimers();
     vi.stubGlobal('ResizeObserver', FakeResizeObserver);
     vi.stubGlobal('MutationObserver', FakeMutationObserver);

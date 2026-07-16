@@ -70,6 +70,13 @@ beforeEach(() => {
     return { ok: true };
   });
   vi.stubGlobal('chrome', {
+    runtime: { id: 'kickflow-popup-test' },
+    storage: {
+      local: {
+        get: vi.fn(async () => ({ kf_lang: 'tr' })),
+        set: vi.fn(async () => undefined),
+      },
+    },
     tabs: {
       query: vi.fn(async () => [{ id: 7 }]),
       sendMessage,
@@ -93,10 +100,10 @@ describe('popup event display toggles', () => {
       (button) => button.getAttribute('aria-label'),
     );
     expect(names).toEqual([
-      '10 sn geri kısayolunu değiştir',
-      '10 sn ileri kısayolunu değiştir',
-      'Ekran görüntüsü kısayolunu değiştir',
-      'Canlıya dön kısayolunu değiştir',
+      'Change 10s back shortcut',
+      'Change 10s forward shortcut',
+      'Change Screenshot shortcut',
+      'Change Go live shortcut',
     ]);
     expect(new Set(names).size).toBe(4);
   });

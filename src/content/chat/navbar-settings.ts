@@ -1,4 +1,5 @@
 import type { Lifecycle } from '../shared/lifecycle';
+import { subscribeLang, t } from '../shared/i18n';
 
 const BUTTON_ID = 'kickflow-navbar-settings';
 const BUTTON_CLASS = 'kickflow-navbar-settings';
@@ -41,6 +42,7 @@ export class NavbarSettingsButton {
     private readonly panel: NavbarSettingsPanel,
   ) {
     this.ensureInjected();
+    lifecycle.add(subscribeLang(() => this.refresh()));
     lifecycle.setInterval(() => this.ensureInjected(), ENSURE_INTERVAL_MS);
     lifecycle.add(() => this.dispose());
   }
@@ -71,8 +73,8 @@ export class NavbarSettingsButton {
     button.type = 'button';
     button.id = BUTTON_ID;
     button.className = BUTTON_CLASS;
-    button.title = 'KickFlow ayarları';
-    button.setAttribute('aria-label', 'KickFlow ayarlarını aç');
+    button.title = t('entry.settings_title');
+    button.setAttribute('aria-label', t('entry.settings_aria'));
     button.textContent = 'K';
     button.addEventListener('click', () => {
       this.panel.showSettings();
@@ -82,7 +84,10 @@ export class NavbarSettingsButton {
   }
 
   private refresh(): void {
-    this.button?.classList.toggle(ACTIVE_CLASS, this.panel.isOpen());
+    if (!this.button) return;
+    this.button.classList.toggle(ACTIVE_CLASS, this.panel.isOpen());
+    this.button.title = t('entry.settings_title');
+    this.button.setAttribute('aria-label', t('entry.settings_aria'));
   }
 
   private dispose(): void {
