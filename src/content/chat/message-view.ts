@@ -10,6 +10,11 @@ export const TIMEOUT_CLASS = 'kickflow-timeout';
 export const DELETED_CLASS = 'kickflow-deleted';
 export const EVENT_ROW_CLASS = 'kickflow-event-row';
 
+// Bulk gifts name at most this many recipients inline (a Kick bulk can be 50+; three ~25-char
+// usernames is about one wrapped line at the panel's 13px width). The rest collapse into
+// "ve N kişi daha", with every known name still reachable on the preview's hover title.
+export const GIFT_RECIPIENTS_SHOWN_MAX = 3;
+
 // Kick official emotes only (confirmed scope — no 7TV/BTTV). Live-verified 2026-07-04:
 // `/fullsize` on this path returns 200 image/gif; the same URL without it returns 403.
 const EMOTE_URL_PREFIX = 'https://files.kick.com/emotes/';
@@ -477,11 +482,95 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
       body.append(count, document.createTextNode(' ay abone oldu'));
     }
   } else if (event.kind === 'gifted-subscription') {
-    body.appendChild(document.createTextNode(' '));
-    const count = document.createElement('span');
-    count.className = `${EVENT_ROW_CLASS}__count`;
-    count.textContent = String(event.giftCount);
-    body.append(count, document.createTextNode(' kişiye abonelik hediye etti'));
+    // Recipient usernames are attacker-controlled → textContent only, same as every name here.
+    // `?? []` guards a malformed producer at runtime; the empty branch keeps the count-only row.
+    const recipients = event.giftedUsernames ?? [];
+    if (event.giftCount === 1 && recipients.length === 1) {
+      // Single gift: name the recipient. The dative suffix is attached to the common noun
+      // ("kullanıcısına"), never to the username itself — arbitrary usernames (digits, no
+      // vowels, emoji) make proper Turkish vowel-harmony unsolvable, and a wrong suffix reads
+      // worse than the neutral construction.
+      body.appendChild(document.createTextNode(', '));
+      const recipient = document.createElement('span');
+      recipient.className = `${EVENT_ROW_CLASS}__recipient`;
+      recipient.textContent = recipients[0];
+      body.append(recipient, document.createTextNode(' kullanıcısına abonelik hediye etti'));
+    } else {
+      // Kick's gifted_total is authoritative, but the headline must never contradict the
+      // visible names — if the array is somehow longer, the larger number wins, and the
+      // "ve N kişi daha" remainder is derived from the same headline so the row always adds up.
+      const effectiveTotal = Math.max(event.giftCount, recipients.length);
+      body.appendChild(document.createTextNode(' '));
+      const count = document.createElement('span');
+      count.className = `${EVENT_ROW_CLASS}__count`;
+      count.textContent = String(effectiveTotal);
+      body.append(count, document.createTextNode(' kişiye abonelik hediye etti'));
+      if (recipients.length > 0) {
+        const preview = document.createElement('span');
+        preview.className = `${EVENT_ROW_CLASS}__recipients`;
+        // Every recipient name is attacker-controlled → textContent only (same discipline as
+        // the rest of this file). Returns the span so both the initial render and the
+        // click-to-expand path build names identically.
+        const makeRecipient = (name: string): HTMLSpanElement => {
+          const recipient = document.createElement('span');
+          recipient.className = `${EVENT_ROW_CLASS}__recipient`;
+          recipient.textContent = name;
+          return recipient;
+        };
+
+        const shown = recipients.slice(0, GIFT_RECIPIENTS_SHOWN_MAX);
+        shown.forEach((name, index) => {
+          if (index > 0) preview.appendChild(document.createTextNode(', '));
+          preview.appendChild(makeRecipient(name));
+        });
+
+        const hiddenKnown = recipients.slice(shown.length);
+        // Kick's count can exceed the number of names it actually sent us; those extra
+        // recipients are unnameable and stay as a plain trailing count.
+        const unknownRemainder = Math.max(0, effectiveTotal - recipients.length);
+
+        if (hiddenKnown.length > 0) {
+          // "ve N kişi daha" is a VISIBLE, click/Enter-activatable affordance that expands the
+          // remaining KNOWN names in place — unlike a hover title it works on touch and signals
+          // itself to a passing reader (owner's real goal: be ABLE to see who got them). A plain
+          // <span role=button> with our own gesture handler is the overlay's SPA-safe pattern:
+          // no href for Kick's client-side click router to hijack. One-shot expansion.
+          const more = document.createElement('span');
+          more.className = `${EVENT_ROW_CLASS}__more`;
+          more.setAttribute('role', 'button');
+          more.setAttribute('tabindex', '0');
+          more.textContent = ` ve ${effectiveTotal - shown.length} kişi daha`;
+          const expand = (): void => {
+            for (const name of hiddenKnown) {
+              preview.insertBefore(document.createTextNode(', '), more);
+              preview.insertBefore(makeRecipient(name), more);
+            }
+            if (unknownRemainder > 0) {
+              // Some recipients remain unnameable — collapse the trigger to an honest static count.
+              more.removeAttribute('role');
+              more.removeAttribute('tabindex');
+              more.className = '';
+              more.textContent = ` ve ${unknownRemainder} kişi daha`;
+            } else {
+              more.remove();
+            }
+          };
+          more.addEventListener('click', expand);
+          more.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              expand();
+            }
+          });
+          preview.appendChild(more);
+        } else if (unknownRemainder > 0) {
+          // All known names already shown, but the count is higher — nothing to expand.
+          preview.appendChild(document.createTextNode(` ve ${unknownRemainder} kişi daha`));
+        }
+
+        body.append(document.createTextNode(': '), preview);
+      }
+    }
   } else if (event.kind === 'kicks') {
     body.appendChild(document.createTextNode(' '));
     const count = document.createElement('span');

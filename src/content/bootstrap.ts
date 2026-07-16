@@ -149,7 +149,12 @@ export function createSystemEventCallbacks(
       enqueueOnce(createSystemEventMessage(
         `gift:${payload.chatroomId}:${encodeURIComponent(payload.correlationId)}`,
         payload.chatroomId,
-        { kind: 'gifted-subscription', username: payload.gifterUsername, giftCount: payload.giftCount },
+        {
+          kind: 'gifted-subscription',
+          username: payload.gifterUsername,
+          giftCount: payload.giftCount,
+          giftedUsernames: payload.giftedUsernames,
+        },
       ));
     },
     onKicksGifted: (payload) => {
@@ -384,7 +389,12 @@ function ensureStyles(): void {
     }
     #${OWN_LIST_ID} .kickflow-event-row__icon { flex: none; margin-right: 5px; }
     #${OWN_LIST_ID} .kickflow-event-row__username,
-    #${OWN_LIST_ID} .kickflow-event-row__count { font-weight: 700; color: inherit; }
+    #${OWN_LIST_ID} .kickflow-event-row__count,
+    #${OWN_LIST_ID} .kickflow-event-row__recipient { font-weight: 700; color: inherit; }
+    #${OWN_LIST_ID} .kickflow-event-row__more {
+      cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row__more:hover { opacity: 0.85; }
     #${OWN_LIST_ID} .kickflow-message__reply-context {
       display: flex; align-items: center; width: 100%; min-width: 0; margin-bottom: 4px;
       color: rgba(255,255,255,0.42); font-size: 11px; font-weight: 500;

@@ -85,19 +85,174 @@ describe('message-view safe rendering', () => {
     expect(renewal.textContent).toBe('⭐***REMOVED*** 5 ay abone oldu');
   });
 
-  it('renders a gifted-subscription event row with a safe username and count', () => {
+  it('names the single gift recipient with both usernames safe and no count capsule', () => {
     const row = buildMessageElement(message('', undefined, {
-      id: 'gift:1:***REMOVED***:1',
+      id: 'gift:1:single',
       type: 'gifted-subscription',
-      systemEvent: { kind: 'gifted-subscription', username: '***REMOVED***<script>', giftCount: 3 },
+      systemEvent: {
+        kind: 'gifted-subscription',
+        username: '***REMOVED***<script>',
+        giftCount: 1,
+        giftedUsernames: ['<img src=x onerror=alert(1)>'],
+      },
     }));
 
     expect(row.classList.contains('kickflow-event-row--gifted-subscription')).toBe(true);
     expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('🎁');
     expect(row.querySelector('.kickflow-event-row__username')?.textContent).toBe('***REMOVED***<script>');
-    expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('3');
-    expect(row.textContent).toBe('🎁***REMOVED***<script> 3 kişiye abonelik hediye etti');
+    expect(row.querySelector('.kickflow-event-row__recipient')?.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(row.textContent).toBe('🎁***REMOVED***<script>, <img src=x onerror=alert(1)> kullanıcısına abonelik hediye etti');
+    expect(row.querySelector('.kickflow-event-row__count')).toBeNull();
     expect(row.querySelector('script')).toBeNull();
+    expect(row.querySelector('img')).toBeNull();
+  });
+
+  it('names every recipient of a small bulk gift without a remainder or hover list', () => {
+    const row = buildMessageElement(message('', undefined, {
+      id: 'gift:1:small-bulk',
+      type: 'gifted-subscription',
+      systemEvent: {
+        kind: 'gifted-subscription',
+        username: '***REMOVED***',
+        giftCount: 3,
+        giftedUsernames: ['***REMOVED***', '***REMOVED***', '***REMOVED***'],
+      },
+    }));
+
+    expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('3');
+    expect(row.textContent).toBe('🎁***REMOVED*** 3 kişiye abonelik hediye etti: ***REMOVED***, ***REMOVED***, ***REMOVED***');
+    expect(row.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
+  });
+
+  it('caps a large bulk gift at three names and expands the rest on click (no hover dependency)', () => {
+    // Real captured 10-recipient GiftedSubscriptionsEvent payload (2026-07-14).
+    const names = [
+      '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+    ];
+    const row = buildMessageElement(message('', undefined, {
+      id: 'gift:1:bulk',
+      type: 'gifted-subscription',
+      systemEvent: { kind: 'gifted-subscription', username: '***REMOVED***', giftCount: 10, giftedUsernames: names },
+    }));
+
+    expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('10');
+    expect(row.textContent).toBe('🎁***REMOVED*** 10 kişiye abonelik hediye etti: ***REMOVED***, ***REMOVED***, ***REMOVED*** ve 7 kişi daha');
+    expect(row.querySelectorAll('.kickflow-event-row__recipient')).toHaveLength(3);
+    // The full list is NOT hidden in a hover-only title; it lives behind a visible affordance.
+    expect(row.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
+    const more = row.querySelector<HTMLElement>('.kickflow-event-row__more');
+    expect(more?.getAttribute('role')).toBe('button');
+    expect(more?.getAttribute('tabindex')).toBe('0');
+
+    // Click reveals every remaining KNOWN name in place; the one-shot trigger removes itself.
+    more!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(row.querySelectorAll('.kickflow-event-row__recipient')).toHaveLength(10);
+    expect(row.querySelector('.kickflow-event-row__more')).toBeNull();
+    expect(row.textContent).toBe(`🎁***REMOVED*** 10 kişiye abonelik hediye etti: ${names.join(', ')}`);
+  });
+
+  it('expands the bulk recipient list on Enter/Space for keyboard users', () => {
+    const names = ['one', 'two', 'three', 'four', 'five', 'six'];
+    const row = buildMessageElement(message('', undefined, {
+      id: 'gift:1:kbd',
+      type: 'gifted-subscription',
+      systemEvent: { kind: 'gifted-subscription', username: 'gifter', giftCount: 6, giftedUsernames: names },
+    }));
+    const more = row.querySelector<HTMLElement>('.kickflow-event-row__more');
+    more!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(row.querySelectorAll('.kickflow-event-row__recipient')).toHaveLength(6);
+    expect(row.querySelector('.kickflow-event-row__more')).toBeNull();
+  });
+
+  it('collapses the expand trigger to a static count when some recipients are unnameable', () => {
+    // Kick's count (20) exceeds the names it sent (5): clicking reveals the 2 hidden KNOWN names,
+    // then the trigger degrades to a plain, non-interactive remainder for the 15 unknown ones.
+    const row = buildMessageElement(message('', undefined, {
+      id: 'gift:1:mixed',
+      type: 'gifted-subscription',
+      systemEvent: {
+        kind: 'gifted-subscription',
+        username: 'gifter',
+        giftCount: 20,
+        giftedUsernames: ['one', 'two', 'three', 'four', 'five'],
+      },
+    }));
+    expect(row.textContent).toBe('🎁gifter 20 kişiye abonelik hediye etti: one, two, three ve 17 kişi daha');
+    const more = row.querySelector<HTMLElement>('.kickflow-event-row__more');
+    more!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(row.querySelectorAll('.kickflow-event-row__recipient')).toHaveLength(5);
+    // Trigger is now inert text — no button role, and it left the __more class.
+    const inert = row.querySelector('.kickflow-event-row__more');
+    expect(inert).toBeNull();
+    expect(row.textContent).toBe('🎁gifter 20 kişiye abonelik hediye etti: one, two, three, four, five ve 15 kişi daha');
+  });
+
+  it('never shows a number that contradicts the visible names when count and names disagree', () => {
+    // Kick's total ahead of the names: headline keeps the total, remainder = total - shown,
+    // and no hover list exists because no known name is hidden.
+    const countAhead = buildMessageElement(message('', undefined, {
+      id: 'gift:1:count-ahead',
+      type: 'gifted-subscription',
+      systemEvent: {
+        kind: 'gifted-subscription',
+        username: 'gifter',
+        giftCount: 5,
+        giftedUsernames: ['one', 'two', 'three'],
+      },
+    }));
+    expect(countAhead.textContent).toBe('🎁gifter 5 kişiye abonelik hediye etti: one, two, three ve 2 kişi daha');
+    expect(countAhead.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
+
+    // Fewer names than the cap: the remainder still reconciles against the headline total.
+    const oneNamed = buildMessageElement(message('', undefined, {
+      id: 'gift:1:one-named',
+      type: 'gifted-subscription',
+      systemEvent: { kind: 'gifted-subscription', username: 'gifter', giftCount: 3, giftedUsernames: ['one'] },
+    }));
+    expect(oneNamed.textContent).toBe('🎁gifter 3 kişiye abonelik hediye etti: one ve 2 kişi daha');
+
+    // More names than Kick's stated total: five real names outrank a smaller number.
+    const namesAhead = buildMessageElement(message('', undefined, {
+      id: 'gift:1:names-ahead',
+      type: 'gifted-subscription',
+      systemEvent: {
+        kind: 'gifted-subscription',
+        username: 'gifter',
+        giftCount: 2,
+        giftedUsernames: ['one', 'two', 'three', 'four', 'five'],
+      },
+    }));
+    expect(namesAhead.querySelector('.kickflow-event-row__count')?.textContent).toBe('5');
+    expect(namesAhead.textContent).toBe('🎁gifter 5 kişiye abonelik hediye etti: one, two, three ve 2 kişi daha');
+    // The two names beyond the cap are reachable by clicking the visible trigger, not via hover.
+    expect(namesAhead.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
+    namesAhead.querySelector<HTMLElement>('.kickflow-event-row__more')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(namesAhead.textContent).toBe('🎁gifter 5 kişiye abonelik hediye etti: one, two, three, four, five');
+  });
+
+  it('falls back to the count-only gift row when recipients are empty or missing', () => {
+    const empty = buildMessageElement(message('', undefined, {
+      id: 'gift:1:empty',
+      type: 'gifted-subscription',
+      systemEvent: { kind: 'gifted-subscription', username: '***REMOVED***', giftCount: 3, giftedUsernames: [] },
+    }));
+    expect(empty.textContent).toBe('🎁***REMOVED*** 3 kişiye abonelik hediye etti');
+    expect(empty.querySelector('.kickflow-event-row__recipients')).toBeNull();
+
+    // A malformed producer (missing array) must degrade to the same row, never crash.
+    const missing = buildMessageElement(message('', undefined, {
+      id: 'gift:1:missing',
+      type: 'gifted-subscription',
+      systemEvent: {
+        kind: 'gifted-subscription',
+        username: '***REMOVED***',
+        giftCount: 3,
+        giftedUsernames: undefined as unknown as string[],
+      },
+    }));
+    expect(missing.textContent).toBe('🎁***REMOVED*** 3 kişiye abonelik hediye etti');
   });
 
   it('renders a kicks row with safe user text, grouped amount, and optional fields', () => {

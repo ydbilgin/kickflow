@@ -58,7 +58,7 @@ export interface ReplyContext {
  * the normal store/render queue so ordering, trimming, scroll-follow, and id de-duping stay shared. */
 export type ChatSystemEvent =
   | { kind: 'subscription'; username: string; months: number }
-  | { kind: 'gifted-subscription'; username: string; giftCount: number }
+  | { kind: 'gifted-subscription'; username: string; giftCount: number; giftedUsernames: string[] }
   | { kind: 'kicks'; username: string; amount: number; giftName: string | null; senderMessage: string | null }
   | { kind: 'host'; username: string; numberViewers: number; optionalMessage: string | null }
   | { kind: 'mode'; mode: ChatroomModeKey; text: string };

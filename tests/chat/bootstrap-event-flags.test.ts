@@ -65,13 +65,14 @@ describe('bootstrap event display flags', () => {
     featureFlags.showGiftedSubs = true;
     featureFlags.showHostRaid = true;
     callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 5 });
+    const capturedRecipients = [
+      '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+    ];
     callbacks.onGiftedSubscriptions({
       chatroomId: 15250312,
       correlationId: '340002752601361',
-      giftedUsernames: [
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-      ],
+      giftedUsernames: capturedRecipients,
       gifterUsername: '***REMOVED***',
       giftCount: 10,
     });
@@ -82,10 +83,12 @@ describe('bootstrap event display flags', () => {
       'gifted-subscription',
       'host',
     ]);
+    // The recipient list must survive the payload → system-event conversion (it used to be dropped).
     expect(store.getMessagesInArrivalOrder()[1]?.systemEvent).toEqual({
       kind: 'gifted-subscription',
       username: '***REMOVED***',
       giftCount: 10,
+      giftedUsernames: capturedRecipients,
     });
   });
 
