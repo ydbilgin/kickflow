@@ -225,7 +225,7 @@ describe('native-bar mounting', () => {
     secondLifecycle.dispose();
   });
 
-  it('reuses cached groups and shares one observer pair across all registrations', async () => {
+  it('reuses cached groups and shares one observer set across all registrations', async () => {
     vi.useFakeTimers();
     const bar = setupPlayerBar();
     const lifecycle = new Lifecycle();
@@ -244,7 +244,9 @@ describe('native-bar mounting', () => {
 
     const mounted = ids.map((id, index) => mountIntoControlBar(lifecycle, id, builds[index]));
 
-    expect(observe).toHaveBeenCalledTimes(2);
+    // One manager owns three shared observers: wrapper (children), doc rebind, and the
+    // theatre-attribute watch — set up once, not per registration.
+    expect(observe).toHaveBeenCalledTimes(3);
     expect(Array.from(bar.children).map((child) => child.id || child.textContent)).toEqual([
       'LIVE',
       ...ids,

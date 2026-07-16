@@ -68,7 +68,17 @@ function resolutionScore(text: string): number {
   return m ? parseInt(m[1], 10) * 10 + (m[2] ? 1 : 0) : -1;
 }
 
+function isQualityMenuOpen(): boolean {
+  return document.querySelector('[role="menuitemradio"]') !== null;
+}
+
+/** No-ops when no quality menu is actually open. Every call site here calls this
+ * unconditionally (including paths where the gear press may not have opened anything, e.g.
+ * a wrong-button press or an early disposal before the menu rendered) — without this guard,
+ * dispatch fires a synthetic Escape on `document` with no menu to close, which is
+ * indistinguishable from the user's own Escape to any of Kick's own document-level listeners. */
 function closeMenu(): void {
+  if (!isQualityMenuOpen()) return;
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 }
 

@@ -33,6 +33,12 @@ class NativeBarMountManager {
   private readonly controls = new Map<string, RegisteredControl>();
   private readonly wrapperObserver = new MutationObserver(() => this.handleMutation());
   private readonly wrapperRebindObserver = new MutationObserver(() => this.handleMutation());
+  // Kick's theatre-mode layout (fixed positioning + a calc(100vw - var(--chat-width)) bar
+  // width, confirmed live 2026-07-15) is driven entirely by Tailwind's `group-data-[theatre=true]`
+  // variant against a `[data-theatre]` ancestor: the bar's own class/style attributes never
+  // change, only that ancestor's `data-theatre` value does. childList-only observation above
+  // never sees this, so it needs its own attribute watch scoped to just that one attribute.
+  private readonly theatreAttributeObserver = new MutationObserver(() => this.handleMutation());
   private observedWrapper: HTMLElement | null = null;
   private trailingEnsureTimer: number | null = null;
   private retryTimer: number | null = null;
@@ -42,6 +48,12 @@ class NativeBarMountManager {
   constructor(private readonly lifecycle: Lifecycle) {
     this.rebindWrapper();
     this.wrapperRebindObserver.observe(document.body, { childList: true, subtree: true });
+    this.theatreAttributeObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['data-theatre'],
+      subtree: true,
+    });
+    lifecycle.addEventListener(document, 'fullscreenchange', () => this.handleMutation());
     lifecycle.add(() => this.dispose());
   }
 
@@ -176,6 +188,7 @@ class NativeBarMountManager {
     this.disposed = true;
     this.wrapperObserver.disconnect();
     this.wrapperRebindObserver.disconnect();
+    this.theatreAttributeObserver.disconnect();
     if (this.trailingEnsureTimer !== null) window.clearTimeout(this.trailingEnsureTimer);
     this.clearRetry();
 
