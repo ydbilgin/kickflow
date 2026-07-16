@@ -54,6 +54,18 @@ describe('message-view safe rendering', () => {
     expect(parent.querySelector('script')).toBeNull();
   });
 
+  it('gives long link text a <wbr> break hint after every slash, so a narrow column wraps at a path boundary instead of mid-domain', () => {
+    const parent = document.createElement('span');
+
+    appendParsedContent(parent, 'https://x.com/onlydramaX/status/2077813518233940154');
+
+    const anchor = parent.querySelector<HTMLAnchorElement>('a.kickflow-link');
+    expect(anchor?.href).toBe('https://x.com/onlydramaX/status/2077813518233940154');
+    expect(anchor?.textContent).toBe('https://x.com/onlydramaX/status/2077813518233940154');
+    expect(anchor?.querySelectorAll('wbr').length).toBeGreaterThan(0);
+    expect(anchor?.innerHTML).not.toContain('<script');
+  });
+
   it('uses the parsed emote name as safe alt and hover text in a regular Mode-A row', () => {
     const emoteName = '<svg onload=alert(1)>';
     const row = buildMessageElement(message('alice', undefined, {

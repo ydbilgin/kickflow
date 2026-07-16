@@ -69,6 +69,19 @@ function appendEmote(parent: HTMLElement, id: string, name: string, rawToken: st
   parent.appendChild(img);
 }
 
+// Long URLs have no spaces, so the chat panel's `overflow-wrap: anywhere` (needed to keep any
+// long unbroken token from overflowing the narrow column) breaks them at an arbitrary character —
+// e.g. "https://x.com/..." mid-domain as "x." / "com", which reads as two broken links instead of
+// one long one. <wbr> after every '/' gives the browser a preferred break point at path-segment
+// boundaries, so wrapping (when the line is too narrow) lands somewhere legible instead.
+function appendUrlTextWithBreakHints(parent: HTMLElement, url: string): void {
+  const segments = url.split(/(?<=\/)/);
+  segments.forEach((segment, index) => {
+    parent.appendChild(document.createTextNode(segment));
+    if (index < segments.length - 1) parent.appendChild(document.createElement('wbr'));
+  });
+}
+
 function appendLink(parent: HTMLElement, rawUrl: string): void {
   const url = isAllowedLinkUrl(rawUrl);
   if (!url) {
@@ -77,7 +90,7 @@ function appendLink(parent: HTMLElement, rawUrl: string): void {
   }
   const anchor = document.createElement('a');
   anchor.href = url.href;
-  anchor.textContent = rawUrl;
+  appendUrlTextWithBreakHints(anchor, rawUrl);
   anchor.target = '_blank';
   anchor.rel = 'noopener noreferrer';
   anchor.className = 'kickflow-link';
