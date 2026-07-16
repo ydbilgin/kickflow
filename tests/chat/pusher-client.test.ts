@@ -293,9 +293,9 @@ describe('pusher-client normalizers', () => {
   it('normalizes live-captured subscription payloads and rejects malformed fields', () => {
     expect(normalizeSubscriptionPayload({
       chatroom_id: 15250312,
-      username: '***REMOVED***',
+      username: 'violet_demo',
       months: 5,
-    })).toEqual({ chatroomId: 15250312, username: '***REMOVED***', months: 5 });
+    })).toEqual({ chatroomId: 15250312, username: 'violet_demo', months: 5 });
 
     expect(normalizeSubscriptionPayload({ chatroom_id: 1, username: 'user', months: '5' })).toBeNull();
     expect(normalizeSubscriptionPayload({ chatroom_id: 1, username: '', months: 1 })).toBeNull();
@@ -323,10 +323,10 @@ describe('pusher-client normalizers', () => {
       chatroom_id: 5389830,
       correlation_id: '340002752601361',
       gifted_usernames: [
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        'nova_88', 'ayla_k', 'demir42', 'mercan_x', 'luna_sade',
+        'atlas_fake', 'poyraz_demo', 'kiraz_test', 'deniz_mock', 'umut_sample',
       ],
-      gifter_username: '***REMOVED***',
+      gifter_username: 'cozy_mert',
       gifted_total: 10,
       gifter_total: 927,
       chunk_details: null,
@@ -334,10 +334,10 @@ describe('pusher-client normalizers', () => {
       chatroomId: 5389830,
       correlationId: '340002752601361',
       giftedUsernames: [
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        'nova_88', 'ayla_k', 'demir42', 'mercan_x', 'luna_sade',
+        'atlas_fake', 'poyraz_demo', 'kiraz_test', 'deniz_mock', 'umut_sample',
       ],
-      gifterUsername: '***REMOVED***',
+      gifterUsername: 'cozy_mert',
       giftCount: 10,
     });
 
@@ -914,10 +914,10 @@ describe('PusherClient lifecycle', () => {
           chatroom_id: 15250312,
           correlation_id: '340002752601361',
           gifted_usernames: [
-            '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-            '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+            'nova_88', 'ayla_k', 'demir42', 'mercan_x', 'luna_sade',
+            'atlas_fake', 'poyraz_demo', 'kiraz_test', 'deniz_mock', 'umut_sample',
           ],
-          gifter_username: '***REMOVED***',
+          gifter_username: 'cozy_mert',
           gifted_total: 10,
           gifter_total: 927,
           chunk_details: null,
@@ -942,10 +942,10 @@ describe('PusherClient lifecycle', () => {
       chatroomId: 15250312,
       correlationId: '340002752601361',
       giftedUsernames: [
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        'nova_88', 'ayla_k', 'demir42', 'mercan_x', 'luna_sade',
+        'atlas_fake', 'poyraz_demo', 'kiraz_test', 'deniz_mock', 'umut_sample',
       ],
-      gifterUsername: '***REMOVED***',
+      gifterUsername: 'cozy_mert',
       giftCount: 10,
     });
     expect(onHost).toHaveBeenCalledOnce();

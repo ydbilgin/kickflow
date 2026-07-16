@@ -66,14 +66,14 @@ describe('bootstrap event display flags', () => {
     featureFlags.showHostRaid = true;
     callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 5 });
     const capturedRecipients = [
-      '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-      '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+      'nova_88', 'ayla_k', 'demir42', 'mercan_x', 'luna_sade',
+      'atlas_fake', 'poyraz_demo', 'kiraz_test', 'deniz_mock', 'umut_sample',
     ];
     callbacks.onGiftedSubscriptions({
       chatroomId: 15250312,
       correlationId: '340002752601361',
       giftedUsernames: capturedRecipients,
-      gifterUsername: '***REMOVED***',
+      gifterUsername: 'cozy_mert',
       giftCount: 10,
     });
     callbacks.onHost({ chatroomId: 15250312, hostUsername: 'raider', numberViewers: 16, optionalMessage: null });
@@ -86,7 +86,7 @@ describe('bootstrap event display flags', () => {
     // The recipient list must survive the payload → system-event conversion (it used to be dropped).
     expect(store.getMessagesInArrivalOrder()[1]?.systemEvent).toEqual({
       kind: 'gifted-subscription',
-      username: '***REMOVED***',
+      username: 'cozy_mert',
       giftCount: 10,
       giftedUsernames: capturedRecipients,
     });
@@ -102,13 +102,13 @@ describe('bootstrap event display flags', () => {
       chatroomId: 5389830,
       correlationId: '340002752602494',
       giftedUsernames: [
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
-        '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***', '***REMOVED***',
+        'selin_demo', 'arda_fake', 'masal_test', 'efe_mock', 'duru_sample',
+        'can_demo', 'zeynep_fake', 'emir_test', 'ada_mock', 'bora_sample', 'nehir_demo',
+        'kerem_fake', 'ilay_test', 'mira_mock', 'alp_sample', 'ece_demo', 'kaan_fake',
+        'lara_test', 'mete_mock', 'naz_sample', 'baran_demo', 'peri_fake', 'oyku_test',
+        'oyku_test', 'tuna_mock', 'tuna_mock', 'sena_sample', 'sena_sample',
       ],
-      gifterUsername: '***REMOVED***',
+      gifterUsername: 'cozy_mert',
       giftCount: 28,
     };
 
