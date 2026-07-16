@@ -1,78 +1,68 @@
 # KickFlow
 
-A personal-use **Chrome (Manifest V3) extension for [Kick.com](https://kick.com)** that
-preserves moderated chat messages and adds a set of player quality-of-life controls the
-native site doesn't offer.
-
-> Not published to the Chrome Web Store — it runs as an unpacked extension (see
-> [Install](#install)). It only touches `kick.com` and requests just `storage` and
-> `activeTab`.
+A personal-use Chrome MV3 companion for Kick.com that keeps moderated chat readable and adds practical live-player controls.
 
 ## Features
 
-### Chat
-- **Ban / delete preservation** — when a message is removed or a user is banned, KickFlow
-  keeps the message visible instead of letting it vanish, and collects everything removed
-  during your session into a **"Kaldırılanlar"** (Removed) log with the moderator, action,
-  and timestamp.
-- **Chat events in the feed** — subscriptions, gifted subs, host/raid, pinned-message
-  banner, and chat-mode changes (slow / followers / subs / emote-only) are rendered as
-  tidy event rows, each individually toggleable.
-- **Clickable usernames** — jump to any chatter's channel (new-tab / middle-click aware),
-  including on preserved and removed rows.
-- **Sticky pin banner** — mirrors Kick's pinned message with dismiss / minimize controls.
+- **Preserved chat context.** Banned, timed-out, and deleted messages remain visible with their original text, moderation state, moderator attribution when available, and a session-scoped **Kaldırılanlar** (Removed) log.
+- **Richer chat events.** Subscriptions, gifted subs, Kicks, host/raid activity, and chat-mode changes appear as compact event rows. Kick's native pinned-message and poll stack remains visible alongside them.
+- **Gift recipient names.** A single gift names its recipient inline. Bulk gifts show three names plus a clickable **ve N kişi daha** control that expands the remaining known recipients in place.
+- **Player quality of life.** KickFlow selects the highest available quality, catches up to live at a flat 1.5×, adds ±10-second seek controls, exposes a **CANLI** go-live button, supports frame capture and playback-speed controls, and offers opt-in auto-theater mode.
+- **Settings where you need them.** Navbar and chat-footer buttons open a two-pane Turkish dashboard for **Kaldırılanlar / Genel / Sohbet / Oynatıcı / Kısayollar / Hakkında**, with per-feature switches and rebindable hotkeys.
+- **Fresh sidebar state.** Followed and recommended channel live status and viewer counts refresh without a full page reload.
 
-### Player
-- **Fixed highest quality** — locks the stream to top resolution so it stops dropping.
-- **Live catch-up** — smoothly plays at 1.5× to close the gap to the live edge, with a
-  live/behind indicator and a one-click **CANLI** (go-live) button.
-- **Seek controls** — `⏪10 / 10⏩` buttons plus arrow-key rewind/forward within Kick's
-  available buffer.
-- **Screenshot** the current frame, **speed controls**, and an opt-in **Auto Theater** mode.
+### Moderation context and system events
 
-### General
-- **Settings dashboard** — an in-Kick panel (opened from the navbar or the chat footer)
-  where every feature can be turned on/off and hotkeys rebound.
-- **Sidebar refresh** — keeps the followed & recommended channel lists' viewer counts and
-  live status current without a page reload.
+![Offline component render showing preserved moderation rows and KickFlow system events](docs/screenshots/chat-preservation-and-events.png)
 
-## Install
+Deleted and timed-out messages retain their original text; the event feed uses the same production renderer and styles.
 
-Requires [Node.js](https://nodejs.org) 18+.
+### Gift recipients: collapsed and expanded
+
+![Offline component render showing single and bulk gift recipients in the collapsed state](docs/screenshots/gift-recipients-collapsed.png)
+
+![Offline component render showing a bulk gift after all known recipients are expanded](docs/screenshots/gift-recipients-expanded.png)
+
+These screenshots were generated in headless Chromium from the real TypeScript component modules and CSS, using offline fixture data—no Kick page or account session was opened.
+
+<!-- TODO: owner to add a live screenshot of the player control bar -->
+
+## Install (unpacked)
+
+### Release build
+
+1. Download [`kickflow-v0.2.0.zip`](https://github.com/ydbilgin/kickflow/releases/download/v0.2.0/kickflow-v0.2.0.zip) and extract it.
+2. Open `chrome://extensions` in Chrome and enable **Developer mode**.
+3. Choose **Load unpacked** and select the extracted folder containing `manifest.json` and `dist/`.
+
+### Build from source
+
+Requires Node.js and npm.
 
 ```bash
 npm install
-npm run build      # type-checks, then bundles to dist/
+npm run build
 ```
 
-Then load it in Chrome:
+Then open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select this repository's root folder. Re-run `npm run build` and reload the extension after source changes.
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode** (top-right).
-3. Click **Load unpacked** and select this project's root folder (the one with
-   `manifest.json`).
-4. Open [kick.com](https://kick.com) — the KickFlow button appears in the navbar and the
-   chat footer.
+## Hotkeys
 
-Re-run `npm run build` after pulling changes, then hit the reload icon on the extension
-card.
+Defaults are enabled and can be rebound or disabled from **Kısayollar**:
 
-## Development
+| Action | Default |
+| --- | --- |
+| Seek back 10 seconds | `←` |
+| Seek forward 10 seconds | `→` |
+| Capture the current frame | `S` |
+| Return to live | `L` |
 
-```bash
-npm run typecheck   # tsc --noEmit
-npm test            # vitest run
-npm run test:watch  # vitest (watch mode)
-npm run build       # typecheck + esbuild bundle to dist/
-```
+Hotkeys are ignored while typing in an input or editor.
 
-- Source lives in `src/` (TypeScript, bundled with esbuild via `build.mjs`).
-- Content runs in two worlds: `dist/content.js` (isolated) and `dist/mainworld.js` (MAIN,
-  for the parts that need page-level access).
-- Tests are under `tests/` and run on jsdom with Vitest.
+## Tech
 
-## Notes
+Chrome Manifest V3 · TypeScript · esbuild · Vitest + jsdom
 
-- Personal project — provided as-is, no warranty. It depends on Kick's DOM/APIs and may
-  need updates when the site changes.
-- Not affiliated with Kick.
+## Status
+
+KickFlow is a personal project, provided as-is and not published on the Chrome Web Store. It depends on Kick's DOM and public event interfaces, so site changes may require updates. Not affiliated with Kick.

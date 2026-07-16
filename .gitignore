@@ -22,5 +22,8 @@ output/
 
 # Internal dev-only working notes — kept LOCAL, never published (not user-facing).
 CURRENT_STATUS.md
-docs/
+docs/*
+!docs/screenshots/
+docs/screenshots/*
+!docs/screenshots/*.png
 *.zip
