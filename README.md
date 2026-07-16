@@ -1,93 +1,122 @@
 # KickFlow
 
-KickFlow is a personal-use Chrome extension for Kick.com. It keeps moderated chat understandable, turns important channel activity into readable rows, and adds practical controls to the live player without replacing Kick's own interface.
+KickFlow is a Chrome Manifest V3 extension for Kick.com. It preserves moderated chat context, presents channel events as readable rows, and adds practical controls to the native live player.
 
-The project is deliberately small and local-first: Chrome Manifest V3, TypeScript, no backend, and no account automation.
+English is the default interface language. The General settings tab includes an **EN / TR** selector, and switching it updates the open dashboard immediately. Newly rendered chat and player content uses the selected language.
 
-## Chat context that survives moderation
+KickFlow has no backend and does not automate accounts. Session chat history stays in memory, while preferences such as language, feature flags, and hotkeys use Chrome extension storage.
 
-KickFlow records chat messages for the active session so a ban, timeout, or moderator deletion does not erase the conversation around it.
+## Preserved chat and moderation context
 
-- Deleted messages keep their original text, a **SİLİNDİ** state, and moderator attribution when the event provides it.
-- Banned and timed-out users' recent messages stay in context, including duration and moderator metadata when available.
-- Native-chat mode restores removed rows inline. KickFlow-chat mode renders the preserved state in its own list.
-- The **Kaldırılanlar** tab is a session-scoped moderation ledger for banned, timed-out, and deleted messages.
+KickFlow keeps the conversation understandable when moderation removes content:
 
-![Preserved chat messages and system-event rows](docs/screenshots/chat-preservation-and-events.png)
+- deleted messages retain their original text with a **DELETED** marker and moderator attribution when available;
+- permanent bans preserve recent messages with a **BANNED** marker;
+- timeouts preserve recent messages with a duration such as **TIMEOUT 10M**;
+- native-chat mode restores removed messages inline;
+- KickFlow-chat mode renders its own safe message list;
+- the Removed tab provides a session-scoped ledger of deleted, timed-out, and banned messages.
 
-_Offline component render using the production message renderer and CSS with synthetic data._
+![Preserved messages and channel events in English](docs/screenshots/chat-preservation-and-events.png)
 
-![Kaldırılanlar moderation ledger](docs/screenshots/settings-removed.png)
+_Offline component render of the production message renderer and CSS. All messages and identities are synthetic._
 
-_Offline component render of the production settings panel with synthetic moderation data._
+## Subscriptions, gifts, Kicks, hosts, and mode changes
 
-## System events without the noise
+Compact system rows cover:
 
-The chat renderer adds compact, separately styled rows for:
-
-- new and renewing subscriptions;
+- new subscriptions and renewals with month counts;
 - single and bulk gifted subscriptions;
-- paid Kicks gifts, including amount, gift name, and sender note when present;
+- Kicks gifts with grouped amounts, gift names, and sender notes;
 - host and raid activity with viewer counts;
-- chat-mode changes such as slow mode.
+- slow, followers-only, subscribers-only, and emotes-only mode changes.
 
-KickFlow also reserves space for Kick's native event stack, so pinned messages, polls, goals, and pinned Kicks remain visible and interactive rather than being covered by the custom chat surface. Poll display is currently native passthrough, not a reimplemented poll UI.
+Bulk gifts show the first three known recipients and an **and N more** control. Selecting it expands every known recipient in place. Usernames and other event values are inserted as text, never as HTML.
 
-<!-- TODO: owner to add a live screenshot of Kick's native pinned-message and poll stack alongside KickFlow chat. -->
+![Gift recipients before expansion](docs/screenshots/gift-recipients-collapsed.png)
 
-## Gift recipients
+_Offline component render of the production collapsed-gift row with synthetic identities._
 
-A single gifted subscription names its recipient inline. Bulk gifts show the first three known recipients and a visible **ve N kişi daha** control; selecting it expands the complete known list in place. Recipient text is inserted safely as text, not HTML.
+![Gift recipients after expansion](docs/screenshots/gift-recipients-expanded.png)
 
-![Single and bulk gift recipients in the collapsed state](docs/screenshots/gift-recipients-collapsed.png)
+_Offline component render of the same production row after expansion, using synthetic identities._
 
-_Offline component render using production code and synthetic usernames, collapsed state._
+KickFlow also preserves space for Kick's native event stack so native pinned messages, polls, goals, and pinned Kicks remain visible and interactive. Polls are native passthrough, not a reimplemented poll UI.
 
-![Bulk gift recipients in the expanded state](docs/screenshots/gift-recipients-expanded.png)
+<!-- TODO: owner live screenshot of Kick's native pinned-message and poll stack beside KickFlow chat -->
 
-_Offline component render using production code and synthetic usernames, expanded state._
+## Safe chat rendering and user cards
 
-## Live-player tools
+The custom message renderer supports Kick emotes, mentions, web links, replies, role badges, subscriber badges, and user colors. It validates image and link destinations, renders untrusted values through DOM text APIs, and opens same-origin links without letting Kick's page router replace the current view.
 
-KickFlow mounts one compact control cluster directly into Kick's native player bar:
+Selecting a username opens a draggable profile card with the user's relationship details, badges, follower count, profile metadata, and a safe new-tab link. Middle-click and modified-click profile navigation are supported.
 
-- **Fixed highest quality:** opens Kick's own quality menu and selects the highest actually available resolution, excluding Auto and login-gated choices. It retries after media loads and safely does nothing when the verified menu controls are unavailable.
-- **1.5× live catch-up:** temporarily accelerates playback when the stream falls behind and returns to 1× near the live edge.
-- **10-second seek:** inline back/forward buttons and rebindable arrow-key actions share the same DVR-safe clamping. Holding an arrow repeats at a throttled rate for longer seeks.
-- **CANLI:** shows the live-edge state or current delay and returns the player to live.
-- **Frame capture:** saves the current video frame as a PNG.
-- **Speed control:** switches between automatic catch-up and manual rates from 0.25× to 3×, with a buffer-safety fallback.
-- **Auto-theater:** optionally enters Kick's native theater layout once per media load without fighting a later manual exit.
+## Live player tools
 
-![KickFlow controls mounted into a synthetic native player bar](docs/screenshots/player-controls.png)
+KickFlow mounts its controls directly into Kick's native player bar:
 
-_Offline component render of the real seek, live-catch-up, speed, and screenshot modules with production CSS. The synthetic stream is 50 seconds behind, so automatic catch-up is visibly running at 1.5×._
+- **10-second seek:** back and forward buttons share DVR-safe bounds with the rebindable arrow-key actions. Holding an arrow repeats at a controlled rate.
+- **LIVE and catch-up:** the live button shows how far playback is behind, returns to the live edge, temporarily uses 1.5x playback for catch-up, and returns to 1x near live.
+- **Highest quality:** selects the highest genuinely available native quality while excluding Auto and unavailable login-gated options.
+- **Speed controls:** offers automatic mode and manual speeds from 0.25x to 3x, with a buffer-pressure fallback.
+- **Screenshot:** saves the current decoded video frame as a PNG.
+- **Automatic theater mode:** enters Kick's native theater layout once per media load without overriding a later manual exit.
 
-## Settings dashboard
+![KickFlow controls in an offline synthetic player bar](docs/screenshots/player-controls.png)
 
-Navbar and chat-footer entry points open the same two-pane dashboard. Its tabs are **Genel**, **Kaldırılanlar**, **Sohbet**, **Oynatıcı**, **Kısayollar**, and **Hakkında**.
+_Offline component render of the real seek, live catch-up, speed, and screenshot modules with production CSS. The synthetic stream is 50 seconds behind, so LIVE and 1.5x catch-up are visible._
 
-- **Genel** shows channel/session diagnostics and selects native or KickFlow chat rendering.
-- **Sohbet** controls deleted-message preservation, inline ban rows, subscriptions, gifted subscriptions, Kicks, host/raid events, mode changes, and sidebar refresh.
-- **Oynatıcı** controls auto-theater, seek buttons, live catch-up, highest quality, screenshots, and speed controls.
-- **Kısayollar** enables, disables, and rebinds each action immediately. It prevents duplicate bindings and warns when a key overlaps with a Kick-native shortcut.
-- **Hakkında** reports the extension version and platform.
+## Settings dashboard, every screen
 
-![Chat feature toggles](docs/screenshots/settings-chat.png)
+The navbar and chat-footer entry points open one shared, keyboard-accessible dashboard. Escape closes it, focus stays inside while open, and settings apply immediately.
 
-_Offline component render of the production **Sohbet** tab._
+### General
 
-![Player feature toggles](docs/screenshots/settings-player.png)
+General shows live session diagnostics, selects native or KickFlow chat, and contains the EN / TR language selector. English is selected by default.
 
-_Offline component render of the production **Oynatıcı** tab._
+![General settings with the English language selected](docs/screenshots/settings-general.png)
 
-![Rebindable hotkeys](docs/screenshots/settings-hotkeys.png)
+_Offline component render of the production General tab with synthetic status data._
 
-_Offline component render of the production **Kısayollar** tab and real default bindings._
+### Removed
+
+Removed lists preserved moderation events newest first with the original message, action type, duration, and moderator when known.
+
+![Removed-message moderation ledger](docs/screenshots/settings-removed.png)
+
+_Offline component render of the production Removed tab with synthetic moderation data and identities._
+
+### Chat
+
+Chat controls deleted-message preservation, inline bans, subscriptions, gifted subscriptions, Kicks, host and raid events, mode changes, and sidebar refresh.
+
+![Chat feature settings](docs/screenshots/settings-chat.png)
+
+_Offline component render of the production Chat tab._
+
+### Player
+
+Player controls automatic theater mode, seek buttons, live catch-up, highest quality, screenshots, and speed controls.
+
+![Player feature settings](docs/screenshots/settings-player.png)
+
+_Offline component render of the production Player tab._
+
+### Shortcuts
+
+Shortcuts enables, disables, and rebinds each action live. Duplicate bindings are rejected, modifier-only keys are rejected, and potential conflicts with Kick's native shortcuts are reported.
+
+![Shortcut settings and default bindings](docs/screenshots/settings-hotkeys.png)
+
+_Offline component render of the production Shortcuts tab and its real default bindings._
+
+### About
+
+About reports the installed KickFlow version, extension platform, and application scope.
 
 ![About and version information](docs/screenshots/settings-about.png)
 
-_Offline component render of the production **Hakkında** tab, version 0.2.0._
+_Offline component render of the production About tab, version 0.2.0._
 
 ## Default hotkeys
 
@@ -98,17 +127,21 @@ _Offline component render of the production **Hakkında** tab, version 0.2.0._
 | Capture the current frame | `S` |
 | Return to live | `L` |
 
-Hotkeys are ignored while typing in inputs, text areas, selects, editable content, and chat editors. Ctrl/Command/Alt combinations are left alone.
+Hotkeys are ignored while typing in inputs, text areas, selects, editable content, and chat editors. Ctrl, Command, and Alt combinations are left to the browser and page.
 
 ## Sidebar refresh
 
-KickFlow periodically refreshes followed and recommended channel rows using Kick's channel endpoint. It updates live indicators and viewer counts, hides confirmed-offline rows reversibly, retries transient failures, and reapplies cached state when Kick re-renders the sidebar.
+KickFlow periodically refreshes followed and recommended channel rows through Kick's channel endpoint. It updates live indicators and viewer counts, reversibly hides confirmed-offline rows, retries transient failures, and reapplies cached state when Kick rerenders the sidebar.
 
-<!-- TODO: owner to add a live screenshot of refreshed followed/recommended channel states. -->
+<!-- TODO: owner live screenshot of refreshed followed and recommended channel states -->
 
-## Install as an unpacked extension
+## Popup and diagnostics
 
-### From the 0.2.0 release
+The extension popup mirrors the active tab's status, counters, chat and player feature switches, and hotkey controls. It uses the selected EN or TR language and reports when the active tab is not a supported Kick channel.
+
+## Installation
+
+### Release archive
 
 1. Download [`kickflow-v0.2.0.zip`](https://github.com/ydbilgin/kickflow/releases/download/v0.2.0/kickflow-v0.2.0.zip).
 2. Extract the archive.
@@ -117,7 +150,7 @@ KickFlow periodically refreshes followed and recommended channel rows using Kick
 
 ### From source
 
-Requires Node.js and npm.
+Node.js and npm are required.
 
 ```bash
 npm install
@@ -139,11 +172,11 @@ npm run build
 | Extension platform | Chrome Manifest V3 |
 | Application code | TypeScript 5.6 |
 | Bundling | esbuild 0.24 |
-| Tests | Vitest 4.1 + jsdom 29 |
+| Tests | Vitest 4.1 and jsdom 29 |
 | UI integration | Content scripts over Kick's native DOM and public event interfaces |
 
-The documentation screenshots are generated in headless Chromium from the real TypeScript modules and injected production CSS. All fixture identities are synthetic, and the screenshot harness never opens Kick.com.
+All documentation PNGs are generated in headless Chromium from real KickFlow TypeScript modules and production CSS. The harness is strictly offline, uses synthetic data, and never opens Kick.com.
 
 ## Scope and disclaimer
 
-KickFlow is a personal project provided as-is. It is not published on the Chrome Web Store and is not affiliated with, endorsed by, or sponsored by Kick. Because it integrates with Kick's DOM and public event/API surfaces, site changes may require maintenance.
+KickFlow is a personal project provided as-is. It is not published on the Chrome Web Store and is not affiliated with, endorsed by, or sponsored by Kick. Site DOM, API, or event changes may require maintenance.
