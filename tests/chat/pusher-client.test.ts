@@ -99,6 +99,7 @@ describe('pusher-client normalizers', () => {
               name: 'level',
               badge_type: 'global',
               image_url: 'https://ext.cdn.kick.com/chat/badges/33_x.png',
+              selected: true,
               metadata: { level: 33 },
               sort_order: 1,
             },
@@ -116,6 +117,7 @@ describe('pusher-client normalizers', () => {
         name: 'level',
         imageUrl: 'https://ext.cdn.kick.com/chat/badges/33_x.png',
         level: 33,
+        selected: true,
         sortOrder: 1,
       },
     ]);
@@ -152,6 +154,86 @@ describe('pusher-client normalizers', () => {
       replyToUserId: 50668393,
       threadParentId: '8957918e-cbad-48b2-a196-44a18740317a',
     });
+  });
+
+  it('parses the stringified metadata shape returned by Kick history', () => {
+    const message = normalizeMessage({
+      id: 'e007f390-e69b-4f60-bd0c-1e827ce6efc9',
+      chatroom_id: 25314085,
+      content: 'ATAM',
+      type: 'reply',
+      created_at: '2026-07-16T21:04:37+00:00',
+      sender: {
+        id: 27903497,
+        username: 'Prof_AmoLocus',
+        slug: 'prof-amolocus',
+        identity: {
+          color: '#FFFFFF',
+          badges: [{ type: 'subscriber', text: 'Subscriber', count: 4, sort_order: 9 }],
+          badges_v2: [{
+            name: 'level',
+            badge_type: 'global',
+            image_url: 'https://ext.cdn.kick.com/chat/badges/28_x.png',
+            metadata: { level: 28 },
+            selected: true,
+            sort_order: 1,
+          }],
+        },
+      },
+      metadata: JSON.stringify({
+        original_message: {
+          id: 'e70e63e9-dccd-4540-8fd5-8aab8bf588aa',
+          chatroom_id: 25314085,
+          content: 'MUSTAFA KEMAL ATATÜRK',
+          type: 'message',
+          sender: { id: 7424588, username: 'Alcheyham', slug: 'alcheyham' },
+        },
+        original_sender: { id: 7424588, username: 'Alcheyham', slug: 'alcheyham' },
+        message_ref: '1784235877280',
+      }),
+      thread_parent_id: 'e70e63e9-dccd-4540-8fd5-8aab8bf588aa',
+    });
+
+    expect(message?.replyContext).toEqual({
+      replyToUser: 'Alcheyham',
+      replyToText: 'MUSTAFA KEMAL ATATÜRK',
+      replyToMessageId: 'e70e63e9-dccd-4540-8fd5-8aab8bf588aa',
+      replyToUserId: 7424588,
+      threadParentId: 'e70e63e9-dccd-4540-8fd5-8aab8bf588aa',
+    });
+  });
+
+  it('threads real subscription-renewal celebration metadata into the message model', () => {
+    const message = normalizeMessage({
+      id: 'be911675-50cd-491d-84c4-cfda2502c277',
+      chatroom_id: 25951243,
+      content: 'Oooo 32. ay gelmiş',
+      type: 'celebration',
+      created_at: '2026-07-14T19:23:58+00:00',
+      sender: {
+        id: 28329441,
+        username: 'ErenCekic02',
+        slug: 'erencekic02',
+        identity: {
+          color: '#31D6C2',
+          badges: [{ type: 'subscriber', text: 'Subscriber', count: 32, sort_order: 9 }],
+          badges_v2: [{
+            name: 'level', badge_type: 'global', image_url: 'https://ext.cdn.kick.com/chat/badges/20_x.png',
+            metadata: { level: 20 }, selected: true, sort_order: 1,
+          }],
+        },
+      },
+      metadata: {
+        celebration: {
+          id: 'chceleb_01KXGZF48ZJBEZYQJRT9W5DMWC',
+          type: 'subscription_renewed',
+          total_months: 32,
+          created_at: '2026-07-14T18:50:42.335677Z',
+        },
+      },
+    });
+
+    expect(message?.celebration).toEqual({ type: 'subscription_renewed', totalMonths: 32 });
   });
 
   it('does not treat metadata.message_ref alone as reply context', () => {

@@ -228,6 +228,37 @@ describe('mergeIdentityBadges', () => {
     expect(merged.find((b) => b.type === 'founder')).toBeDefined();
     expect(merged.find((b) => b.name === 'GoldenK')).toBeDefined();
   });
+
+  it('suppresses only badges_v2 entries explicitly marked unselected', () => {
+    const merged = mergeIdentityBadges({
+      badges: [{ type: 'subscriber', count: 1, sortOrder: 9 }],
+      badgesV2: [
+        { name: 'level', level: 34, selected: false, sortOrder: 1 },
+        { name: 'GoldenK', selected: true, sortOrder: 2 },
+        { name: 'legacy-special', sortOrder: 3 },
+      ],
+    });
+
+    expect(merged.map((badge) => badge.type ?? badge.name)).toEqual([
+      'GoldenK',
+      'legacy-special',
+      'subscriber',
+    ]);
+  });
+
+  it('suppresses role badges explicitly marked inactive while keeping legacy entries', () => {
+    const merged = mergeIdentityBadges({
+      badges: [
+        { type: 'moderator', active: true, sortOrder: 4 },
+        { type: 'sub_gifter', count: 1, active: false, sortOrder: 8 },
+        { type: 'subscriber', count: 5, active: false, sortOrder: 9 },
+        { type: 'founder', sortOrder: 7 },
+      ],
+      badgesV2: [],
+    });
+
+    expect(merged.map((badge) => badge.type)).toEqual(['moderator', 'founder']);
+  });
 });
 
 describe('GLOBAL_CAPACITY vs Mode A paused DOM cap', () => {

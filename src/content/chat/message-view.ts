@@ -675,8 +675,72 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
   return row;
 }
 
+/** Kick's `type: celebration` renewal is a message card, not an ordinary chat line. Keep the
+ * sender-authored content on the standard safe parser while giving the renewal its native-like
+ * headline and identity line. */
+function buildCelebrationElement(message: ChatMessage): HTMLElement {
+  const celebration = message.celebration;
+  if (!celebration) throw new Error('buildCelebrationElement requires celebration metadata');
+
+  const row = document.createElement('div');
+  row.className = `${MESSAGE_CLASS} ${EVENT_ROW_CLASS} ${EVENT_ROW_CLASS}--celebration`;
+  row.dataset.messageId = message.id;
+
+  const icon = document.createElement('span');
+  icon.className = `${EVENT_ROW_CLASS}__icon`;
+  icon.textContent = '⭐';
+
+  const body = document.createElement('span');
+  body.className = `${EVENT_ROW_CLASS}__body`;
+
+  const headline = document.createElement('span');
+  headline.className = 'kickflow-celebration__headline';
+  const headlineUsername = document.createElement('span');
+  headlineUsername.className = `${EVENT_ROW_CLASS}__username`;
+  const displayName = message.sender.displayName || message.sender.username;
+  headlineUsername.textContent = displayName;
+  wireUsernameProfileLink(headlineUsername, message.sender, displayName, 'kickflow-message__username--link');
+  headlineUsername.style.color = message.sender.identity.color || 'inherit';
+  headline.appendChild(headlineUsername);
+
+  const localized = t('event.celebration.months', { n: celebration.totalMonths });
+  const rawCount = String(celebration.totalMonths);
+  const countIndex = localized.indexOf(rawCount);
+  headline.appendChild(document.createTextNode(' '));
+  if (countIndex < 0) {
+    headline.appendChild(document.createTextNode(localized));
+  } else {
+    headline.appendChild(document.createTextNode(localized.slice(0, countIndex)));
+    const count = document.createElement('span');
+    count.className = `${EVENT_ROW_CLASS}__count`;
+    count.textContent = rawCount;
+    headline.append(count, document.createTextNode(localized.slice(countIndex + rawCount.length)));
+  }
+
+  const messageLine = document.createElement('span');
+  messageLine.className = 'kickflow-celebration__message';
+  const badges = document.createElement('span');
+  badges.className = 'kickflow-message__badges';
+  appendBadges(badges, mergeIdentityBadges(message.sender.identity));
+  const author = document.createElement('span');
+  author.className = 'kickflow-celebration__author';
+  author.textContent = displayName;
+  wireUsernameProfileLink(author, message.sender, displayName, 'kickflow-message__username--link');
+  author.style.color = message.sender.identity.color || 'inherit';
+  const content = document.createElement('span');
+  content.className = 'kickflow-message__content';
+  appendParsedContent(content, message.content);
+  messageLine.append(badges, author, document.createTextNode(': '), content);
+
+  body.append(headline, messageLine);
+  row.append(icon, body);
+  applyPreservedMarking(row, message);
+  return row;
+}
+
 export function buildMessageElement(message: ChatMessage): HTMLElement {
   if (message.systemEvent) return buildSystemEventElement(message);
+  if (message.celebration?.type === 'subscription_renewed') return buildCelebrationElement(message);
 
   const row = document.createElement('div');
   row.className = MESSAGE_CLASS;

@@ -134,8 +134,9 @@ export type PusherReadinessFailure =
 /** Badge shape on the message payload wasn't pinned down to a strict schema in the
  * spec — normalize defensively, keeping only the fields message-view.ts needs and
  * dropping anything unrecognized rather than failing the whole message.
- * Covers both shapes Kick sends: role badges in `badges` ({type,text,count,sort_order}, no
- * image) and global/level badges in `badges_v2` ({name,image_url,metadata.level,sort_order}). */
+ * Covers both shapes Kick sends: role badges in `badges` ({type,text,count,active,sort_order}, no
+ * image) and global/level badges in `badges_v2`
+ * ({name,image_url,selected,metadata.level,sort_order}). */
 function normalizeBadge(raw: unknown): ChatBadge {
   if (!raw || typeof raw !== 'object') return {};
   const data = raw as Record<string, unknown>;
@@ -147,6 +148,8 @@ function normalizeBadge(raw: unknown): ChatBadge {
     count: typeof data.count === 'number' ? data.count : undefined,
     imageUrl: typeof data.image_url === 'string' ? data.image_url : undefined,
     level: meta && typeof meta.level === 'number' ? meta.level : undefined,
+    active: typeof data.active === 'boolean' ? data.active : undefined,
+    selected: typeof data.selected === 'boolean' ? data.selected : undefined,
     sortOrder: typeof data.sort_order === 'number' ? data.sort_order : undefined,
   };
 }
@@ -156,10 +159,26 @@ function normalizeBadges(raw: unknown): ChatBadge[] {
   return raw.map(normalizeBadge);
 }
 
-function extractReplyContext(raw: Record<string, unknown>): ReplyContext | undefined {
-  const metadata = raw.metadata;
-  if (!metadata || typeof metadata !== 'object') return undefined;
-  const md = metadata as Record<string, unknown>;
+function normalizeMetadata(raw: unknown): Record<string, unknown> | null {
+  let value = raw;
+  if (typeof value === 'string') {
+    if (!value.trim()) return null;
+    try {
+      value = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function extractReplyContext(
+  raw: Record<string, unknown>,
+  md: Record<string, unknown> | null,
+): ReplyContext | undefined {
+  if (!md) return undefined;
 
   const originalSender = md.original_sender;
   const originalMessage = md.original_message;
@@ -198,6 +217,20 @@ function extractReplyContext(raw: Record<string, unknown>): ReplyContext | undef
   };
 }
 
+function extractCelebrationContext(metadata: Record<string, unknown> | null): ChatMessage['celebration'] {
+  const raw = metadata?.celebration;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const celebration = raw as Record<string, unknown>;
+  const totalMonths = celebration.total_months;
+  if (
+    celebration.type !== 'subscription_renewed'
+    || typeof totalMonths !== 'number'
+    || !Number.isSafeInteger(totalMonths)
+    || totalMonths <= 0
+  ) return undefined;
+  return { type: 'subscription_renewed', totalMonths };
+}
+
 // Defensive: `ChatMessageEvent` is only the empirically-captured "regular message" shape.
 // Kick may emit other payloads under the same event name (e.g. a system message with
 // sender: null, or a reshaped field). Since native chat is already hidden by the time
@@ -213,7 +246,11 @@ export function normalizeMessage(raw: unknown): ChatMessage | null {
   if (typeof s.id !== 'number' || typeof s.username !== 'string') return null;
 
   const identity = (s.identity ?? null) as Record<string, unknown> | null;
-  const replyContext = extractReplyContext(r);
+  // Pusher supplies metadata as an object; /messages/history serializes the same object as JSON.
+  // Normalize once so both transport paths preserve meaning-changing reply/celebration fields.
+  const metadata = normalizeMetadata(r.metadata);
+  const replyContext = extractReplyContext(r, metadata);
+  const celebration = extractCelebrationContext(metadata);
   return {
     id: r.id,
     chatroomId: typeof r.chatroom_id === 'number' ? r.chatroom_id : 0,
@@ -231,6 +268,7 @@ export function normalizeMessage(raw: unknown): ChatMessage | null {
         badgesV2: normalizeBadges(identity?.badges_v2),
       },
     },
+    ...(celebration ? { celebration } : {}),
     ...(replyContext ? { replyContext } : {}),
     preserved: false,
   };

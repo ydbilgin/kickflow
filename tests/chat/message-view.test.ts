@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import type { ChatMessage } from '../../src/content/chat/message-store';
+import { normalizeMessage } from '../../src/content/chat/pusher-client';
 import { setLang } from '../../src/content/shared/i18n';
 
 beforeEach(() => setLang('tr'));
@@ -97,6 +98,48 @@ describe('message-view safe rendering', () => {
     expect(firstMonth.textContent).toBe(`⭐${unsafeUsername} abone oldu`);
     expect(firstMonth.querySelector('img')).toBeNull();
     expect(renewal.textContent).toBe('⭐violet_demo 5 ay abone oldu');
+  });
+
+  it('renders a real celebration message as a native-style renewal card', () => {
+    const captured = normalizeMessage({
+      id: 'be911675-50cd-4910-848a-87ea0ccd59df',
+      chatroom_id: 25951243,
+      content: 'Oooo 32. ay gelmiş [emote:4860485:Jahreintersoldprayadge]',
+      type: 'celebration',
+      created_at: '2026-07-14T19:23:58+00:00',
+      sender: {
+        id: 28329441,
+        username: 'ErenCekic02',
+        slug: 'erencekic02',
+        identity: {
+          color: '#31D6C2',
+          badges: [{ type: 'subscriber', text: 'Subscriber', count: 32, sort_order: 9 }],
+          badges_v2: [{
+            name: 'level', badge_type: 'global', image_url: 'https://ext.cdn.kick.com/chat/badges/20_x.png',
+            metadata: { level: 20 }, selected: true, sort_order: 1,
+          }],
+        },
+      },
+      metadata: {
+        celebration: {
+          id: 'chceleb_01KXGZF48ZJBEZYQJRT9W5DMWC',
+          type: 'subscription_renewed',
+          total_months: 32,
+          created_at: '2026-07-14T18:50:42.335677Z',
+        },
+      },
+    });
+    if (!captured) throw new Error('captured celebration fixture failed to normalize');
+
+    const row = buildMessageElement(captured);
+
+    expect(row.classList.contains('kickflow-event-row--celebration')).toBe(true);
+    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('⭐');
+    expect(row.querySelector('.kickflow-event-row__username')?.textContent).toBe('ErenCekic02');
+    expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('32');
+    expect(row.querySelector('.kickflow-celebration__message')?.textContent).toContain('Oooo 32. ay gelmiş');
+    expect(row.querySelector('.kickflow-celebration__message img.kickflow-emote')?.getAttribute('alt')).toBe('Jahreintersoldprayadge');
+    expect(row.querySelector('.kickflow-message__separator')).toBeNull();
   });
 
   it('names the single gift recipient with both usernames safe and no count capsule', () => {
@@ -586,6 +629,50 @@ describe('message-view safe rendering', () => {
     expect(icons[0].title).toBe('1. Seviye');
     expect(icons[1].src.startsWith('data:image/svg+xml')).toBe(true);
     expect(icons[1].title).toBe('Moderatör');
+  });
+
+  it('omits an explicitly unselected level badge from a real Kick-shaped message', () => {
+    const captured = normalizeMessage({
+      id: '23a4be58-1f76-414e-b452-29905f5828d4',
+      chat_id: 49494919,
+      chatroom_id: 49206572,
+      user_id: 1628,
+      content: 'uğraşamam.',
+      type: 'message',
+      metadata: '{"message_ref":"1784233982451"}',
+      sender: {
+        id: 1628,
+        slug: 'laureth',
+        username: 'laureth',
+        identity: {
+          color: '#AAA9FF',
+          badges: [
+            { type: 'subscriber', text: 'Subscriber', count: 1, sort_order: 9 },
+          ],
+          badges_v2: [
+            {
+              name: 'level',
+              badge_type: 'global',
+              image_url: 'https://ext.cdn.kick.com/chat/badges/34_019f35ce-472b-7c85-b482-8e7b7ed343b1.png',
+              selected: false,
+              metadata: { level: 34 },
+              sort_order: 1,
+            },
+          ],
+        },
+      },
+      created_at: '2026-07-16T20:33:01Z',
+      thread_parent_id: null,
+    });
+    if (!captured) throw new Error('captured Kick fixture failed to normalize');
+
+    const row = buildMessageElement(captured);
+    const badges = row.querySelector('.kickflow-message__badges');
+
+    expect(row.classList.contains('kickflow-message')).toBe(true);
+    expect(row.querySelector('.kickflow-message__username')?.textContent).toBe('laureth');
+    expect(badges?.querySelector('img[src*="/chat/badges/34_"]')).toBeNull();
+    expect(badges?.querySelector('.kickflow-badge-role')?.getAttribute('title')).toContain('Abone');
   });
 
   it('resolves the channel subscriber badge by month count and renders it as a real image', () => {

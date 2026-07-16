@@ -22,6 +22,10 @@ export const messages = {
     en: { one: 'subscribed for {n} month', other: 'subscribed for {n} months' },
     tr: { one: '{n} ay abone oldu', other: '{n} ay abone oldu' },
   },
+  'event.celebration.months': {
+    en: { one: 'resubscribed for {n} month', other: 'resubscribed for {n} months' },
+    tr: { one: '{n}. abonelik ayını kutladı', other: '{n}. abonelik ayını kutladı' },
+  },
   'event.gift.single': { en: ' gifted a sub to {name}', tr: ', {name} kullanıcısına abonelik hediye etti' },
   'event.gift.bulk': {
     en: { one: 'gifted a sub to {n} person', other: 'gifted a sub to {n} people' },

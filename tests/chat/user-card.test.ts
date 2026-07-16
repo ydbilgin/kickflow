@@ -39,6 +39,53 @@ describe('user-card', () => {
     expect(JSON.stringify(model).toLowerCase()).not.toContain('level');
   });
 
+  it('omits an explicitly unselected badges_v2 entry from the user card', () => {
+    const model = mapUserCardResponse({
+      username: 'laureth',
+      slug: 'laureth',
+      badges: [{ type: 'subscriber', text: 'Subscriber', count: 1, sort_order: 9 }],
+      badges_v2: [{
+        name: 'level',
+        badge_type: 'global',
+        image_url: 'https://ext.cdn.kick.com/chat/badges/34_x.png',
+        selected: false,
+        metadata: { level: 34 },
+        sort_order: 1,
+      }],
+    }, {}, 'laureth', 'laureth');
+
+    expect(model.badges).toEqual([expect.objectContaining({ type: 'subscriber', count: 1 })]);
+  });
+
+  it('omits inactive role badges from a real Kick user-card response', () => {
+    const model = mapUserCardResponse({
+      username: 'c4nkn',
+      slug: 'c4nkn',
+      is_moderator: true,
+      badges: [
+        { type: 'moderator', text: 'Moderator', active: true, sort_order: 4 },
+        { type: 'vip', text: 'VIP', active: true, sort_order: 5 },
+        { type: 'founder', text: 'Founder', active: true, sort_order: 7 },
+        { type: 'sub_gifter', text: 'Sub Gifter', count: 1, active: false, sort_order: 8 },
+        { type: 'subscriber', text: 'Subscriber', count: 5, active: false, sort_order: 9 },
+      ],
+      badges_v2: [{
+        name: 'level',
+        badge_type: 'global',
+        image_url: 'https://ext.cdn.kick.com/chat/badges/14_x.png',
+        selected: false,
+        metadata: { level: 14 },
+        sort_order: 1,
+      }],
+    }, {}, 'c4nkn', 'c4nkn');
+
+    expect(model.badges.map((badge) => badge.type ?? badge.name)).toEqual([
+      'moderator',
+      'vip',
+      'founder',
+    ]);
+  });
+
   it('renders only HTTPS Kick-hosted profile images', () => {
     const model = {
       username: 'Alice', slug: 'alice', profilePic: 'https://files.kick.com/avatar.png', role: null,

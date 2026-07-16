@@ -5,6 +5,8 @@ export interface ChatBadge {
   count?: number;     // subscriber / sub_gifter count (months / gifts)
   imageUrl?: string;  // badges_v2 image_url (or a resolved subscriber image)
   level?: number;     // badges_v2 metadata.level
+  active?: boolean;   // role-badge visibility; user-card responses retain inactive badges
+  selected?: boolean; // badges_v2 visibility choice; Kick keeps unselected badges in the payload
   sortOrder?: number; // Kick's sort_order — for stable ordering across both arrays
 }
 
@@ -14,12 +16,16 @@ export interface ChatBadge {
 export interface SubscriberBadge { readonly months: number; readonly src: string; }
 
 /** Kick sends role badges in `badges` (no image) and global/level badges in `badges_v2` (with
- * image_url). They are disjoint and BOTH must render — never one-or-the-other. Merge, dedup by
- * (type||name)+count, and sort by Kick's sort_order ascending so the row matches native order. */
+ * image_url). They are disjoint, but user-card responses retain inactive role badges and
+ * badges_v2 retains owned badges whose user-facing `selected` flag is false; native chat
+ * suppresses both. Merge visible entries, dedup by (type||name)+count, and sort by Kick's
+ * sort_order ascending so the row matches native order. */
 export function mergeIdentityBadges(identity: { badges: ChatBadge[]; badgesV2: ChatBadge[] }): ChatBadge[] {
   const out: ChatBadge[] = [];
   const seen = new Set<string>();
-  for (const badge of [...identity.badges, ...identity.badgesV2]) {
+  const visibleBadges = identity.badges.filter((badge) => badge.active !== false);
+  const visibleBadgesV2 = identity.badgesV2.filter((badge) => badge.selected !== false);
+  for (const badge of [...visibleBadges, ...visibleBadgesV2]) {
     const key = (badge.type ?? badge.name ?? '') + ':' + (badge.count ?? '');
     // Badges with neither `type` nor `name` have no reliable identity to dedupe on — keep them
     // unconditionally so the text fallback in appendBadges still has something to render.
@@ -52,6 +58,11 @@ export interface ReplyContext {
   replyToMessageId?: string | null;
   replyToUserId?: number | null;
   threadParentId?: string | null;
+}
+
+export interface CelebrationContext {
+  type: 'subscription_renewed';
+  totalMonths: number;
 }
 
 /** Non-moderatable rows emitted by Kick's chat event streams. They still travel through
@@ -105,6 +116,7 @@ export interface ChatMessage {
   createdAt: string;
   sender: ChatMessageSender;
   systemEvent?: ChatSystemEvent;
+  celebration?: CelebrationContext;
   replyContext?: ReplyContext;
   preserved: boolean;
   preservedReason?: PreservedReason;

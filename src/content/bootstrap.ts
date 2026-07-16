@@ -137,6 +137,9 @@ export function createSystemEventCallbacks(
 
   return {
     onSubscription: (payload) => {
+      // Kick's native handler presents only the first-month SubscriptionEvent. Renewals arrive
+      // with months > 1 but are represented by ChatMessageEvent celebration cards instead.
+      if (payload.months > 1) return;
       if (!featureFlags.showSubscriptions) return;
       const sequence = ++systemEventSequence;
       enqueueOnce(createSystemEventMessage(
@@ -384,6 +387,19 @@ function ensureStyles(): void {
       border-left-color: rgba(255,176,32,0.8);
       background: rgba(255,176,32,0.08); color: #ffe0a3;
     }
+    #${OWN_LIST_ID} .kickflow-event-row--celebration {
+      align-items: flex-start; border-left-color: rgba(83,252,24,0.9);
+      background: rgba(83,252,24,0.1);
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--celebration .kickflow-event-row__body,
+    #${OWN_LIST_ID} .kickflow-celebration__headline,
+    #${OWN_LIST_ID} .kickflow-celebration__message { display: block; min-width: 0; }
+    #${OWN_LIST_ID} .kickflow-celebration__headline { font-weight: 600; }
+    #${OWN_LIST_ID} .kickflow-celebration__message {
+      margin-top: 3px; padding: 2px 4px; border-radius: 3px;
+      background: rgba(0,0,0,0.16); color: #efeff1;
+    }
+    #${OWN_LIST_ID} .kickflow-celebration__author { font-weight: 700; }
     #${OWN_LIST_ID} .kickflow-event-row--host {
       border-left-color: rgba(70,169,255,0.85);
       background: rgba(70,169,255,0.09); color: #b9ddff;

@@ -52,7 +52,7 @@ describe('bootstrap event display flags', () => {
     featureFlags.showSubscriptions = false;
     featureFlags.showGiftedSubs = false;
     featureFlags.showHostRaid = false;
-    callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 5 });
+    callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 1 });
     callbacks.onGiftedSubscriptions({
       chatroomId: 15250312,
       correlationId: 'disabled-gift',
@@ -66,7 +66,7 @@ describe('bootstrap event display flags', () => {
     featureFlags.showSubscriptions = true;
     featureFlags.showGiftedSubs = true;
     featureFlags.showHostRaid = true;
-    callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 5 });
+    callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 1 });
     const capturedRecipients = [
       'nova_88', 'ayla_k', 'demir42', 'mercan_x', 'luna_sade',
       'atlas_fake', 'poyraz_demo', 'kiraz_test', 'deniz_mock', 'umut_sample',
@@ -121,7 +121,7 @@ describe('bootstrap event display flags', () => {
     expect(store.getMessagesInArrivalOrder()[0]?.id).toBe('gift:5389830:340002752602494');
   });
 
-  it('creates one subscribed row and no gift row for the captured self-sub fixture', () => {
+  it('matches native by suppressing the captured renewal SubscriptionEvent', () => {
     const store = new ChatIntegrityStore();
     const callbacks = bootstrap.createSystemEventCallbacks((message) => {
       store.addMessage(message);
@@ -132,9 +132,24 @@ describe('bootstrap event display flags', () => {
     callbacks.onSubscription({ chatroomId: 25951243, username: 's4drazam1', months: 9 });
 
     const rows = store.getMessagesInArrivalOrder();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.systemEvent).toEqual({ kind: 'subscription', username: 's4drazam1', months: 9 });
+    expect(rows).toHaveLength(0);
     expect(rows.some((message) => message.systemEvent?.kind === 'gifted-subscription')).toBe(false);
+  });
+
+  it('still creates the native-compatible row for a first-month SubscriptionEvent', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showSubscriptions = true;
+
+    callbacks.onSubscription({ chatroomId: 25951243, username: 'first_month', months: 1 });
+
+    expect(store.getMessagesInArrivalOrder()[0]?.systemEvent).toEqual({
+      kind: 'subscription',
+      username: 'first_month',
+      months: 1,
+    });
   });
 
   it('creates one kicks row with the captured sender, amount, and optional fields', () => {

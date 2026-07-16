@@ -67,6 +67,46 @@ describe('fetchChatHistory', () => {
     await expect(fetchChatHistoryResult(123)).resolves.toMatchObject({ status: 'error', reason: 'terminal-http' });
   });
 
+  it('preserves reply context from a realistic history message with stringified metadata', async () => {
+    const historyReply = {
+      id: 'e007f390-e69b-4f60-bd0c-1e827ce6efc9',
+      chatroom_id: 25314085,
+      content: 'ATAM',
+      type: 'reply',
+      created_at: '2026-07-16T21:04:37+00:00',
+      sender: {
+        id: 27903497,
+        username: 'Prof_AmoLocus',
+        slug: 'prof-amolocus',
+        identity: {
+          color: '#FFFFFF',
+          badges: [{ type: 'subscriber', text: 'Subscriber', count: 4, sort_order: 9 }],
+          badges_v2: [{
+            name: 'level', badge_type: 'global', image_url: 'https://ext.cdn.kick.com/chat/badges/28_x.png',
+            metadata: { level: 28 }, selected: true, sort_order: 1,
+          }],
+        },
+      },
+      metadata: JSON.stringify({
+        original_message: { id: 'parent-uuid', content: 'MUSTAFA KEMAL ATATÜRK' },
+        original_sender: { id: 7424588, username: 'Alcheyham' },
+        message_ref: '1784235877280',
+      }),
+      thread_parent_id: 'parent-uuid',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, {
+      data: { messages: [historyReply] },
+    })));
+
+    const messages = await fetchChatHistory(25602397);
+
+    expect(messages[0]?.replyContext).toMatchObject({
+      replyToUser: 'Alcheyham',
+      replyToText: 'MUSTAFA KEMAL ATATÜRK',
+      replyToMessageId: 'parent-uuid',
+    });
+  });
+
   it('aborts a hung attempt and reports exhaustion after bounded retries', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {

@@ -20,6 +20,8 @@ interface UserCardRawBadge {
   image_url?: unknown;
   imageUrl?: unknown;
   metadata?: unknown;
+  active?: unknown;
+  selected?: unknown;
   sort_order?: unknown;
 }
 
@@ -101,6 +103,8 @@ function normalizeBadge(raw: UserCardRawBadge): ChatBadge {
         ? raw.imageUrl
         : undefined,
     level: metadata && typeof metadata.level === 'number' ? metadata.level : undefined,
+    active: typeof raw.active === 'boolean' ? raw.active : undefined,
+    selected: typeof raw.selected === 'boolean' ? raw.selected : undefined,
     sortOrder: typeof raw.sort_order === 'number' ? raw.sort_order : undefined,
   };
 }
