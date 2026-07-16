@@ -152,8 +152,14 @@ export function wireUsernameProfileLink(
 }
 
 /** Safe-render only: message text is fully attacker-controlled. Every branch below
- * builds nodes via createElement/textContent — never innerHTML or string concatenation. */
-export function appendParsedContent(parent: HTMLElement, content: string): void {
+ * builds nodes via createElement/textContent — never innerHTML or string concatenation.
+ *
+ * `opts.compact` renders for the ellipsized reply snippet: emotes still render as images
+ * (so a reply to an emote-only message isn't blank), but urls/mentions collapse to plain
+ * text — no `<a>`, no profile-card wiring — since a one-line truncated preview has no room
+ * for another layer of interactive/focusable elements. */
+export function appendParsedContent(parent: HTMLElement, content: string, opts?: { compact?: boolean }): void {
+  const compact = opts?.compact ?? false;
   let lastIndex = 0;
   for (const match of content.matchAll(CONTENT_TOKEN_RE)) {
     const index = match.index ?? 0;
@@ -164,15 +170,36 @@ export function appendParsedContent(parent: HTMLElement, content: string): void 
     if (groups.emoteId) {
       appendEmote(parent, groups.emoteId, groups.emoteName ?? '', match[0]);
     } else if (groups.url) {
-      appendLink(parent, groups.url);
+      if (compact) {
+        parent.appendChild(document.createTextNode(groups.url));
+      } else {
+        appendLink(parent, groups.url);
+      }
     } else if (groups.mention) {
-      appendMention(parent, groups.mention);
+      if (compact) {
+        const span = document.createElement('span');
+        span.className = 'kickflow-mention';
+        span.textContent = groups.mention;
+        parent.appendChild(span);
+      } else {
+        appendMention(parent, groups.mention);
+      }
     }
     lastIndex = index + match[0].length;
   }
   if (lastIndex < content.length) {
     parent.appendChild(document.createTextNode(content.slice(lastIndex)));
   }
+}
+
+// Same emote subpattern as CONTENT_TOKEN_RE, kept standalone: a tooltip title has no need for
+// the url/mention alternation, and content outside emote tokens is already plain text.
+const EMOTE_TOKEN_ONLY_RE = /\[emote:\d{1,10}:(.{1,30})\]/g;
+
+/** Tooltip-only text: emote tokens collapse to their bare name (`[emote:5405749:sreactayak]`
+ * → `sreactayak`); urls/mentions are left as-is since they're already readable raw text. */
+function contentToPlainText(content: string): string {
+  return content.replace(EMOTE_TOKEN_ONLY_RE, '$1');
 }
 
 // Kick draws role badges from its own bundled inline SVGs, keyed by `type`. We've captured the
@@ -437,15 +464,21 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
   if (context.replyToText) {
     const snippet = document.createElement('span');
     snippet.className = 'kickflow-message__reply-snippet';
-    snippet.textContent = context.replyToText;
-    snippet.title = context.replyToText;
+    // Compact mode: same safe-render path as the main content, minus the interactive layer
+    // (see appendParsedContent's compact doc) — an emote-bearing reply still shows its emote.
+    appendParsedContent(snippet, context.replyToText, { compact: true });
     text.appendChild(snippet);
   }
-  const label = document.createElement('span');
-  label.className = 'kickflow-message__reply-label';
-  label.textContent = t('message.replying_to');
-  text.appendChild(label);
   reply.appendChild(text);
+  // One hover tooltip for the whole reply row: the full "user: message" of what's being
+  // replied to. The visible line is ellipsized (user capped at 38%, snippet clipped), so the
+  // tooltip is where the complete replied-to message is actually readable — more useful than
+  // a redundant "…is replying to this user" phrase (the ↩ icon already conveys "reply").
+  // No child carries its own title, so hovering anywhere on the row shows this same string.
+  const replyPlain = context.replyToText ? contentToPlainText(context.replyToText) : '';
+  reply.title =
+    context.replyToUser && replyPlain ? `${context.replyToUser}: ${replyPlain}`
+    : replyPlain || context.replyToUser || '';
   row.appendChild(reply);
 }
 

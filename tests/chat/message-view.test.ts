@@ -478,15 +478,55 @@ describe('message-view safe rendering', () => {
     }));
 
     const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
-    expect(reply?.textContent).toContain('ZehoG: <script>alert(1)</script> hello isimli kullanıcıya yanıt veriyor');
+    expect(reply?.textContent).toBe('↩ZehoG: <script>alert(1)</script> hello');
     expect(reply?.querySelector('.kickflow-message__reply-user')?.textContent).toBe('ZehoG');
     expect(reply?.querySelector<HTMLElement>('.kickflow-message__reply-user')?.title).toBe('ZehoG');
     expect(reply?.querySelector('.kickflow-message__reply-separator')?.textContent).toBe(': ');
     expect(reply?.querySelector('.kickflow-message__reply-snippet')?.textContent).toBe('<script>alert(1)</script> hello');
-    expect(reply?.querySelector<HTMLElement>('.kickflow-message__reply-snippet')?.title).toBe('<script>alert(1)</script> hello');
-    expect(reply?.querySelector('.kickflow-message__reply-label')?.textContent).toBe(' isimli kullanıcıya yanıt veriyor');
+    // No child carries its own title — the whole row shows one "user: message" tooltip so the
+    // ellipsized replied-to message is fully readable on hover (see appendReplyContext).
+    expect(reply?.querySelector<HTMLElement>('.kickflow-message__reply-snippet')?.title).toBe('');
+    expect(reply?.title).toBe('ZehoG: <script>alert(1)</script> hello');
+    expect(reply?.querySelector('.kickflow-message__reply-label')).toBeNull();
     expect(reply?.querySelector('script')).toBeNull();
     expect(row.firstElementChild).toBe(reply);
+  });
+
+  it('renders an emote inside a reply snippet and uses its plain name as the hover title', () => {
+    const row = buildMessageElement(message('alice_123', undefined, {
+      replyContext: {
+        replyToUser: 'ZehoG',
+        replyToText: 'hi [emote:5405749:sreactayak] there',
+        replyToMessageId: 'orig-1',
+        replyToUserId: 2,
+        threadParentId: 'orig-1',
+      },
+    }));
+
+    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
+    const snippet = row.querySelector<HTMLElement>('.kickflow-message__reply-snippet');
+    const emote = snippet?.querySelector<HTMLImageElement>('img.kickflow-emote');
+    expect(emote?.src).toBe('https://files.kick.com/emotes/5405749/fullsize');
+    // The row's hover title is the plain-texted "user: message" (bare emote name, not the raw
+    // `[emote:...]` token); the snippet itself carries no title.
+    expect(reply?.title).toBe('ZehoG: hi sreactayak there');
+    expect(snippet?.title).toBe('');
+  });
+
+  it('renders a URL inside a compact reply snippet as plain text, never as a link', () => {
+    const row = buildMessageElement(message('alice_123', undefined, {
+      replyContext: {
+        replyToUser: 'ZehoG',
+        replyToText: 'check http://evil.example out',
+        replyToMessageId: 'orig-1',
+        replyToUserId: 2,
+        threadParentId: 'orig-1',
+      },
+    }));
+
+    const snippet = row.querySelector<HTMLElement>('.kickflow-message__reply-snippet');
+    expect(snippet?.querySelector('a')).toBeNull();
+    expect(snippet?.textContent).toBe('check http://evil.example out');
   });
 
   it('reconciles an existing deleted label when a later ban upgrades the message', () => {

@@ -50,7 +50,6 @@ export const messages = {
   'message.deleted': { en: 'DELETED', tr: 'SİLİNDİ' },
   'message.banned': { en: 'BANNED', tr: 'BANLANDI' },
   'message.timeout': { en: 'TIMEOUT', tr: 'TIMEOUT' },
-  'message.replying_to': { en: ' replying to this user', tr: ' isimli kullanıcıya yanıt veriyor' },
   'duration.minutes_short': { en: '{n}M', tr: '{n}DK' },
   'duration.hours_short': { en: '{n}H', tr: '{n}SA' },
   'duration.hours_minutes_short': { en: '{h}H {m}M', tr: '{h}SA {m}DK' },

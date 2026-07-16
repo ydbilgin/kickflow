@@ -354,13 +354,16 @@ function ensureStyles(): void {
       flex: 1 1 auto; min-height: 0; padding: 6px 10px; overflow-y: auto; height: auto; box-sizing: border-box;
       font-size: 13px; line-height: 1.45; color: #efeff1;
       font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.16) transparent;
     }
     #${OWN_LIST_ID} .kickflow-message {
-      display: block; padding: 3px 5px; border-radius: 4px;
+      display: block; padding: 3px 5px; border-radius: 6px;
       word-break: break-word; overflow-wrap: anywhere;
     }
     #${OWN_LIST_ID} .kickflow-message:hover { background: rgba(255,255,255,0.06); }
-    #${OWN_LIST_ID} .kickflow-message__time { color: #adadb8; font-size: 11px; margin-right: 5px; }
+    #${OWN_LIST_ID} .kickflow-message__time {
+      color: #adadb8; font-size: 11px; margin-right: 5px; font-variant-numeric: tabular-nums;
+    }
     #${OWN_LIST_ID} .kickflow-message__badges:empty { display: none; }
     #${OWN_LIST_ID} .kickflow-message__badges {
       margin-right: 3px; display: inline-flex; align-items: center; vertical-align: middle;
@@ -399,8 +402,10 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-event-row__more:hover { opacity: 0.85; }
     #${OWN_LIST_ID} .kickflow-message__reply-context {
       display: flex; align-items: center; width: 100%; min-width: 0; margin-bottom: 4px;
-      color: rgba(255,255,255,0.42); font-size: 11px; font-weight: 500;
+      color: rgba(255,255,255,0.55); font-size: 11px; font-weight: 500;
       white-space: nowrap; overflow: hidden;
+      border-left: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.035);
+      border-radius: 4px; padding: 1px 6px;
     }
     #${OWN_LIST_ID} .kickflow-message__reply-icon {
       display: inline-block; flex: none; width: 13px; margin-right: 4px; font-size: 11px;
@@ -408,10 +413,7 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message__reply-text {
       display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%;
     }
-    #${OWN_LIST_ID} .kickflow-message__reply-separator,
-    #${OWN_LIST_ID} .kickflow-message__reply-label {
-      flex: none;
-    }
+    #${OWN_LIST_ID} .kickflow-message__reply-separator { flex: none; }
     #${OWN_LIST_ID} .kickflow-message__reply-user {
       flex: 0 1 auto; min-width: 0; max-width: 38%;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -421,7 +423,7 @@ function ensureStyles(): void {
       display: inline-block; min-width: 0; flex: 1 1 auto;
       overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
     }
-    #${OWN_LIST_ID} .kickflow-message__reply-user { font-weight: 700; color: rgba(255,255,255,0.58); }
+    #${OWN_LIST_ID} .kickflow-message__reply-user { font-weight: 700; color: rgba(255,255,255,0.72); }
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
@@ -499,6 +501,9 @@ function ensureStyles(): void {
       display: inline-block !important; height: 24px !important; width: auto !important;
       vertical-align: middle; margin: 0 2px;
     }
+    /* Reply snippet emotes stay in the 11px×1.45≈16px reply line box — without this, the
+       global 24px !important above would grow the whole reply row's height. */
+    #${OWN_LIST_ID} .kickflow-message__reply-snippet .kickflow-emote { height: 16px !important; vertical-align: -4px; margin: 0 1px; }
     .kickflow-mention { color: #53fc18; font-weight: 600; }
     .kickflow-mention--link { cursor: pointer; }
     .kickflow-mention--link:hover { text-decoration: underline; }
