@@ -316,7 +316,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const version = document.createElement('span');
     version.className = 'kickflow-panel__version';
-    version.textContent = 'v0.1.0';
+    version.textContent = 'v0.2.0';
     rail.append(wordmark, railCaption, nav, version);
 
     const main = document.createElement('div');
@@ -593,7 +593,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     aboutText.textContent = 'Kick sohbetini ve canlı yayın deneyimini sadeleştiren kişisel bir tarayıcı eklentisi.';
     const aboutFacts = document.createElement('dl');
     aboutFacts.className = 'kickflow-panel__about-facts';
-    for (const [label, value] of [['Sürüm', '0.1.0'], ['Platform', 'Chrome MV3'], ['Uygulama', 'kick.com içinde çalışır']]) {
+    for (const [label, value] of [['Sürüm', '0.2.0'], ['Platform', 'Chrome MV3'], ['Uygulama', 'kick.com içinde çalışır']]) {
       const row = document.createElement('div');
       const term = document.createElement('dt');
       term.textContent = label;
