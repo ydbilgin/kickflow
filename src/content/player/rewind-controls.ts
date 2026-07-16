@@ -70,8 +70,41 @@ export function seekFloor(video: HTMLVideoElement): number {
 
 /** Shared by this file's inline buttons and rewind-hotkeys.ts's arrow keys. Clamps to
  * [seekFloor, liveEdge]: both ends prefer the playable buffered range, avoiding Kick's
- * bogus `seekable` sentinels so seeks can't catapult outside media the player can decode. */
+ * bogus `seekable` sentinels so seeks can't catapult outside media the player can decode.
+ *
+ * Displacement invariant (added 2026-07-16): a single ±STEP_SECONDS step must never move the
+ * playhead by more than |delta| + one cross-range gap-snap. A larger jump means the media is in
+ * a mid-reload transient — the playhead sits outside every buffered range while `seekable` is
+ * momentarily unusable — where the buffered-fallback branches below would otherwise return a far
+ * boundary (`first.start` / `last.end` / `previous.end` = broadcast start), catapulting a rewind
+ * forward to near-live or back to the stream's beginning. In that state the honest action is to
+ * stay put; the user presses again once the picture resumes. This bounds every catapult while
+ * leaving the owner-requested deep-DVR rewind (the `dvr` seekable branch, whose result is always
+ * within [dvr.start, currentTime] ⇒ displacement ≤ |delta|) completely untouched. */
 export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
+  const result = computeSeekTarget(video, delta);
+  // Direction invariant: a rewind may never move the playhead FORWARD, a forward-seek never
+  // BACKWARD. A wrong-direction result is always a transient artifact (playhead momentarily
+  // outside the buffered range) — e.g. a −10 that would otherwise clamp up to a near-live buffer
+  // start, which the owner sees as "canlıya atlıyor". No-op rather than re-interpret the state;
+  // the user presses again once the picture resumes. Kills the forward catapult at ANY magnitude,
+  // including the ≤(|delta|+gap) slip-through the magnitude guard below cannot see.
+  if (delta < 0 && result > video.currentTime) return video.currentTime;
+  if (delta > 0 && result < video.currentTime) return video.currentTime;
+  // Magnitude invariant (H1): a ±STEP step may never teleport — covers the BACKWARD catapult
+  // (rewind to a stale-preload range near t≈2), which is direction-clean but displacement-huge.
+  if (Math.abs(result - video.currentTime) > Math.abs(delta) + MAX_CROSS_RANGE_GAP_SECONDS) {
+    logger.debug('rewind-controls: suppressed transient catapult seek', {
+      currentTime: video.currentTime,
+      wouldSeekTo: result,
+      delta,
+    });
+    return video.currentTime;
+  }
+  return result;
+}
+
+function computeSeekTarget(video: HTMLVideoElement, delta: number): number {
   const target = video.currentTime + delta;
 
   // Prefer the SEEKABLE range as the clamp bounds. Measured on Kick's current player
@@ -101,6 +134,11 @@ export function clampSeekTarget(video: HTMLVideoElement, delta: number): number 
 
     const first = bufferedRanges[0];
     const last = bufferedRanges[bufferedRanges.length - 1];
+    // Floor a below-buffer rewind at buffered.start. A regime-B attempt to reach BELOW this into
+    // Kick's server-retained pre-join window (edge-anchored floor) was implemented and REVERTED
+    // 2026-07-16: owner live-tested and a currentTime write below the join point does NOT fetch
+    // pre-join content — it clamps to the join point (unlike Kick's native seek-bar, which reaches
+    // it by some other mechanism). Round-26's platform limit STANDS for our currentTime-write path.
     if (target < first.start) return first.start;
     if (target > last.end) return last.end;
 

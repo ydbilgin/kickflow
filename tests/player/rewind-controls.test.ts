@@ -114,4 +114,65 @@ describe('rewind-controls media boundaries', () => {
 
     expect(clampSeekTarget(video, 0)).toBe(10);
   });
+
+  it('suppresses a forward catapult (rewind that would snap to the near-live window) in a reload transient', () => {
+    // Mid-reload transient: seekable momentarily empty, buffered = only the old near-live window,
+    // playhead ~15 min behind it (a deep rewind whose position Kick is still fetching). A ⏪10 here
+    // used to return first.start (5900) — a REWIND that jumps ~15 min FORWARD to near-live, which
+    // the owner sees as "canlıya alıyor". The displacement invariant no-ops it; the user re-presses
+    // once the picture resumes.
+    const video = fakeVideo({
+      buffered: [[5900, 5960]],
+      seekable: [],
+      currentTime: 5000,
+    });
+
+    expect(clampSeekTarget(video, -10)).toBe(5000); // stays put (was 5900 before the guard)
+  });
+
+  it('suppresses a backward catapult to broadcast start when the playhead sits in a reload gap', () => {
+    // Eviction/reload nudged the playhead just below the live window, into the gap next to a stale
+    // preload range near zero, while seekable is the Infinity-regime sentinel. currentRange is
+    // undefined (playhead in the gap), so the round-11 guard doesn't apply and the clamp used to
+    // return previous.end (2) = stream start. The invariant no-ops that teleport.
+    const video = fakeVideo({
+      buffered: [[0, 2], [5900, 5960]],
+      seekable: [[0, SENTINEL]],
+      currentTime: 5898.5,
+    });
+
+    expect(clampSeekTarget(video, -10)).toBe(5898.5); // stays put (was 2 before the guard)
+  });
+
+  it('still allows the legitimate deep-DVR rewind (invariant does not touch the seekable branch)', () => {
+    // Regression pin: with a sane finite seekable DVR the owner-requested cross-past-buffered.start
+    // rewind must keep working — its displacement is bounded by the seekable range so the guard is a
+    // no-op here. (Same fixture as the finite-regime test above, asserted against the new guard.)
+    const video = fakeVideo({
+      buffered: [[1700, 1736]],
+      seekable: [[0, 2585]],
+      currentTime: 1703,
+    });
+
+    expect(clampSeekTarget(video, -3000)).toBe(0); // deep rewind to DVR floor, NOT suppressed
+    expect(clampSeekTarget(video, -10)).toBe(1693); // normal step still crosses past buffered.start
+  });
+
+  it('never lets a rewind move the playhead forward toward live (direction invariant)', () => {
+    // Playhead momentarily below a near-live buffered window (a reload transient). computeSeekTarget
+    // floors a below-buffer rewind at first.start (150) — a FORWARD jump on a rewind, exactly the
+    // owner's "geri sardığımda canlıya atlıyor". The direction guard no-ops it back to currentTime.
+    const at130 = fakeVideo({ buffered: [[150, 160]], seekable: [[0, SENTINEL]], currentTime: 130 });
+    expect(clampSeekTarget(at130, -10)).toBe(130); // never jumps forward to 150
+
+    const at125 = fakeVideo({ buffered: [[150, 160]], seekable: [[0, SENTINEL]], currentTime: 125 });
+    expect(clampSeekTarget(at125, -10)).toBe(125); // stays put, never jumps forward
+  });
+
+  it('never lets a forward-seek move the playhead backward (direction invariant, forward blip)', () => {
+    // Playhead marginally past buffered.end; a +10 would have returned last.end (45), a tiny
+    // BACKWARD jump on a forward press. The direction guard no-ops it.
+    const video = fakeVideo({ buffered: [[35, 45]], seekable: [[0, SENTINEL]], currentTime: 45.3 });
+    expect(clampSeekTarget(video, 10)).toBeCloseTo(45.3, 8);
+  });
 });

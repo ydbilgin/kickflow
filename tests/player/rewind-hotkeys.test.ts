@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
 import { initRewindHotkeys, isTypingTarget } from '../../src/content/player/rewind-hotkeys';
 import { resetHotkeyBindings, updateHotkeyBinding } from '../../src/content/player/hotkey-registry';
@@ -68,6 +68,39 @@ describe('rewind hotkeys', () => {
     document.dispatchEvent(rebound);
     expect(rebound.defaultPrevented).toBe(true);
     expect(video.currentTime).toBeCloseTo(3.4, 8);
+    lifecycle.dispose();
+  });
+
+  it('throttles held-arrow auto-repeat to one seek per interval while still consuming every repeat', () => {
+    const video = setupVideo();
+    const lifecycle = new Lifecycle();
+    let now = 1000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    initRewindHotkeys(lifecycle);
+
+    // First real (non-repeat) press seeks 13.4 -> 3.4.
+    const first = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowLeft' });
+    document.dispatchEvent(first);
+    expect(first.defaultPrevented).toBe(true);
+    expect(video.currentTime).toBeCloseTo(3.4, 8);
+
+    // A burst of auto-repeats inside the interval: each consumed (never leaks to Kick), none seek.
+    for (let i = 0; i < 5; i++) {
+      now += 20; // 20ms apart, < 150ms
+      const repeat = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowLeft', repeat: true });
+      document.dispatchEvent(repeat);
+      expect(repeat.defaultPrevented).toBe(true);
+    }
+    expect(video.currentTime).toBeCloseTo(3.4, 8); // no further seek during the burst
+
+    // Once the interval elapses, the next repeat seeks again (3.4 -> 0).
+    now += 200;
+    const later = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowLeft', repeat: true });
+    document.dispatchEvent(later);
+    expect(later.defaultPrevented).toBe(true);
+    expect(video.currentTime).toBeCloseTo(0, 8);
+
+    nowSpy.mockRestore();
     lifecycle.dispose();
   });
 

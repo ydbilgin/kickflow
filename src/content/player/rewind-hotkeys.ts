@@ -11,6 +11,14 @@ import type { Lifecycle } from '../shared/lifecycle';
 // click seek the same amount.
 const SEEK_STEP_SECONDS = 10;
 
+// A held arrow key auto-repeats ~30-60×/s. Executing a seek on every repeat is a seek-abort
+// storm (each new currentTime write aborts the previous reload); throttling repeat-driven seeks
+// to one per this interval turns "hold ArrowLeft" into a smooth ~65s-of-rewind-per-second sweep
+// that matches dragging Kick's native seek-bar far back. A single (non-repeat) press is never
+// throttled, and a throttled repeat is still consumed (see onKeyDown) so it never leaks to Kick's
+// page-level arrow handler — the whole reason this listener runs at capture phase.
+const REPEAT_SEEK_MIN_INTERVAL_MS = 150;
+
 export function isTypingTarget(target: EventTarget | null): boolean {
   let element: HTMLElement | null =
     target instanceof HTMLElement ? target
@@ -54,6 +62,7 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
     return;
   }
 
+  let lastSeekAt = 0;
   const onKeyDown = (event: Event): void => {
     const keyboardEvent = event as KeyboardEvent;
     if (isHotkeyCaptureActive()) return;
@@ -67,11 +76,19 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
       if ((action === 'rewind' || action === 'forward') && featureFlags.rewindControls) {
         const current = getVideoElement();
         if (!current) return;
-        const direction = action === 'rewind' ? -1 : 1;
-        const target = clampSeekTarget(current, direction * SEEK_STEP_SECONDS);
-        current.currentTime = target;
-        logger.debug('rewind-hotkeys: seeked to', target);
-        handled = true;
+        // Throttle auto-repeat only; a real single press always seeks. A throttled repeat still
+        // falls through to the consume block below (handled = true), so it never reaches Kick.
+        const now = Date.now();
+        if (keyboardEvent.repeat && now - lastSeekAt < REPEAT_SEEK_MIN_INTERVAL_MS) {
+          handled = true;
+        } else {
+          const direction = action === 'rewind' ? -1 : 1;
+          const target = clampSeekTarget(current, direction * SEEK_STEP_SECONDS);
+          current.currentTime = target;
+          lastSeekAt = now;
+          logger.debug('rewind-hotkeys: seeked to', target);
+          handled = true;
+        }
       } else if (action === 'screenshot' && featureFlags.screenshot) {
         handled = captureScreenshot();
       } else if (action === 'goLive' && featureFlags.liveCatchup) {
