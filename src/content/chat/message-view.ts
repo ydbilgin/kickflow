@@ -66,7 +66,10 @@ function appendEmote(parent: HTMLElement, id: string, name: string, rawToken: st
   img.title = name;
   img.className = 'kickflow-emote';
   img.loading = 'lazy';
-  parent.appendChild(img);
+  const box = document.createElement('span');
+  box.className = 'kickflow-emote-box';
+  box.appendChild(img);
+  parent.appendChild(box);
 }
 
 // Long URLs have no spaces, so the chat panel's `overflow-wrap: anywhere` (needed to keep any
@@ -162,6 +165,21 @@ export function wireUsernameProfileLink(
   linkClass: string,
 ): void {
   wireProfileSlugLink(username, sender.slug, displayName, linkClass);
+}
+
+function groupMessageIdentity(badges: HTMLElement, username: HTMLElement): HTMLSpanElement {
+  const identity = document.createElement('span');
+  identity.className = 'kickflow-message__identity';
+  identity.append(badges, username);
+  return identity;
+}
+
+function createMessageSeparator(): HTMLSpanElement {
+  const separator = document.createElement('span');
+  separator.className = 'kickflow-message__separator';
+  separator.textContent = ':\u00a0';
+  separator.setAttribute('aria-hidden', 'true');
+  return separator;
 }
 
 /** Safe-render only: message text is fully attacker-controlled. Every branch below
@@ -730,7 +748,7 @@ function buildCelebrationElement(message: ChatMessage): HTMLElement {
   const content = document.createElement('span');
   content.className = 'kickflow-message__content';
   appendParsedContent(content, message.content);
-  messageLine.append(badges, author, document.createTextNode(': '), content);
+  messageLine.append(groupMessageIdentity(badges, author), createMessageSeparator(), content);
 
   body.append(headline, messageLine);
   row.append(icon, body);
@@ -772,15 +790,13 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
   // setAttribute('style', ...) / .cssText, which would accept arbitrary CSS text.
   username.style.color = message.sender.identity.color || 'inherit';
 
-  const separator = document.createElement('span');
-  separator.className = 'kickflow-message__separator';
-  separator.textContent = ': ';
+  const separator = createMessageSeparator();
 
   const content = document.createElement('span');
   content.className = 'kickflow-message__content';
   appendParsedContent(content, message.content);
 
-  row.append(time, badges, username, separator, content);
+  row.append(time, groupMessageIdentity(badges, username), separator, content);
   applyPreservedMarking(row, message);
 
   return row;

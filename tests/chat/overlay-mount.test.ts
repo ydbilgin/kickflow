@@ -233,6 +233,28 @@ describe('ChatOverlayMount takeover readiness', () => {
     lifecycle.dispose();
   });
 
+  it('mirrors native chat typography and timestamp tokens onto the body-level overlay', () => {
+    const { anchor } = addCapturedChatFixture(rect(320, 480, 10, 20));
+    anchor.style.setProperty('--chatroom-font-size', '14px');
+    anchor.style.setProperty('--chatroom-timestamps-display', 'none');
+    anchor.style.setProperty('--chatroom-message-spacing', '4px');
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+
+    expect(mount.root.style.getPropertyValue('--chatroom-font-size')).toBe('14px');
+    expect(mount.root.style.getPropertyValue('--chatroom-timestamps-display')).toBe('none');
+    expect(mount.root.style.getPropertyValue('--chatroom-message-spacing')).toBe('4px');
+
+    anchor.style.setProperty('--chatroom-font-size', '16px');
+    anchor.style.setProperty('--chatroom-timestamps-display', 'inline');
+    anchor.style.setProperty('--chatroom-message-spacing', '5px');
+    mount.syncNow();
+    expect(mount.root.style.getPropertyValue('--chatroom-font-size')).toBe('16px');
+    expect(mount.root.style.getPropertyValue('--chatroom-timestamps-display')).toBe('inline');
+    expect(mount.root.style.getPropertyValue('--chatroom-message-spacing')).toBe('5px');
+    lifecycle.dispose();
+  });
+
   it('reserves an initial visible native pin top band', () => {
     addCapturedChatFixture(rect(320, 480, 10, 20), () => rect(320, 84, 10, 20));
     const lifecycle = new Lifecycle();

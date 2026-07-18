@@ -8,6 +8,11 @@ const CHAT_ACTIVE_CLASS = 'kickflow-chat-active';
 const STATUS_ATTRIBUTE = 'data-kickflow-chat-status';
 const SYNC_INTERVAL_MS = 500;
 const GEOMETRY_EPSILON_PX = 0.5;
+const NATIVE_CHAT_PRESENTATION_TOKENS = [
+  '--chatroom-font-size',
+  '--chatroom-timestamps-display',
+  '--chatroom-message-spacing',
+] as const;
 
 export type ChatTakeoverState = 'native' | 'probing' | 'ready' | 'active' | 'fallback';
 
@@ -437,6 +442,12 @@ export class ChatOverlayMount {
 
     const rect = geometry.ownRect;
     this.availableOwnListRect = rect;
+    const nativeStyle = getComputedStyle(anchor);
+    for (const token of NATIVE_CHAT_PRESENTATION_TOKENS) {
+      const value = nativeStyle.getPropertyValue(token).trim();
+      if (value) this.root.style.setProperty(token, value);
+      else this.root.style.removeProperty(token);
+    }
     this.root.style.visibility = 'visible';
     this.root.style.left = `${rect.left}px`;
     this.root.style.top = `${rect.top}px`;

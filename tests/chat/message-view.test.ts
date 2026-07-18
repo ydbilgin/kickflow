@@ -41,9 +41,11 @@ describe('message-view safe rendering', () => {
     appendParsedContent(parent, 'hi [emote:123:kek] @Bob, http://x.y <script>alert(1)</script>');
 
     const emote = parent.querySelector<HTMLImageElement>('img.kickflow-emote');
+    const emoteBox = parent.querySelector<HTMLElement>('.kickflow-emote-box');
     expect(emote?.src).toBe('https://files.kick.com/emotes/123/fullsize');
     expect(emote?.alt).toBe('kek');
     expect(emote?.title).toBe('kek');
+    expect(emoteBox?.firstElementChild).toBe(emote);
     const mention = parent.querySelector<HTMLElement>('.kickflow-mention');
     expect(mention?.textContent).toBe('@Bob');
     expect(mention?.getAttribute('role')).toBe('link');
@@ -139,7 +141,11 @@ describe('message-view safe rendering', () => {
     expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('32');
     expect(row.querySelector('.kickflow-celebration__message')?.textContent).toContain('Oooo 32. ay gelmiş');
     expect(row.querySelector('.kickflow-celebration__message img.kickflow-emote')?.getAttribute('alt')).toBe('Jahreintersoldprayadge');
-    expect(row.querySelector('.kickflow-message__separator')).toBeNull();
+    const identity = row.querySelector('.kickflow-celebration__message .kickflow-message__identity');
+    expect(identity?.querySelector('.kickflow-message__badges')).not.toBeNull();
+    expect(identity?.querySelector('.kickflow-celebration__author')?.textContent).toBe('ErenCekic02');
+    expect(row.querySelector('.kickflow-celebration__message .kickflow-message__separator')?.textContent).toBe(':\u00a0');
+    expect(row.querySelectorAll('.kickflow-message__separator')).toHaveLength(1);
   });
 
   it('names the single gift recipient with both usernames safe and no count capsule', () => {
@@ -629,6 +635,22 @@ describe('message-view safe rendering', () => {
     expect(icons[0].title).toBe('1. Seviye');
     expect(icons[1].src.startsWith('data:image/svg+xml')).toBe(true);
     expect(icons[1].title).toBe('Moderatör');
+  });
+
+  it('keeps badges and username in one native-shaped identity group with a non-breaking separator', () => {
+    const row = buildMessageElement(message('alice_123', {
+      badges: [{ type: 'moderator', text: 'Moderator', sortOrder: 1 }],
+    }));
+
+    const identity = row.querySelector<HTMLElement>('.kickflow-message__identity');
+    const badges = row.querySelector<HTMLElement>('.kickflow-message__badges');
+    const username = row.querySelector<HTMLElement>('.kickflow-message__username');
+    const separator = row.querySelector<HTMLElement>('.kickflow-message__separator');
+
+    expect(identity).not.toBeNull();
+    expect(Array.from(identity?.children ?? [])).toEqual([badges, username]);
+    expect(separator?.textContent).toBe(':\u00a0');
+    expect(separator?.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('omits an explicitly unselected level badge from a real Kick-shaped message', () => {
