@@ -28,6 +28,7 @@ interface StatusResponse extends KickFlowStatusSnapshot {
     showHostRaid: boolean;
     showModeChanges: boolean;
     showSidebarRefresh: boolean;
+    showChattersBadges: boolean;
     autoTheater: boolean;
     rewindControls: boolean;
     liveCatchup: boolean;
@@ -71,6 +72,7 @@ function applyStaticTranslations(): void {
     ['t-subscriptions', 'setting.subscriptions'], ['t-gifted-subs', 'setting.gifted_subscriptions'],
     ['t-kicks', 'setting.kicks'], ['t-host-raid', 'setting.host_raid'],
     ['t-mode-changes', 'setting.mode_changes'], ['t-sidebar-refresh', 'setting.sidebar_refresh'],
+    ['t-chatters-badges', 'setting.chatters_badges'],
     ['t-debug', 'popup.debug_log'], ['t-auto-theater', 'setting.auto_theater'],
     ['t-rewind-controls', 'setting.seek'], ['t-live-catchup', 'setting.live_catchup'],
     ['t-quality-lock', 'setting.quality_lock'], ['t-screenshot', 'setting.screenshot'],
@@ -174,6 +176,7 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-host-raid') as HTMLInputElement)).checked = res.flags.showHostRaid;
   (($('t-mode-changes') as HTMLInputElement)).checked = res.flags.showModeChanges;
   (($('t-sidebar-refresh') as HTMLInputElement)).checked = res.flags.showSidebarRefresh;
+  (($('t-chatters-badges') as HTMLInputElement)).checked = res.flags.showChattersBadges;
   (($('t-auto-theater') as HTMLInputElement)).checked = res.flags.autoTheater;
   (($('t-rewind-controls') as HTMLInputElement)).checked = res.flags.rewindControls;
   (($('t-live-catchup') as HTMLInputElement)).checked = res.flags.liveCatchup;
@@ -197,12 +200,12 @@ async function refresh(): Promise<void> {
 }
 
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls',
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'chatMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showSidebarRefresh' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'chatMode',
   value: boolean | 'native' | 'own'
 ): Promise<void> {
   const id = await activeTabId();
@@ -247,6 +250,7 @@ $('t-kicks').addEventListener('change', (e) => setFlag('showKicks', (e.target as
 $('t-host-raid').addEventListener('change', (e) => setFlag('showHostRaid', (e.target as HTMLInputElement).checked));
 $('t-mode-changes').addEventListener('change', (e) => setFlag('showModeChanges', (e.target as HTMLInputElement).checked));
 $('t-sidebar-refresh').addEventListener('change', (e) => setFlag('showSidebarRefresh', (e.target as HTMLInputElement).checked));
+$('t-chatters-badges').addEventListener('change', (e) => setFlag('showChattersBadges', (e.target as HTMLInputElement).checked));
 $('t-auto-theater').addEventListener('change', (e) => setFlag('autoTheater', (e.target as HTMLInputElement).checked));
 $('t-rewind-controls').addEventListener('change', (e) => setFlag('rewindControls', (e.target as HTMLInputElement).checked));
 $('t-live-catchup').addEventListener('change', (e) => setFlag('liveCatchup', (e.target as HTMLInputElement).checked));

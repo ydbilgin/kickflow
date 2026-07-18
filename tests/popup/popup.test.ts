@@ -28,6 +28,7 @@ const statusResponse = {
     showHostRaid: false,
     showModeChanges: false,
     showSidebarRefresh: true,
+    showChattersBadges: true,
     autoTheater: false,
     rewindControls: true,
     liveCatchup: true,
@@ -127,11 +128,13 @@ describe('popup event display toggles', () => {
     expect((document.getElementById('t-kicks') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('t-host-raid') as HTMLInputElement).checked).toBe(false);
     expect((document.getElementById('t-mode-changes') as HTMLInputElement).checked).toBe(false);
+    expect((document.getElementById('t-chatters-badges') as HTMLInputElement).checked).toBe(true);
     expect(document.querySelector('label[for="t-subscriptions"]')?.textContent).toBe('Abonelikler');
     expect(document.querySelector('label[for="t-gifted-subs"]')?.textContent).toBe('Hediye abonelikler');
     expect(document.querySelector('label[for="t-kicks"]')?.textContent).toBe('Kicks / bağışlar');
     expect(document.querySelector('label[for="t-host-raid"]')?.textContent).toBe('Host / Raid');
     expect(document.querySelector('label[for="t-mode-changes"]')?.textContent).toBe('Mod değişiklikleri');
+    expect(document.querySelector('label[for="t-chatters-badges"]')?.textContent).toBe('Aktif sohbetçi rozetleri');
   });
 
   it('sends each event toggle through kickflow:setFlag', async () => {
@@ -145,6 +148,7 @@ describe('popup event display toggles', () => {
       ['t-kicks', 'showKicks'],
       ['t-host-raid', 'showHostRaid'],
       ['t-mode-changes', 'showModeChanges'],
+      ['t-chatters-badges', 'showChattersBadges'],
     ] as const) {
       const checkbox = document.getElementById(id) as HTMLInputElement;
       checkbox.checked = false;

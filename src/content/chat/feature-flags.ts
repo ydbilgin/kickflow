@@ -27,6 +27,8 @@ export interface FeatureFlags {
   showModeChanges: boolean;
   /** Refresh native followed-channel sidebar viewer counts and live indicators. */
   showSidebarRefresh: boolean;
+  /** Show session removed-message evidence beside Kick's native Active Chatters rows. */
+  showChattersBadges: boolean;
   /** Automatically enter Kick's theater layout when a channel/video loads. Opt-in because it
    * changes the page layout rather than only augmenting it. */
   autoTheater: boolean;
@@ -56,6 +58,7 @@ export const featureFlags: FeatureFlags = {
   showHostRaid: true,
   showModeChanges: true,
   showSidebarRefresh: true,
+  showChattersBadges: true,
   autoTheater: false,
   rewindControls: true,
   liveCatchup: true,

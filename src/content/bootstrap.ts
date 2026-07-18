@@ -23,6 +23,7 @@ import {
   type SubscriptionEventPayload,
 } from './chat/pusher-client';
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
+import { ActiveChattersBadgesController } from './chat/active-chatters-badges';
 import { RemovedMessagesPanel } from './chat/removed-panel';
 import { FooterToggleButton } from './chat/footer-toggle';
 import { NavbarSettingsButton } from './chat/navbar-settings';
@@ -71,6 +72,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showHostRaid',
   'showModeChanges',
   'showSidebarRefresh',
+  'showChattersBadges',
   'autoTheater',
   'rewindControls',
   'liveCatchup',
@@ -565,6 +567,14 @@ function ensureStyles(): void {
     .kickflow-status-label--banned { background: rgba(233,17,60,0.92); color: #fff; }
     .kickflow-status-label--timeout { background: rgba(230,147,43,0.92); color: #fff; }
     .kickflow-status-label--deleted { background: rgba(156,122,30,0.92); color: #fff; }
+    .kickflow-active-chatters-badge {
+      flex: none; min-width: auto; height: 18px; margin-left: auto; padding: 0 6px;
+      border: 1px solid rgba(230,147,43,0.45); border-radius: 999px;
+      background: rgba(156,122,30,0.30); color: #ffd27a; cursor: pointer;
+      font-size: 9px; font-weight: 800; letter-spacing: 0.02em; text-transform: none;
+    }
+    .kickflow-active-chatters-badge:hover { background: rgba(230,147,43,0.38); color: #fff; }
+    .kickflow-active-chatters-badge:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
     .kickflow-mod-label { margin-left: 5px; font-size: 10px; font-weight: 600; opacity: 0.7; }
     .kickflow-preserved { position: relative; }
     .kickflow-original-content {
@@ -794,6 +804,14 @@ function ensureStyles(): void {
       border-top: 1px solid oklch(0.31 0.01 150);
       border-bottom: 1px solid oklch(0.27 0.01 150);
     }
+    .kickflow-panel__filter-chip {
+      align-self: flex-start; margin: 0 0 12px; padding: 5px 9px; border: 1px solid oklch(0.43 0.012 150);
+      border-radius: 999px; background: oklch(0.23 0.012 150); color: oklch(0.82 0.01 150);
+      cursor: pointer; font: 650 11px/1.2 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-panel__filter-chip[hidden] { display: none; }
+    .kickflow-panel__filter-chip:hover { border-color: oklch(0.56 0.02 145); color: #fff; }
+    .kickflow-panel__filter-chip:focus-visible { outline: 2px solid oklch(0.86 0.24 145); outline-offset: 2px; }
     .kickflow-removed-row {
       display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(104px, auto);
       align-items: start; gap: 14px; padding: 15px 2px 14px;
@@ -1050,6 +1068,7 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   });
   augmenter = new NativeChatAugmenter(lifecycle, store);
   const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
+  initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
@@ -1124,6 +1143,7 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     onPreservedEvicted: (message: ChatMessage) => reconcileOwnPreservedEviction(message, store, registry),
   });
   const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
+  initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
 
@@ -1371,6 +1391,14 @@ let sessionToken = 0;
 let navPollId: number | null = null;
 let sidebarRefreshLifecycle: Lifecycle | null = null;
 let sidebarRefreshController: SidebarRefreshController | null = null;
+interface ActiveChattersBadgesContext {
+  sessionLifecycle: Lifecycle;
+  store: ChatIntegrityStore;
+  panel: RemovedMessagesPanel;
+  featureLifecycle: Lifecycle | null;
+  controller: ActiveChattersBadgesController | null;
+}
+let activeChattersBadgesContext: ActiveChattersBadgesContext | null = null;
 
 function stopSidebarRefresh(): void {
   const lifecycle = sidebarRefreshLifecycle;
@@ -1393,6 +1421,53 @@ function syncSidebarRefresh(): void {
     if (lifecycle.isDisposed || sidebarRefreshLifecycle !== lifecycle || sidebarRefreshController) return;
     sidebarRefreshController = new SidebarRefreshController(lifecycle);
   });
+}
+
+function stopActiveChattersBadges(): void {
+  const context = activeChattersBadgesContext;
+  if (!context) return;
+  const lifecycle = context.featureLifecycle;
+  context.featureLifecycle = null;
+  context.controller = null;
+  lifecycle?.dispose();
+}
+
+function syncActiveChattersBadges(): void {
+  const context = activeChattersBadgesContext;
+  if (!context || context.sessionLifecycle.isDisposed || !featureFlags.showChattersBadges) {
+    stopActiveChattersBadges();
+    return;
+  }
+  if (context.featureLifecycle && !context.featureLifecycle.isDisposed) return;
+
+  ensureStyles();
+  const lifecycle = new Lifecycle();
+  context.featureLifecycle = lifecycle;
+  context.controller = new ActiveChattersBadgesController(lifecycle, context.store, context.panel);
+}
+
+/** Registers the current session's store/panel pair so the owner-facing flag can perform a real
+ * live start/stop without restarting chat or leaking evidence across channel sessions. */
+export function initActiveChattersBadgesSession(
+  sessionLifecycle: Lifecycle,
+  store: ChatIntegrityStore,
+  panel: RemovedMessagesPanel,
+): void {
+  stopActiveChattersBadges();
+  const context: ActiveChattersBadgesContext = {
+    sessionLifecycle,
+    store,
+    panel,
+    featureLifecycle: null,
+    controller: null,
+  };
+  activeChattersBadgesContext = context;
+  sessionLifecycle.add(() => {
+    if (activeChattersBadgesContext !== context) return;
+    stopActiveChattersBadges();
+    activeChattersBadgesContext = null;
+  });
+  syncActiveChattersBadges();
 }
 
 /** Named (not inline) so teardownZombie can removeEventListener it. */
@@ -1500,6 +1575,9 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'showSidebarRefresh') {
       syncSidebarRefresh();
     }
+    if (key === 'showChattersBadges') {
+      syncActiveChattersBadges();
+    }
     void safeStorageSet({ ['kf_flag_' + key]: value });
   } else if (key === 'chatMode' && (value === 'native' || value === 'own')) {
     setFeatureFlag('chatMode', value);
@@ -1525,6 +1603,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showHostRaid: featureFlags.showHostRaid,
     showModeChanges: featureFlags.showModeChanges,
     showSidebarRefresh: featureFlags.showSidebarRefresh,
+    showChattersBadges: featureFlags.showChattersBadges,
     autoTheater: featureFlags.autoTheater,
     rewindControls: featureFlags.rewindControls,
     liveCatchup: featureFlags.liveCatchup,
@@ -1635,6 +1714,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showHostRaid',
     'kf_flag_showModeChanges',
     'kf_flag_showSidebarRefresh',
+    'kf_flag_showChattersBadges',
     'kf_flag_autoTheater',
     'kf_flag_rewindControls',
     'kf_flag_liveCatchup',
@@ -1653,6 +1733,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
+  if (typeof saved.kf_flag_showChattersBadges === 'boolean') setFeatureFlag('showChattersBadges', saved.kf_flag_showChattersBadges);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
   if (typeof saved.kf_flag_rewindControls === 'boolean') setFeatureFlag('rewindControls', saved.kf_flag_rewindControls);
   if (typeof saved.kf_flag_liveCatchup === 'boolean') setFeatureFlag('liveCatchup', saved.kf_flag_liveCatchup);

@@ -186,6 +186,43 @@ describe('ChatIntegrityStore', () => {
       preservedMeta: { permanent: false, durationMin: 5, bannedBy: 'mod' },
     });
   });
+
+  it('queries preserved entries by exact normalized canonical slug', () => {
+    const store = new ChatIntegrityStore();
+    const first = message('first', 1);
+    first.sender.slug = '  Canonical-Slug  ';
+    first.sender.username = 'Display_Name';
+    const second = message('second', 2);
+    second.sender.slug = 'other-slug';
+    second.sender.username = 'canonical-slug';
+    store.addMessage(first);
+    store.addMessage(second);
+    store.markUserBanned(1);
+    store.markUserBanned(2);
+
+    expect(store.getPreservedForSlug(' canonical-SLUG ')).toEqual([first]);
+    expect(store.getPreservedForSlug('display_name')).toEqual([]);
+    expect(store.getPreservedForSlug('   ')).toEqual([]);
+  });
+
+  it('recovers a slug from an exact normalized preserved username only when unambiguous', () => {
+    const store = new ChatIntegrityStore();
+    const first = message('first', 1);
+    first.sender.username = 'DevletSah_Ozcan';
+    first.sender.slug = 'devletsah-ozcan';
+    store.addMessage(first);
+    store.markUserBanned(1);
+
+    expect(store.resolvePreservedSlugForUsername('  devletsah_ozcan ')).toBe('devletsah-ozcan');
+    expect(store.resolvePreservedSlugForUsername('devletsah-ozcan')).toBeNull();
+
+    const collision = message('collision', 2);
+    collision.sender.username = 'DEVLETSAH_OZCAN';
+    collision.sender.slug = 'different-slug';
+    store.addMessage(collision);
+    store.markUserBanned(2);
+    expect(store.resolvePreservedSlugForUsername('devletsah_ozcan')).toBeNull();
+  });
 });
 
 describe('mergeIdentityBadges', () => {

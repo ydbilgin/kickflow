@@ -187,6 +187,42 @@ describe('RemovedMessagesPanel', () => {
     lifecycle.dispose();
   });
 
+  it('opens Removed with a canonical-slug filter and clears it from the bilingual chip', () => {
+    setLang('en');
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    const first = message('user-one-message', 1, 'first removed text');
+    first.sender.slug = 'canonical-one';
+    first.sender.username = 'User_One';
+    const second = message('user-two-message', 2, 'second removed text');
+    second.sender.slug = 'canonical-two';
+    second.sender.username = 'User_Two';
+    store.addMessage(first);
+    store.addMessage(second);
+    store.markUserBanned(1);
+    store.markMessageDeleted(second.id);
+    const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
+
+    panel.showUserFilter('  CANONICAL-ONE ', 'User_One');
+
+    const modal = requiredElement<HTMLElement>(document, '.kickflow-panel');
+    const chip = requiredElement<HTMLButtonElement>(modal, '.kickflow-panel__filter-chip');
+    expect(panel.isOpen()).toBe(true);
+    expect(modal.querySelector('.kickflow-panel__title')?.textContent).toBe('Removed');
+    expect(chip.hidden).toBe(false);
+    expect(chip.textContent).toBe('Filtered: User_One ×');
+    expect(Array.from(modal.querySelectorAll<HTMLElement>('.kickflow-removed-row')).map((row) => row.dataset.kickflowRemovedMid))
+      .toEqual(['user-one-message']);
+
+    chip.click();
+    expect(chip.hidden).toBe(true);
+    expect(Array.from(modal.querySelectorAll<HTMLElement>('.kickflow-removed-row')).map((row) => row.dataset.kickflowRemovedMid))
+      .toEqual(['user-two-message', 'user-one-message']);
+
+    lifecycle.dispose();
+    setLang('tr');
+  });
+
   it('shows rows with sender + status label once opened', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
@@ -706,6 +742,7 @@ describe('RemovedMessagesPanel', () => {
       ['Kicks / bağışlar', 'showKicks'],
       ['Host / Raid', 'showHostRaid'],
       ['Mod değişiklikleri', 'showModeChanges'],
+      ['Aktif sohbetçi rozetleri', 'showChattersBadges'],
       ['Otomatik tiyatro modu', 'autoTheater'],
       ['Geri / ileri sarma', 'rewindControls'],
       ['Canlıya yetişme', 'liveCatchup'],

@@ -50,6 +50,12 @@ export interface ChatMessageSender {
   };
 }
 
+/** Identity comparison is deliberately narrow. Kick slugs and usernames are case-insensitive,
+ * but punctuation is meaningful (`name-with-dash` and `name_with_dash` are not interchangeable). */
+export function normalizeChatIdentity(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export type PreservedReason = 'banned' | 'deleted';
 
 export interface ReplyContext {
@@ -490,6 +496,32 @@ export class ChatIntegrityStore {
 
   getPreserved(): readonly ChatMessage[] {
     return this.preserved.toArray();
+  }
+
+  /** Returns preserved evidence for one canonical Kick slug. The returned array is detached from
+   * the bounded queue, so callers cannot mutate store membership. */
+  getPreservedForSlug(slug: string): ChatMessage[] {
+    const normalizedSlug = normalizeChatIdentity(slug);
+    if (!normalizedSlug) return [];
+    return this.preserved.toArray().filter(
+      (message) => normalizeChatIdentity(message.sender.slug) === normalizedSlug,
+    );
+  }
+
+  /** The native Active Chatters row renders `username` but keeps `slug` only as a React key. Use
+   * the exact session-known username solely to recover a canonical slug, and fail closed if the
+   * preserved ledger maps that username to more than one slug. */
+  resolvePreservedSlugForUsername(username: string): string | null {
+    const normalizedUsername = normalizeChatIdentity(username);
+    if (!normalizedUsername) return null;
+
+    const slugs = new Map<string, string>();
+    for (const message of this.preserved.toArray()) {
+      if (normalizeChatIdentity(message.sender.username) !== normalizedUsername) continue;
+      const normalizedSlug = normalizeChatIdentity(message.sender.slug);
+      if (normalizedSlug) slugs.set(normalizedSlug, message.sender.slug.trim());
+    }
+    return slugs.size === 1 ? slugs.values().next().value ?? null : null;
   }
 
   reset(): void {

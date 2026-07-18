@@ -5,6 +5,7 @@ import { buildMessageElement, setSubscriberBadges } from '../../src/content/chat
 import { configureUserCardSession, openUserCard } from '../../src/content/chat/user-card';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { setLang } from '../../src/content/shared/i18n';
+import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 
 type BootstrapModule = typeof import('../../src/content/bootstrap');
 
@@ -345,6 +346,7 @@ describe('bootstrap event display flags', () => {
       kf_flag_showPolls: false,
       kf_flag_showHostRaid: false,
       kf_flag_showModeChanges: true,
+      kf_flag_showChattersBadges: false,
     });
     featureFlags.showSubscriptions = true;
     featureFlags.showGiftedSubs = false;
@@ -352,6 +354,7 @@ describe('bootstrap event display flags', () => {
     featureFlags.showPolls = true;
     featureFlags.showHostRaid = true;
     featureFlags.showModeChanges = false;
+    featureFlags.showChattersBadges = true;
 
     await bootstrap.applySavedFlags();
 
@@ -361,6 +364,7 @@ describe('bootstrap event display flags', () => {
     expect(featureFlags.showPolls).toBe(false);
     expect(featureFlags.showHostRaid).toBe(false);
     expect(featureFlags.showModeChanges).toBe(true);
+    expect(featureFlags.showChattersBadges).toBe(false);
   });
 
   it('includes all event values in the popup status flag payload', () => {
@@ -379,6 +383,72 @@ describe('bootstrap event display flags', () => {
       showHostRaid: false,
       showModeChanges: false,
     });
+  });
+
+  it('starts, stops, and recreates Active Chatters badges through the shared flag mutator', () => {
+    const priorFlag = featureFlags.showChattersBadges;
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    const preserved: ChatMessage = {
+      id: 'chatter-removed', chatroomId: 1, content: 'removed evidence', type: 'message', createdAt: '',
+      sender: {
+        id: 42, username: 'Session_User', slug: 'session-user',
+        identity: { color: '', badges: [], badgesV2: [] },
+      },
+      preserved: false,
+    };
+    store.addMessage(preserved);
+    store.markMessageDeleted(preserved.id);
+    document.body.innerHTML = `
+      <div class="absolute inset-0 z-popover">
+        <section class="bg-surface-base flex size-full min-h-0 flex-col overflow-hidden text-white">
+          <header class="border-outline-decorative flex h-[50px] shrink-0 items-center border-b p-1.5">
+            <h2 class="min-w-0 flex-1 text-center text-base font-bold leading-6">Active chatters</h2>
+          </header>
+          <div class="shrink-0 p-3"><label class="relative block min-w-0">
+            <span class="sr-only">Search active chatters</span>
+            <input aria-label="Search active chatters" class="h-8 pl-11 pr-3 text-base" type="search">
+          </label></div>
+          <div class="min-h-0 flex-1" data-radix-scroll-area-root=""><div class="pb-6">
+            <div class="border-outline-decorative divide-outline-decorative flex flex-col divide-y border-t">
+              <div class="accordion-item" data-state="open"><div data-state="open">
+                <ul class="flex list-none flex-col overflow-hidden p-0">
+                  <li class="block"><button class="betterhover:hover:bg-surface-highest flex h-auto w-full justify-start gap-4 p-2 text-left font-normal text-white" type="button">
+                    <div class="relative size-6 shrink-0 rounded-full"><img alt="" class="size-full rounded-full" src="https://files.kick.com/avatar.webp"></div>
+                    <span class="min-w-0 flex-1 truncate text-base font-normal leading-6">Session_User</span>
+                  </button></li>
+                </ul>
+              </div></div>
+            </div>
+          </div></div>
+        </section>
+      </div>`;
+    const panel = new RemovedMessagesPanel(lifecycle, store, () => ({
+      slug: 'channel', chatroomId: 1, active: true, reason: 'test', pusherConnected: true,
+      lastBanAt: null, messageCount: 1, preservedCount: 1, bannedCount: 0, deletedCount: 1,
+      ghostAnchored: 0, ghostPendingNoAnchor: 0, ghostStrip: 0, ghostEvicted: 0,
+    }));
+
+    try {
+      bootstrap.applyFlagChange('showChattersBadges', false);
+      bootstrap.initActiveChattersBadgesSession(lifecycle, store, panel);
+      expect(document.querySelector('.kickflow-active-chatters-badge')).toBeNull();
+
+      bootstrap.applyFlagChange('showChattersBadges', true);
+      expect(document.querySelector('.kickflow-active-chatters-badge')?.textContent).toContain('kaldırıldı');
+      expect(storageSet).toHaveBeenCalledWith({ kf_flag_showChattersBadges: true });
+      expect(bootstrap.getPopupFeatureFlags().showChattersBadges).toBe(true);
+
+      bootstrap.applyFlagChange('showChattersBadges', false);
+      expect(document.querySelector('.kickflow-active-chatters-badge')).toBeNull();
+
+      bootstrap.applyFlagChange('showChattersBadges', true);
+      expect(document.querySelector('.kickflow-active-chatters-badge')).not.toBeNull();
+    } finally {
+      lifecycle.dispose();
+      featureFlags.showChattersBadges = priorFlag;
+      document.body.replaceChildren();
+    }
   });
 
   it('persists, loads, and reports the auto-theater flag through the shared flag path', async () => {

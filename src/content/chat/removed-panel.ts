@@ -28,6 +28,7 @@ const PANEL_BTN_CLASS = 'kickflow-panel__btn';
 const PANEL_CLOSE_CLASS = 'kickflow-panel__close';
 const PANEL_SETTINGS_CLASS = 'kickflow-panel__settings';
 const PANEL_BODY_CLASS = 'kickflow-panel__removed-list';
+const FILTER_CHIP_CLASS = 'kickflow-panel__filter-chip';
 const REMOVED_ROW_CLASS = 'kickflow-removed-row';
 const REMOVED_EMPTY_CLASS = 'kickflow-removed-empty';
 
@@ -123,6 +124,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private hostRaidCheckbox: HTMLInputElement | null = null;
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private sidebarRefreshCheckbox: HTMLInputElement | null = null;
+  private chattersBadgesCheckbox: HTMLInputElement | null = null;
   private autoTheaterCheckbox: HTMLInputElement | null = null;
   private rewindControlsCheckbox: HTMLInputElement | null = null;
   private liveCatchupCheckbox: HTMLInputElement | null = null;
@@ -132,6 +134,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private readonly hotkeyRows = new Map<HotkeyAction, HotkeyRowControls>();
   private hotkeyStatus: HTMLElement | null = null;
   private captureAction: HotkeyAction | null = null;
+  private userFilter: { slug: string; label: string } | null = null;
+  private filterChip: HTMLButtonElement | null = null;
 
   constructor(
     lifecycle: Lifecycle,
@@ -165,6 +169,17 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.showDashboardSection(section);
   }
 
+  /** Opens Removed on one canonical identity. Native Active Chatters badges use this entry point;
+   * the clearable chip is the only way the scoped view persists across panel renders. */
+  showUserFilter(slug: string, label: string): void {
+    const normalizedSlug = slug.trim();
+    if (!normalizedSlug) return;
+    this.userFilter = { slug: normalizedSlug, label: label.trim() || normalizedSlug };
+    this.lastSig = '';
+    this.showSettings('removed');
+    this.render();
+  }
+
   isOpen(): boolean {
     return this.open;
   }
@@ -177,7 +192,12 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
    * button opens the panel, it's instant AND already up to date, never a stale snapshot from
    * whenever it was last visible. The section itself is just `display:none` while closed. */
   render(): void {
-    const removed = this.store.getPreserved()
+    const allRemoved = this.store.getPreserved()
+      .filter((message) => message.preserved === true)
+      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
+    const removed = (this.userFilter
+      ? this.store.getPreservedForSlug(this.userFilter.slug)
+      : allRemoved)
       .filter((message) => message.preserved === true)
       .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
 
@@ -186,14 +206,15 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     section.setAttribute('aria-hidden', this.open ? 'false' : 'true');
 
     if (this.countChip) {
-      this.countChip.textContent = removed.length > 0 ? String(removed.length) : '';
-      this.countChip.style.display = removed.length > 0 ? '' : 'none';
+      this.countChip.textContent = allRemoved.length > 0 ? String(allRemoved.length) : '';
+      this.countChip.style.display = allRemoved.length > 0 ? '' : 'none';
     }
     const removedNav = this.navButtons.get('removed');
     removedNav?.setAttribute(
       'aria-label',
-      removed.length > 0 ? t('panel.removed_count', { n: removed.length }) : t('tab.removed'),
+      allRemoved.length > 0 ? t('panel.removed_count', { n: allRemoved.length }) : t('tab.removed'),
     );
+    this.refreshUserFilterChip();
 
     // Keep displayed values current when the popup changes a flag, without replacing nodes and
     // stealing focus from a select or hotkey button.
@@ -206,7 +227,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     // The panel can change without its count or final id changing: a metadata enrichment (e.g.
     // deletedBy arriving in a later event) alters an existing row, as can an expiry+preserve that
     // keeps the same shape. Sign every field buildRow reads, not merely the list shape.
-    const sig = `${removed.length}\u001e${shown.map((message) => JSON.stringify({
+    const sig = `${this.userFilter?.slug ?? ''}\u001d${removed.length}\u001e${shown.map((message) => JSON.stringify({
       id: message.id,
       seq: message.seq,
       content: message.content,
@@ -458,12 +479,18 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const removed = this.buildDashboardPane('removed');
     removed.append(this.buildPaneIntro(t('panel.removed_intro')));
+    const filterChip = document.createElement('button');
+    filterChip.type = 'button';
+    filterChip.className = FILTER_CHIP_CLASS;
+    filterChip.addEventListener('click', () => this.clearUserFilter());
+    filterChip.hidden = true;
+    this.filterChip = filterChip;
     const body = document.createElement('div');
     body.className = PANEL_BODY_CLASS;
     body.setAttribute('role', 'list');
     body.setAttribute('aria-label', t('panel.removed_aria'));
     body.setAttribute('aria-live', 'polite');
-    removed.append(body);
+    removed.append(filterChip, body);
 
     const chat = this.buildDashboardPane('chat');
     chat.append(this.buildPaneIntro(t('panel.chat_intro')));
@@ -516,6 +543,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.sidebarRefreshCheckbox = sidebarRefreshCheckbox;
 
+    const { label: chattersBadgesLabel, checkbox: chattersBadgesCheckbox } = this.buildSettingsToggle(
+      t('setting.chatters_badges'), t('setting.chatters_badges_desc'), 'showChattersBadges', featureFlags.showChattersBadges,
+    );
+    this.chattersBadgesCheckbox = chattersBadgesCheckbox;
+
     chatGroup.append(
       deletedLabel,
       banLabel,
@@ -525,6 +557,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       hostRaidLabel,
       modeChangesLabel,
       sidebarRefreshLabel,
+      chattersBadgesLabel,
     );
     chat.append(chatGroup);
 
@@ -910,6 +943,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.sidebarRefreshCheckbox && this.sidebarRefreshCheckbox.checked !== featureFlags.showSidebarRefresh) {
       this.sidebarRefreshCheckbox.checked = featureFlags.showSidebarRefresh;
     }
+    if (this.chattersBadgesCheckbox && this.chattersBadgesCheckbox.checked !== featureFlags.showChattersBadges) {
+      this.chattersBadgesCheckbox.checked = featureFlags.showChattersBadges;
+    }
     if (this.autoTheaterCheckbox && this.autoTheaterCheckbox.checked !== featureFlags.autoTheater) {
       this.autoTheaterCheckbox.checked = featureFlags.autoTheater;
     }
@@ -929,6 +965,26 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       this.speedControlsCheckbox.checked = featureFlags.speedControls;
     }
     this.refreshHotkeyControls();
+  }
+
+  private refreshUserFilterChip(): void {
+    if (!this.filterChip) return;
+    const filter = this.userFilter;
+    this.filterChip.hidden = filter === null;
+    if (!filter) {
+      this.filterChip.textContent = '';
+      this.filterChip.removeAttribute('aria-label');
+      return;
+    }
+    this.filterChip.textContent = `${t('panel.filtered_user', { name: filter.label })} ×`;
+    this.filterChip.setAttribute('aria-label', t('panel.clear_user_filter', { name: filter.label }));
+  }
+
+  private clearUserFilter(): void {
+    if (!this.userFilter) return;
+    this.userFilter = null;
+    this.lastSig = '';
+    this.render();
   }
 
   /** Builds a moderation-ledger row without changing the store's preservation annotations. */
@@ -1006,6 +1062,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.hostRaidCheckbox = null;
     this.modeChangesCheckbox = null;
     this.sidebarRefreshCheckbox = null;
+    this.chattersBadgesCheckbox = null;
     this.autoTheaterCheckbox = null;
     this.rewindControlsCheckbox = null;
     this.liveCatchupCheckbox = null;
@@ -1014,6 +1071,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.speedControlsCheckbox = null;
     this.hotkeyRows.clear();
     this.hotkeyStatus = null;
+    this.filterChip = null;
   }
 
   private lockDocumentScroll(): void {
