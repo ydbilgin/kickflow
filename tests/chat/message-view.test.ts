@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
-import type { ChatMessage } from '../../src/content/chat/message-store';
+import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
+import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
 import { setLang } from '../../src/content/shared/i18n';
 
@@ -100,6 +101,82 @@ describe('message-view safe rendering', () => {
     expect(firstMonth.textContent).toBe(`⭐${unsafeUsername} abone oldu`);
     expect(firstMonth.querySelector('img')).toBeNull();
     expect(renewal.textContent).toBe('⭐violet_demo 5 ay abone oldu');
+  });
+
+  it('gives system-event identities deterministic, distinguishable fallback colors and profile links', () => {
+    const first = buildMessageElement(message('', undefined, {
+      id: 'sub:color:1',
+      systemEvent: { kind: 'subscription', username: 'color_alice', months: 1 },
+    }));
+    const second = buildMessageElement(message('', undefined, {
+      id: 'sub:color:2',
+      systemEvent: { kind: 'subscription', username: 'color_bob', months: 1 },
+    }));
+    const repeat = buildMessageElement(message('', undefined, {
+      id: 'sub:color:3',
+      systemEvent: { kind: 'subscription', username: 'COLOR_ALICE', months: 1 },
+    }));
+    const firstUser = first.querySelector<HTMLElement>('.kickflow-event-row__username');
+    const secondUser = second.querySelector<HTMLElement>('.kickflow-event-row__username');
+    const repeatUser = repeat.querySelector<HTMLElement>('.kickflow-event-row__username');
+
+    expect(firstUser?.style.color).not.toBe('');
+    expect(firstUser?.style.color).not.toBe('inherit');
+    expect(secondUser?.style.color).not.toBe(firstUser?.style.color);
+    expect(repeatUser?.style.color).toBe(firstUser?.style.color);
+    expect(firstUser?.getAttribute('role')).toBe('link');
+    expect(firstUser?.tabIndex).toBe(0);
+    expect(first.querySelector('a[href*="kick.com"]')).toBeNull();
+  });
+
+  it('wires every bulk-gift recipient, including recipients revealed later, as a profile link', async () => {
+    const row = buildMessageElement(message('', undefined, {
+      id: 'gift:links',
+      systemEvent: {
+        kind: 'gifted-subscription',
+        username: 'profile_gifter',
+        giftCount: 5,
+        giftedUsernames: ['recipient_one', 'recipient_two', 'recipient_three', 'recipient_four', 'recipient_five'],
+      },
+    }));
+
+    row.querySelector<HTMLElement>('.kickflow-event-row__more')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+    const identities = row.querySelectorAll<HTMLElement>(
+      '.kickflow-event-row__username, .kickflow-event-row__recipient',
+    );
+    expect(identities).toHaveLength(6);
+    for (const identity of identities) {
+      expect(identity.getAttribute('role')).toBe('link');
+      expect(identity.tabIndex).toBe(0);
+      expect(identity.style.color).not.toBe('');
+    }
+
+    document.body.appendChild(row);
+    identities[5].dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+    await Promise.resolve();
+    expect(document.querySelector('.kickflow-user-card')?.textContent).toContain('recipient_five');
+  });
+
+  it('prefers a real identity color previously seen by the chat store', () => {
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('known_color_user', { color: '#12ABEF' }, {
+      id: 'known-color-message',
+      sender: {
+        ...message('known_color_user').sender,
+        username: 'Known_Color_User',
+        slug: 'known_color_user',
+        identity: { color: '#12ABEF', badges: [], badgesV2: [] },
+      },
+    }));
+
+    const row = buildMessageElement(message('', undefined, {
+      id: 'sub:known-color',
+      systemEvent: { kind: 'subscription', username: 'known_color_user', months: 1 },
+    }));
+
+    expect(row.querySelector<HTMLElement>('.kickflow-event-row__username')?.style.color)
+      .toBe('rgb(18, 171, 239)');
   });
 
   it('renders a real celebration message as a native-style renewal card', () => {
@@ -551,6 +628,60 @@ describe('message-view safe rendering', () => {
     expect(reply?.querySelector('.kickflow-message__reply-label')).toBeNull();
     expect(reply?.querySelector('script')).toBeNull();
     expect(row.firstElementChild).toBe(reply);
+  });
+
+  it('makes a reply with an original id keyboard-accessible and jumps to its own-list row', () => {
+    const list = document.createElement('div');
+    list.id = OWN_LIST_ID;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'orig-jump';
+    const scrollIntoView = vi.fn();
+    target.scrollIntoView = scrollIntoView;
+    list.appendChild(target);
+    document.body.appendChild(list);
+
+    const row = buildMessageElement(message('alice_123', undefined, {
+      replyContext: { replyToUser: 'Jump_User', replyToText: 'original', replyToMessageId: 'orig-jump' },
+    }));
+    list.appendChild(row);
+    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
+
+    expect(reply?.getAttribute('role')).toBe('button');
+    expect(reply?.tabIndex).toBe(0);
+    reply?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+    expect(target.classList.contains('kickflow-message--jump-highlight')).toBe(true);
+
+    const enter = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' });
+    reply?.dispatchEvent(enter);
+    const space = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: ' ' });
+    reply?.dispatchEvent(space);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(space.defaultPrevented).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledTimes(3);
+  });
+
+  it('handles a missing reply target without throwing', () => {
+    const list = document.createElement('div');
+    list.id = OWN_LIST_ID;
+    document.body.appendChild(list);
+    const row = buildMessageElement(message('alice_123', undefined, {
+      replyContext: { replyToUser: 'Gone_User', replyToText: 'trimmed', replyToMessageId: 'gone' },
+    }));
+    list.appendChild(row);
+    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
+
+    expect(() => reply?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))).not.toThrow();
+  });
+
+  it('leaves a reply without an original id non-interactive', () => {
+    const row = buildMessageElement(message('alice_123', undefined, {
+      replyContext: { replyToUser: 'Legacy_User', replyToText: 'old payload', replyToMessageId: null },
+    }));
+    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
+
+    expect(reply?.hasAttribute('role')).toBe(false);
+    expect(reply?.hasAttribute('tabindex')).toBe(false);
   });
 
   it('renders an emote inside a reply snippet and uses its plain name as the hover title', () => {

@@ -383,8 +383,10 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message__username {
       font-weight: 700; color: inherit; text-decoration: none;
     }
-    #${OWN_LIST_ID} .kickflow-message__username--link { cursor: pointer; }
-    #${OWN_LIST_ID} .kickflow-message__username--link:hover { text-decoration: underline; }
+    #${OWN_LIST_ID} .kickflow-message__username--link,
+    #${OWN_LIST_ID} .kickflow-event-row__identity--link { cursor: pointer; }
+    #${OWN_LIST_ID} .kickflow-message__username--link:hover,
+    #${OWN_LIST_ID} .kickflow-event-row__identity--link:hover { text-decoration: underline; }
     #${OWN_LIST_ID} .kickflow-message__separator {
       display: inline-flex; color: inherit; font-weight: 700;
     }
@@ -433,6 +435,22 @@ function ensureStyles(): void {
       white-space: nowrap; overflow: hidden;
       border-left: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.035);
       border-radius: 4px; padding: 1px 6px;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"] { cursor: pointer; }
+    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"]:hover {
+      background: rgba(255,255,255,0.075);
+    }
+    #${OWN_LIST_ID} .kickflow-message--jump-highlight {
+      outline: 2px solid rgba(83,252,24,0.95); outline-offset: 1px;
+      box-shadow: 0 0 0 4px rgba(83,252,24,0.22), 0 0 16px rgba(83,252,24,0.35);
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-context--miss {
+      animation: kickflow-reply-miss 0.5s ease;
+    }
+    @keyframes kickflow-reply-miss {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-3px); }
+      40%, 80% { transform: translateX(3px); }
     }
     #${OWN_LIST_ID} .kickflow-message__reply-icon {
       display: inline-block; flex: none; width: 13px; margin-right: 4px; font-size: 11px;

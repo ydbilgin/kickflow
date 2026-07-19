@@ -3,7 +3,7 @@ import { SELECTORS } from '../shared/selectors';
 import { t } from '../shared/i18n';
 
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
-const OWN_LIST_ID = 'kickflow-message-list';
+export const OWN_LIST_ID = 'kickflow-message-list';
 const CHAT_ACTIVE_CLASS = 'kickflow-chat-active';
 const STATUS_ATTRIBUTE = 'data-kickflow-chat-status';
 const SYNC_INTERVAL_MS = 500;

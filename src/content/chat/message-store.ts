@@ -56,6 +56,20 @@ export function normalizeChatIdentity(value: string): string {
   return value.trim().toLowerCase();
 }
 
+// System-event payloads carry only bare usernames. Remember colors from real chat senders so
+// those otherwise-thin events can reuse Kick's identity color for the rest of this page session.
+const seenChatIdentityColors = new Map<string, string>();
+
+export function rememberChatIdentityColor(sender: ChatMessageSender): void {
+  const key = normalizeChatIdentity(sender.username);
+  const color = sender.identity.color.trim();
+  if (key && color) seenChatIdentityColors.set(key, color);
+}
+
+export function getSeenChatIdentityColor(username: string): string | undefined {
+  return seenChatIdentityColors.get(normalizeChatIdentity(username));
+}
+
 export type PreservedReason = 'banned' | 'deleted';
 
 export interface ReplyContext {
@@ -269,6 +283,7 @@ export class ChatIntegrityStore {
     message.seq ??= this.nextSeq++;
     this.messageById.set(message.id, message);
     if (!message.systemEvent) {
+      rememberChatIdentityColor(message.sender);
       this.indexByUser(message);
 
       let perUserQueue = this.perUserQueues.get(message.sender.id);

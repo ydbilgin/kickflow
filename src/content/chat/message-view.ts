@@ -1,5 +1,6 @@
-import { mergeIdentityBadges, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
+import { getSeenChatIdentityColor, mergeIdentityBadges, normalizeChatIdentity, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
 import { isSafeKickSlug, openUserCard } from './user-card';
+import { OWN_LIST_ID } from './overlay-mount';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
 import { formatNumber, t, type MessageKey } from '../shared/i18n';
@@ -15,6 +16,38 @@ export const EVENT_ROW_CLASS = 'kickflow-event-row';
 // usernames is about one wrapped line at the panel's 13px width). The rest collapse into
 // a localized "and N more", with every known name still reachable on the preview's hover title.
 export const GIFT_RECIPIENTS_SHOWN_MAX = 3;
+
+// Bright enough for every dark event-row background, but restrained enough to remain readable
+// beside Kick's real identity colors. FNV-1a selects a stable entry for a normalized username.
+const FALLBACK_IDENTITY_COLORS = [
+  '#F472B6', '#FB7185', '#FB923C', '#FACC15',
+  '#A3E635', '#4ADE80', '#2DD4BF', '#22D3EE',
+  '#60A5FA', '#818CF8', '#A78BFA', '#E879F9',
+] as const;
+
+function fallbackIdentityColor(username: string): string {
+  const normalized = normalizeChatIdentity(username);
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < normalized.length; index++) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return FALLBACK_IDENTITY_COLORS[(hash >>> 0) % FALLBACK_IDENTITY_COLORS.length];
+}
+
+function identityColor(username: string): string {
+  return getSeenChatIdentityColor(username) || fallbackIdentityColor(username);
+}
+
+function styleAndWireEventIdentity(element: HTMLElement, username: string): void {
+  element.style.color = identityColor(username);
+  wireProfileSlugLink(
+    element,
+    username.toLowerCase(),
+    username,
+    'kickflow-event-row__identity--link',
+  );
+}
 
 // Kick official emotes only (confirmed scope — no 7TV/BTTV). Live-verified 2026-07-04:
 // `/fullsize` on this path returns 200 image/gif; the same URL without it returns 403.
@@ -484,6 +517,9 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
     user.className = 'kickflow-message__reply-user';
     user.textContent = context.replyToUser;
     user.title = context.replyToUser;
+    // The whole preview is the jump target, so this nested name stays non-interactive to avoid
+    // competing click semantics. It still gets the same known-or-fallback identity color.
+    user.style.color = identityColor(context.replyToUser);
     text.appendChild(user);
     if (context.replyToText) {
       const separator = document.createElement('span');
@@ -510,6 +546,42 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
   reply.title =
     context.replyToUser && replyPlain ? `${context.replyToUser}: ${replyPlain}`
     : replyPlain || context.replyToUser || '';
+  if (context.replyToMessageId) {
+    const replyToMessageId = context.replyToMessageId;
+    reply.setAttribute('role', 'button');
+    reply.tabIndex = 0;
+    const jumpToOriginal = (): void => {
+      const ownList = document.getElementById(OWN_LIST_ID);
+      const target = ownList
+        ? Array.from(ownList.querySelectorAll<HTMLElement>('[data-message-id]'))
+            .find((element) => element.dataset.messageId === replyToMessageId)
+        : undefined;
+      if (!target) {
+        // The original row has almost certainly scrolled past KickFlow's own DOM trim window
+        // (dom-window.ts MAX_NON_PRESERVED_NODES) — a silent no-op here reads as broken, so
+        // give the preview itself a brief "miss" cue instead of pretending nothing happened.
+        reply.classList.remove('kickflow-message__reply-context--miss');
+        // Force reflow so the animation restarts on a second click while it's still playing.
+        void reply.offsetWidth;
+        reply.classList.add('kickflow-message__reply-context--miss');
+        window.setTimeout(() => reply.classList.remove('kickflow-message__reply-context--miss'), 500);
+        return;
+      }
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.classList.add('kickflow-message--jump-highlight');
+      window.setTimeout(() => target.classList.remove('kickflow-message--jump-highlight'), 1800);
+    };
+    reply.addEventListener('click', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      jumpToOriginal();
+    });
+    reply.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      jumpToOriginal();
+    });
+  }
   row.appendChild(reply);
 }
 
@@ -546,6 +618,7 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
   const username = document.createElement('span');
   username.className = `${EVENT_ROW_CLASS}__username`;
   username.textContent = event.username;
+  styleAndWireEventIdentity(username, event.username);
 
   // Flex-item boundaries collapse adjacent whitespace (CSS Flexbox ยง4), so bare text
   // nodes can't sit directly between elements here — everything but the icon goes in
@@ -592,6 +665,7 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
       const recipient = document.createElement('span');
       recipient.className = `${EVENT_ROW_CLASS}__recipient`;
       recipient.textContent = recipients[0];
+      styleAndWireEventIdentity(recipient, recipients[0]);
       body.append(recipient, document.createTextNode(localized.slice(splitAt + recipients[0].length)));
     } else {
       // Kick's gifted_total is authoritative, but the headline must never contradict the
@@ -609,6 +683,7 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
           const recipient = document.createElement('span');
           recipient.className = `${EVENT_ROW_CLASS}__recipient`;
           recipient.textContent = name;
+          styleAndWireEventIdentity(recipient, name);
           return recipient;
         };
 
