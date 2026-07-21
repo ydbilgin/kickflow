@@ -27,7 +27,7 @@ _Offline component render of the production message renderer and CSS. All messag
 
 Compact system rows cover:
 
-- new subscriptions and renewals with month counts;
+- new subscriptions and renewal celebration cards with month counts and the sender's message;
 - single and bulk gifted subscriptions;
 - Kicks gifts with grouped amounts, gift names, and sender notes;
 - host and raid activity with viewer counts;
@@ -51,7 +51,7 @@ KickFlow also preserves space for Kick's native event stack so native pinned mes
 
 ## Safe chat rendering and user cards
 
-The custom message renderer supports Kick emotes, mentions, web links, replies, role badges, subscriber badges, and user colors. It validates image and link destinations, renders untrusted values through DOM text APIs, and opens same-origin links without letting Kick's page router replace the current view.
+The custom message renderer supports Kick emotes, mentions, web links, replies, role badges, subscriber badges, and user colors. Badge visibility and ordering follow Kick's payload: inactive role badges and unselected modern badges stay hidden. It validates image and link destinations, renders untrusted values through DOM text APIs, and opens same-origin links without letting Kick's page router replace the current view.
 
 Selecting a username opens a draggable profile card with the user's relationship details, badges, follower count, profile metadata, and a safe new-tab link. Middle-click and modified-click profile navigation are supported.
 
@@ -83,6 +83,7 @@ KickFlow mounts its controls directly into Kick's native player bar:
 - **Speed controls:** offers automatic mode and manual speeds from 0.25x to 3x, with a buffer-pressure fallback.
 - **Screenshot:** saves the current decoded video frame as a PNG.
 - **Automatic theater mode:** enters Kick's native theater layout once per media load without overriding a later manual exit.
+- **Caption guard:** clears Kick's persisted automatic-caption preference when a player session starts and turns off an already-restored caption state once, while leaving manual caption use available for that session.
 
 ![KickFlow controls in an offline synthetic player bar](docs/screenshots/player-controls.png)
 
@@ -118,7 +119,7 @@ _Offline component render of the production Chat tab._
 
 ### Player
 
-Player controls automatic theater mode, seek buttons, live catch-up, highest quality, screenshots, and speed controls.
+Player controls automatic theater mode, the caption guard, seek buttons, live catch-up, highest quality, screenshots, and speed controls.
 
 ![Player feature settings](docs/screenshots/settings-player.png)
 
@@ -192,9 +193,9 @@ npm run build
 | Layer | Technology |
 | --- | --- |
 | Extension platform | Chrome Manifest V3 |
-| Application code | TypeScript 5.6 |
-| Bundling | esbuild 0.24 |
-| Tests | Vitest 4.1 and jsdom 29 |
+| Application code | TypeScript |
+| Bundling | esbuild |
+| Tests | Vitest and jsdom |
 | UI integration | Content scripts over Kick's native DOM and public event interfaces |
 
 All documentation PNGs are generated in headless Chromium from real KickFlow TypeScript modules and production CSS. The harness is strictly offline, uses synthetic data, and never opens Kick.com.
