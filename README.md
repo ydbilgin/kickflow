@@ -61,7 +61,9 @@ Reply previews preserve emotes and can be selected to scroll to the original mes
 
 KickFlow can highlight chat rows that @mention the owner or reply to the owner's messages. A manual Kick username is available when owner identity cannot be detected automatically.
 
-Each layer is independently controlled: the personal mention/reply highlight, moderator frame, and VIP frame each have their own on/off switch and their own color, selected from curated swatches or a guarded custom picker (defaults: amber for personal, teal for moderator, pink for VIP). The personal layer also has its own frame, fill, or combined style. Role accents remain visible when layers overlap, while the existing green reply-jump flash keeps priority over the personal outline.
+Each layer is independently controlled: the personal mention/reply highlight, moderator accent, and VIP accent each have their own on/off switch and their own color, selected from curated swatches or a guarded custom picker (defaults: amber for personal, teal for moderator, pink for VIP). The personal layer has its own frame, fill, or combined style.
+
+Moderator and VIP rows share one style setting. **Bar only** — the default — draws just a slim left accent bar, keeping busy chat easy on the eyes; **Bar + fill** adds a faint row tint for anyone who prefers the stronger cue. Role accents remain visible when layers overlap: a personal fill replaces the role tint but never the role bar, and the existing green reply-jump flash keeps priority over the personal outline.
 
 ![Mention, reply, moderator, and VIP chat highlights](docs/screenshots/mention-mod-vip-highlights.png)
 
