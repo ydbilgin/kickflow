@@ -1,3 +1,5 @@
+import type { RoleHighlightStyle } from './message-highlight';
+
 export interface FeatureFlags {
   /** Chat rendering mode: native augment keeps Kick's chat; own renders KickFlow's overlay list. */
   chatMode: 'native' | 'own';
@@ -53,11 +55,13 @@ export interface FeatureFlags {
   mentionHighlightStyle: 'frame' | 'fill' | 'both';
   /** Personal-attention accent color (hex). Guardrailed via sanitizeHighlightColor on write. */
   mentionHighlightColor: string;
-  /** Left accent bar on moderator senders. */
+  /** Shared moderator/VIP visual style: bar only (`frame`) or bar plus faint fill (`both`). */
+  roleHighlightStyle: RoleHighlightStyle;
+  /** Enables the moderator role treatment (bar, and fill when style is `both`). Legacy name retained for storage compatibility. */
   modFrameEnabled: boolean;
   /** Moderator accent color (hex). Guardrailed via sanitizeHighlightColor on write. */
   modFrameColor: string;
-  /** Left accent bar on VIP senders (beats mod when both). */
+  /** Enables the VIP role treatment (beats mod when both). Legacy name retained for storage compatibility. */
   vipFrameEnabled: boolean;
   /** VIP accent color (hex). Guardrailed via sanitizeHighlightColor on write. */
   vipFrameColor: string;
@@ -89,6 +93,7 @@ export const featureFlags: FeatureFlags = {
   mentionHighlightEnabled: true,
   mentionHighlightStyle: 'both',
   mentionHighlightColor: '#FFC94D',
+  roleHighlightStyle: 'frame',
   modFrameEnabled: true,
   modFrameColor: '#14B8A6',
   vipFrameEnabled: true,

@@ -32,6 +32,7 @@ describe('feature-flags', () => {
     expect(featureFlags.mentionHighlightEnabled).toBe(true);
     expect(featureFlags.mentionHighlightStyle).toBe('both');
     expect(featureFlags.mentionHighlightColor).toBe('#FFC94D');
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
     expect(featureFlags.modFrameEnabled).toBe(true);
     expect(featureFlags.modFrameColor).toBe('#14B8A6');
     expect(featureFlags.vipFrameEnabled).toBe(true);

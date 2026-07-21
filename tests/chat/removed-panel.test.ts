@@ -98,8 +98,10 @@ function message(id: string, userId: number, content = id): ChatMessage {
 }
 
 describe('RemovedMessagesPanel', () => {
+  const originalFlags = { ...featureFlags };
   beforeAll(() => setLang('tr'));
   afterEach(() => {
+    Object.assign(featureFlags, originalFlags);
     vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
@@ -749,8 +751,8 @@ describe('RemovedMessagesPanel', () => {
       ['Mod değişiklikleri', 'showModeChanges'],
       ['Aktif sohbetçi rozetleri', 'showChattersBadges'],
       ['Bana yanıt verildiğinde / benden bahsedildiğinde vurgula', 'mentionHighlightEnabled'],
-      ['Moderatör mesajlarını çerçevele', 'modFrameEnabled'],
-      ['VIP mesajlarını çerçevele', 'vipFrameEnabled'],
+      ['Moderatör mesajlarını vurgula', 'modFrameEnabled'],
+      ['VIP mesajlarını vurgula', 'vipFrameEnabled'],
       ['Otomatik tiyatro modu', 'autoTheater'],
       ['Altyazıyı varsayılan olarak kapalı tut', 'captionGuard'],
       ['Geri / ileri sarma', 'rewindControls'],
@@ -782,7 +784,7 @@ describe('RemovedMessagesPanel', () => {
       lifecycle.dispose();
     });
 
-    it('places reusable color pickers directly below the personal, moderator, and VIP controls', () => {
+    it('exposes one shared role style control and collapses role colors by default', () => {
       const lifecycle = new Lifecycle();
       const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
       const chat = openDashboardSection(panel, 'chat').pane;
@@ -790,15 +792,66 @@ describe('RemovedMessagesPanel', () => {
       const rowIndex = (label: string) => rows.findIndex((row) => row.querySelector('span')?.textContent === label);
 
       expect(rowIndex('Vurgu rengi')).toBe(rowIndex('Vurgu stili') + 1);
-      expect(rowIndex('Moderatör çerçeve rengi')).toBe(rowIndex('Moderatör mesajlarını çerçevele') + 1);
-      expect(rowIndex('VIP çerçeve rengi')).toBe(rowIndex('VIP mesajlarını çerçevele') + 1);
+      expect(rowIndex('Moderatör / VIP stili')).toBeGreaterThan(rowIndex('Kick kullanıcı adın'));
+      expect(rowIndex('Moderatör mesajlarını vurgula')).toBe(rowIndex('Moderatör / VIP stili') + 1);
+      expect(rowIndex('VIP mesajlarını vurgula')).toBe(rowIndex('Moderatör mesajlarını vurgula') + 1);
 
-      const colorRows = rows.filter((row) => row.querySelector('input[type="color"]'));
-      expect(colorRows).toHaveLength(3);
+      const roleGroups = Array.from(chat.querySelectorAll<HTMLElement>('.kickflow-panel__segmented'))
+        .filter((group) => group.getAttribute('aria-label') === 'Moderatör / VIP stili');
+      expect(roleGroups).toHaveLength(1);
+      const roleButtons = Array.from(roleGroups[0].querySelectorAll<HTMLButtonElement>('button'));
+      expect(roleButtons.map((b) => b.textContent)).toEqual(['Yalnız çubuk', 'Çubuk + dolgu']);
+      expect(roleButtons.some((b) => /dolgu only|fill only|Fill|Çerçeve/i.test(b.textContent ?? ''))).toBe(false);
+      expect(roleButtons[0].getAttribute('aria-pressed')).toBe('true');
+      expect(roleButtons[0].classList.contains('kickflow-panel__segment--active')).toBe(true);
+      expect(roleButtons[1].getAttribute('aria-pressed')).toBe('false');
+
+      let received: { key: string; value: unknown } | null = null;
+      const listener = (event: Event) => {
+        received = (event as CustomEvent<{ key: string; value: unknown }>).detail;
+      };
+      window.addEventListener('kickflow:setFlag', listener);
+      roleButtons[1].click();
+      window.removeEventListener('kickflow:setFlag', listener);
+      expect(received).toEqual({ key: 'roleHighlightStyle', value: 'both' });
+
+      featureFlags.roleHighlightStyle = 'both';
+      panel.render();
+      expect(roleButtons[0].getAttribute('aria-pressed')).toBe('false');
+      expect(roleButtons[1].getAttribute('aria-pressed')).toBe('true');
+      expect(roleButtons[1].classList.contains('kickflow-panel__segment--active')).toBe(true);
+
+      const disclosure = chat.querySelector<HTMLDetailsElement>('.kickflow-panel__role-colors');
+      expect(disclosure).not.toBeNull();
+      expect(disclosure!.open).toBe(false);
+      expect(disclosure!.querySelector('summary')?.textContent).toContain('Rol renkleri');
+      const dots = disclosure!.querySelectorAll<HTMLElement>('.kickflow-panel__role-color-dot');
+      expect(dots).toHaveLength(2);
+      for (const dot of dots) {
+        expect(dot.getAttribute('aria-hidden')).toBe('true');
+      }
+
+      // Personal color stays outside the disclosure.
+      expect(rowIndex('Vurgu rengi')).toBeGreaterThanOrEqual(0);
+      expect(disclosure!.contains(rows[rowIndex('Vurgu rengi')])).toBe(false);
+
+      disclosure!.open = true;
+      const colorRows = Array.from(disclosure!.querySelectorAll<HTMLElement>('.kickflow-panel__settings-row'))
+        .filter((row) => row.querySelector('input[type="color"]'));
+      expect(colorRows).toHaveLength(2);
       for (const row of colorRows) {
         expect(row.querySelectorAll('.kickflow-panel__swatch')).toHaveLength(8);
+        expect(row.querySelector('input[type="color"]')).not.toBeNull();
         expect(row.querySelector('.kickflow-panel__color-warn')).not.toBeNull();
       }
+
+      // No per-role style segmented controls.
+      const allSegmentLabels = Array.from(chat.querySelectorAll('.kickflow-panel__segmented'))
+        .map((g) => g.getAttribute('aria-label'));
+      expect(allSegmentLabels.filter((label) => label === 'Moderatör / VIP stili')).toHaveLength(1);
+      expect(allSegmentLabels).not.toContain('Moderatör stili');
+      expect(allSegmentLabels).not.toContain('VIP stili');
+
       lifecycle.dispose();
     });
 

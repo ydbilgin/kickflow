@@ -4,6 +4,9 @@ import {
   personalOutlineRgba,
   rgbaFromHex,
   resolveMessageHighlightState,
+  ROLE_BAR_ALPHA,
+  ROLE_BAR_WIDTH_PX,
+  ROLE_FILL_ALPHA,
   type MessageHighlightState,
   type MentionHighlightStyle,
 } from './message-highlight';
@@ -19,6 +22,7 @@ import { extractMentionUsernames } from './content-tokens';
 
 export const ROLE_VIP_CLASS = 'kickflow-message--role-vip';
 export const ROLE_MOD_CLASS = 'kickflow-message--role-mod';
+export const ROLE_FILL_CLASS = 'kickflow-message--role-fill';
 export const MENTION_ME_CLASS = 'kickflow-message--mention-me';
 export const REPLY_ME_CLASS = 'kickflow-message--reply-me';
 export const HL_FILL_CLASS = 'kickflow-message--hl-fill';
@@ -30,6 +34,7 @@ export const JUMP_HIGHLIGHT_CLASS = 'kickflow-message--jump-highlight';
 const OWN_HIGHLIGHT_CLASSES = [
   ROLE_VIP_CLASS,
   ROLE_MOD_CLASS,
+  ROLE_FILL_CLASS,
   MENTION_ME_CLASS,
   REPLY_ME_CLASS,
   HL_FILL_CLASS,
@@ -83,6 +88,7 @@ export function computeHighlightForMessage(
     jumpFlashActive,
     mentionHighlightEnabled: featureFlags.mentionHighlightEnabled,
     mentionHighlightStyle: featureFlags.mentionHighlightStyle,
+    roleHighlightStyle: featureFlags.roleHighlightStyle,
     modFrameEnabled: featureFlags.modFrameEnabled,
     vipFrameEnabled: featureFlags.vipFrameEnabled,
   });
@@ -98,10 +104,10 @@ export function syncHighlightCssVars(root?: HTMLElement | null): void {
   target.style.setProperty('--kf-hl-outline', personalOutlineRgba(color));
   target.style.setProperty('--kf-hl-fill', personalFillRgba(color, style === 'fill' ? 'fill' : 'both'));
   target.style.setProperty('--kf-hl-fill-only', personalFillRgba(color, 'fill'));
-  target.style.setProperty('--kf-mod-bar', rgbaFromHex(featureFlags.modFrameColor, 0.95));
-  target.style.setProperty('--kf-mod-fill', rgbaFromHex(featureFlags.modFrameColor, 0.07));
-  target.style.setProperty('--kf-vip-bar', rgbaFromHex(featureFlags.vipFrameColor, 0.95));
-  target.style.setProperty('--kf-vip-fill', rgbaFromHex(featureFlags.vipFrameColor, 0.07));
+  target.style.setProperty('--kf-mod-bar', rgbaFromHex(featureFlags.modFrameColor, ROLE_BAR_ALPHA));
+  target.style.setProperty('--kf-mod-fill', rgbaFromHex(featureFlags.modFrameColor, ROLE_FILL_ALPHA));
+  target.style.setProperty('--kf-vip-bar', rgbaFromHex(featureFlags.vipFrameColor, ROLE_BAR_ALPHA));
+  target.style.setProperty('--kf-vip-fill', rgbaFromHex(featureFlags.vipFrameColor, ROLE_FILL_ALPHA));
 }
 
 /** Own-list: class-based layers (outline/border/background live in bootstrap stylesheet). */
@@ -116,6 +122,7 @@ export function applyOwnListHighlights(row: HTMLElement, message: ChatMessage): 
 
   if (state.roleBar === 'vip') row.classList.add(ROLE_VIP_CLASS);
   else if (state.roleBar === 'moderator') row.classList.add(ROLE_MOD_CLASS);
+  if (state.roleFill) row.classList.add(ROLE_FILL_CLASS);
 
   if (state.personal === 'mention') row.classList.add(MENTION_ME_CLASS);
   if (state.personal === 'reply') row.classList.add(REPLY_ME_CLASS);
@@ -163,11 +170,14 @@ export function applyNativeHighlights(row: HTMLElement, message: ChatMessage): v
 
   const shadows: string[] = [];
   if (state.roleBar === 'vip') {
-    shadows.push(`inset 3px 0 0 ${rgbaFromHex(featureFlags.vipFrameColor, 0.95)}`);
-    if (!state.fill) shadows.push(`inset 0 0 0 9999px ${rgbaFromHex(featureFlags.vipFrameColor, 0.07)}`);
+    shadows.push(`inset ${ROLE_BAR_WIDTH_PX}px 0 0 ${rgbaFromHex(featureFlags.vipFrameColor, ROLE_BAR_ALPHA)}`);
   } else if (state.roleBar === 'moderator') {
-    shadows.push(`inset 3px 0 0 ${rgbaFromHex(featureFlags.modFrameColor, 0.95)}`);
-    if (!state.fill) shadows.push(`inset 0 0 0 9999px ${rgbaFromHex(featureFlags.modFrameColor, 0.07)}`);
+    shadows.push(`inset ${ROLE_BAR_WIDTH_PX}px 0 0 ${rgbaFromHex(featureFlags.modFrameColor, ROLE_BAR_ALPHA)}`);
+  }
+  if (state.roleFill === 'vip') {
+    shadows.push(`inset 0 0 0 9999px ${rgbaFromHex(featureFlags.vipFrameColor, ROLE_FILL_ALPHA)}`);
+  } else if (state.roleFill === 'moderator') {
+    shadows.push(`inset 0 0 0 9999px ${rgbaFromHex(featureFlags.modFrameColor, ROLE_FILL_ALPHA)}`);
   }
 
   if (state.fill) {

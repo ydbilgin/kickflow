@@ -529,6 +529,51 @@ describe('bootstrap event display flags', () => {
     expect(restoredVipHsl.h < 90 || restoredVipHsl.h > 120).toBe(true);
   });
 
+  it('persists, loads, and reports roleHighlightStyle; missing/invalid keep frame', async () => {
+    storageSet.mockClear();
+    featureFlags.roleHighlightStyle = 'frame';
+
+    bootstrap.applyFlagChange('roleHighlightStyle', 'both');
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_roleHighlightStyle: 'both' });
+    expect(bootstrap.getPopupFeatureFlags().roleHighlightStyle).toBe('both');
+
+    bootstrap.applyFlagChange('roleHighlightStyle', 'frame');
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_roleHighlightStyle: 'frame' });
+
+    storageSet.mockClear();
+    bootstrap.applyFlagChange('roleHighlightStyle', 'fill');
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+    expect(storageSet).not.toHaveBeenCalled();
+
+    featureFlags.roleHighlightStyle = 'frame';
+    storageGet.mockResolvedValue({});
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+
+    featureFlags.roleHighlightStyle = 'both';
+    storageGet.mockResolvedValue({});
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+
+    featureFlags.roleHighlightStyle = 'frame';
+    storageGet.mockResolvedValue({ kf_flag_roleHighlightStyle: 'both' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+    expect(bootstrap.getPopupFeatureFlags().roleHighlightStyle).toBe('both');
+
+    featureFlags.roleHighlightStyle = 'frame';
+    storageGet.mockResolvedValue({ kf_flag_roleHighlightStyle: 'fill' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+
+    featureFlags.roleHighlightStyle = 'both';
+    storageGet.mockResolvedValue({ kf_flag_roleHighlightStyle: 'nope' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+  });
+
   it('live OFF tears down each mounted player surface and ON remounts it without restarting chat', () => {
     const wrapper = document.createElement('div');
     const video = document.createElement('video');

@@ -38,7 +38,7 @@ import {
   setHighlightStore,
   syncHighlightCssVars,
 } from './chat/message-highlight-apply';
-import { sanitizeHighlightColor } from './chat/message-highlight';
+import { sanitizeHighlightColor, ROLE_BAR_ALPHA, ROLE_BAR_WIDTH_PX, ROLE_FILL_ALPHA } from './chat/message-highlight';
 import { invalidateOwnerIdentityCache } from './chat/owner-identity';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
@@ -474,10 +474,10 @@ function ensureStyles(): void {
       --kf-hl-outline: rgba(255,201,77,0.95);
       --kf-hl-fill: rgba(255,201,77,0.13);
       --kf-hl-fill-only: rgba(255,201,77,0.18);
-      --kf-mod-bar: rgba(20,184,166,0.95);
-      --kf-mod-fill: rgba(20,184,166,0.07);
-      --kf-vip-bar: rgba(236,72,153,0.95);
-      --kf-vip-fill: rgba(236,72,153,0.07);
+      --kf-mod-bar: rgba(20,184,166,${ROLE_BAR_ALPHA});
+      --kf-mod-fill: rgba(20,184,166,${ROLE_FILL_ALPHA});
+      --kf-vip-bar: rgba(236,72,153,${ROLE_BAR_ALPHA});
+      --kf-vip-fill: rgba(236,72,153,${ROLE_FILL_ALPHA});
     }
     #${OWN_LIST_ID} .kickflow-message--mention-me.kickflow-message--hl-frame:not(.kickflow-message--jump-highlight),
     #${OWN_LIST_ID} .kickflow-message--reply-me.kickflow-message--hl-frame:not(.kickflow-message--jump-highlight) {
@@ -491,17 +491,17 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message--hl-fill:not(.kickflow-message--hl-frame) {
       background-color: var(--kf-hl-fill-only);
     }
-    /* Role bars: left accent + faint tint (tint yields to personal fill when both). */
+    /* Role bars: left accent always; faint tint only with role-fill (yields to personal fill). */
     #${OWN_LIST_ID} .kickflow-message--role-mod {
-      border-left: 3px solid var(--kf-mod-bar);
+      border-left: ${ROLE_BAR_WIDTH_PX}px solid var(--kf-mod-bar);
     }
-    #${OWN_LIST_ID} .kickflow-message--role-mod:not(.kickflow-message--hl-fill) {
+    #${OWN_LIST_ID} .kickflow-message--role-mod.kickflow-message--role-fill:not(.kickflow-message--hl-fill) {
       background-color: var(--kf-mod-fill);
     }
     #${OWN_LIST_ID} .kickflow-message--role-vip {
-      border-left: 3px solid var(--kf-vip-bar);
+      border-left: ${ROLE_BAR_WIDTH_PX}px solid var(--kf-vip-bar);
     }
-    #${OWN_LIST_ID} .kickflow-message--role-vip:not(.kickflow-message--hl-fill) {
+    #${OWN_LIST_ID} .kickflow-message--role-vip.kickflow-message--role-fill:not(.kickflow-message--hl-fill) {
       background-color: var(--kf-vip-fill);
     }
     #${OWN_LIST_ID} .kickflow-message__reply-context--to-me {
@@ -528,6 +528,38 @@ function ensureStyles(): void {
     }
     .kickflow-panel__segment--active {
       background: oklch(0.86 0.24 145 / .16); color: oklch(0.92 0.007 150);
+    }
+    .kickflow-panel__role-colors {
+      display: flex; flex-direction: column; gap: 8px;
+      padding: 10px 0; border-bottom: 1px solid oklch(0.27 0.01 150);
+    }
+    .kickflow-panel__role-colors > summary {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+      list-style: none; cursor: pointer; color: oklch(0.92 0.007 150);
+      font: 600 12px/1.3 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-panel__role-colors > summary::-webkit-details-marker { display: none; }
+    .kickflow-panel__role-colors > summary:focus-visible {
+      outline: 2px solid oklch(0.86 0.24 145 / .55); outline-offset: 2px; border-radius: 4px;
+    }
+    .kickflow-panel__role-colors-copy {
+      display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 160px;
+    }
+    .kickflow-panel__role-colors-desc {
+      color: oklch(0.68 0.01 150); font: 400 11px/1.35 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-panel__role-color-dots {
+      display: inline-flex; align-items: center; gap: 6px; flex: none;
+    }
+    .kickflow-panel__role-color-dot {
+      width: 10px; height: 10px; border-radius: 999px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
+    }
+    .kickflow-panel__role-colors[open] > summary {
+      margin-bottom: 4px;
+    }
+    .kickflow-panel__role-colors .kickflow-panel__settings-row--stack {
+      border-bottom-color: oklch(0.27 0.01 150 / .55);
     }
     .kickflow-panel__swatches {
       display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
@@ -1737,6 +1769,11 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     void safeStorageSet({ kf_flag_mentionHighlightStyle: value });
     refreshMessageHighlights();
     reconcileActiveNativeChat();
+  } else if (key === 'roleHighlightStyle' && (value === 'frame' || value === 'both')) {
+    setFeatureFlag('roleHighlightStyle', value);
+    void safeStorageSet({ kf_flag_roleHighlightStyle: value });
+    refreshMessageHighlights();
+    reconcileActiveNativeChat();
   } else if (isHighlightColorFlagKey(key) && typeof value === 'string') {
     const sanitized = sanitizeHighlightColor(value);
     setFeatureFlag(key, sanitized);
@@ -1776,6 +1813,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     mentionHighlightEnabled: featureFlags.mentionHighlightEnabled,
     mentionHighlightStyle: featureFlags.mentionHighlightStyle,
     mentionHighlightColor: featureFlags.mentionHighlightColor,
+    roleHighlightStyle: featureFlags.roleHighlightStyle,
     modFrameEnabled: featureFlags.modFrameEnabled,
     modFrameColor: featureFlags.modFrameColor,
     vipFrameEnabled: featureFlags.vipFrameEnabled,
@@ -1896,6 +1934,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_mentionHighlightEnabled',
     'kf_flag_mentionHighlightStyle',
     'kf_flag_mentionHighlightColor',
+    'kf_flag_roleHighlightStyle',
     'kf_flag_modFrameEnabled',
     'kf_flag_modFrameColor',
     'kf_flag_vipFrameEnabled',
@@ -1931,6 +1970,9 @@ export async function applySavedFlags(): Promise<void> {
   }
   if (typeof saved.kf_flag_mentionHighlightColor === 'string') {
     setFeatureFlag('mentionHighlightColor', sanitizeHighlightColor(saved.kf_flag_mentionHighlightColor));
+  }
+  if (saved.kf_flag_roleHighlightStyle === 'frame' || saved.kf_flag_roleHighlightStyle === 'both') {
+    setFeatureFlag('roleHighlightStyle', saved.kf_flag_roleHighlightStyle);
   }
   if (typeof saved.kf_flag_modFrameEnabled === 'boolean') setFeatureFlag('modFrameEnabled', saved.kf_flag_modFrameEnabled);
   if (typeof saved.kf_flag_modFrameColor === 'string') {

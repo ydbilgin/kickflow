@@ -9,6 +9,8 @@ import {
   MENTION_COLOR_SWATCHES,
   normalizeHexColor,
   sanitizeHighlightColor,
+  type MentionHighlightStyle,
+  type RoleHighlightStyle,
 } from './message-highlight';
 import { isOwnerIdentityResolved } from './owner-identity';
 import { getExtensionVersion } from '../shared/extension-context';
@@ -143,8 +145,10 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private mentionHighlightCheckbox: HTMLInputElement | null = null;
   private modFrameCheckbox: HTMLInputElement | null = null;
   private vipFrameCheckbox: HTMLInputElement | null = null;
-  private mentionStyleButtons = new Map<'frame' | 'fill' | 'both', HTMLButtonElement>();
+  private mentionStyleButtons = new Map<MentionHighlightStyle, HTMLButtonElement>();
+  private roleStyleButtons = new Map<RoleHighlightStyle, HTMLButtonElement>();
   private readonly highlightColorControls = new Map<HighlightColorFlagKey, HighlightColorControlRefs>();
+  private roleColorDots: { mod: HTMLElement; vip: HTMLElement } | null = null;
   private manualUsernameInput: HTMLInputElement | null = null;
   private identityNote: HTMLElement | null = null;
   private autoTheaterCheckbox: HTMLInputElement | null = null;
@@ -589,6 +593,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     const identityRow = this.buildManualUsernameControl();
 
+    const roleStyleRow = this.buildRoleStyleControl();
+
     const { label: modFrameLabel, checkbox: modFrameCheckbox } = this.buildSettingsToggle(
       t('setting.mod_frame'),
       t('setting.mod_frame_desc'),
@@ -596,13 +602,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       featureFlags.modFrameEnabled,
     );
     this.modFrameCheckbox = modFrameCheckbox;
-    const modFrameColorRow = this.buildHighlightColorControl(
-      'modFrameColor',
-      'setting.mod_frame_color',
-      'setting.mod_frame_color_desc',
-      'setting.mod_frame_color_warn',
-      () => featureFlags.modFrameColor,
-    );
 
     const { label: vipFrameLabel, checkbox: vipFrameCheckbox } = this.buildSettingsToggle(
       t('setting.vip_frame'),
@@ -611,13 +610,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       featureFlags.vipFrameEnabled,
     );
     this.vipFrameCheckbox = vipFrameCheckbox;
-    const vipFrameColorRow = this.buildHighlightColorControl(
-      'vipFrameColor',
-      'setting.vip_frame_color',
-      'setting.vip_frame_color_desc',
-      'setting.vip_frame_color_warn',
-      () => featureFlags.vipFrameColor,
-    );
+
+    const roleColorsDisclosure = this.buildRoleColorsDisclosure();
 
     chatGroup.append(
       deletedLabel,
@@ -633,10 +627,10 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       mentionStyleRow,
       mentionColorRow,
       identityRow,
+      roleStyleRow,
       modFrameLabel,
-      modFrameColorRow,
       vipFrameLabel,
-      vipFrameColorRow,
+      roleColorsDisclosure,
     );
     chat.append(chatGroup);
 
@@ -915,31 +909,106 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   }
 
   private buildMentionStyleControl(): HTMLElement {
+    return this.buildSegmentedStyleControl({
+      labelKey: 'setting.mention_style',
+      descriptionKey: 'setting.mention_style_desc',
+      flagKey: 'mentionHighlightStyle',
+      options: [
+        { value: 'frame', labelKey: 'setting.mention_style_frame' },
+        { value: 'fill', labelKey: 'setting.mention_style_fill' },
+        { value: 'both', labelKey: 'setting.mention_style_both' },
+      ],
+      buttonMap: this.mentionStyleButtons,
+      sync: () => this.syncMentionStyleButtons(),
+    });
+  }
+
+  private buildRoleStyleControl(): HTMLElement {
+    return this.buildSegmentedStyleControl({
+      labelKey: 'setting.role_style',
+      descriptionKey: 'setting.role_style_desc',
+      flagKey: 'roleHighlightStyle',
+      options: [
+        { value: 'frame', labelKey: 'setting.role_style_frame' },
+        { value: 'both', labelKey: 'setting.role_style_both' },
+      ],
+      buttonMap: this.roleStyleButtons,
+      sync: () => this.syncRoleStyleButtons(),
+    });
+  }
+
+  private buildSegmentedStyleControl<T extends string>(config: {
+    labelKey: MessageKey;
+    descriptionKey: MessageKey;
+    flagKey: string;
+    options: Array<{ value: T; labelKey: MessageKey }>;
+    buttonMap: Map<T, HTMLButtonElement>;
+    sync: () => void;
+  }): HTMLElement {
     const row = document.createElement('div');
     row.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--stack';
-    row.appendChild(this.buildRowCopy(t('setting.mention_style'), t('setting.mention_style_desc')));
+    row.appendChild(this.buildRowCopy(t(config.labelKey), t(config.descriptionKey)));
     const group = document.createElement('div');
     group.className = 'kickflow-panel__segmented';
     group.setAttribute('role', 'group');
-    group.setAttribute('aria-label', t('setting.mention_style'));
-    this.mentionStyleButtons.clear();
-    const options: Array<{ value: 'frame' | 'fill' | 'both'; labelKey: MessageKey }> = [
-      { value: 'frame', labelKey: 'setting.mention_style_frame' },
-      { value: 'fill', labelKey: 'setting.mention_style_fill' },
-      { value: 'both', labelKey: 'setting.mention_style_both' },
-    ];
-    for (const option of options) {
+    group.setAttribute('aria-label', t(config.labelKey));
+    config.buttonMap.clear();
+    for (const option of config.options) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'kickflow-panel__segment';
       button.textContent = t(option.labelKey);
-      button.addEventListener('click', () => dispatchFlag('mentionHighlightStyle', option.value));
-      this.mentionStyleButtons.set(option.value, button);
+      button.addEventListener('click', () => dispatchFlag(config.flagKey, option.value));
+      config.buttonMap.set(option.value, button);
       group.appendChild(button);
     }
-    this.syncMentionStyleButtons();
+    config.sync();
     row.appendChild(group);
     return row;
+  }
+
+  private buildRoleColorsDisclosure(): HTMLElement {
+    const details = document.createElement('details');
+    details.className = 'kickflow-panel__role-colors';
+    const summary = document.createElement('summary');
+    const copy = document.createElement('div');
+    copy.className = 'kickflow-panel__role-colors-copy';
+    const title = document.createElement('span');
+    title.textContent = t('setting.role_colors');
+    const desc = document.createElement('span');
+    desc.className = 'kickflow-panel__role-colors-desc';
+    desc.textContent = t('setting.role_colors_desc');
+    copy.append(title, desc);
+    const dots = document.createElement('span');
+    dots.className = 'kickflow-panel__role-color-dots';
+    const modDot = document.createElement('span');
+    modDot.className = 'kickflow-panel__role-color-dot';
+    modDot.setAttribute('aria-hidden', 'true');
+    const vipDot = document.createElement('span');
+    vipDot.className = 'kickflow-panel__role-color-dot';
+    vipDot.setAttribute('aria-hidden', 'true');
+    dots.append(modDot, vipDot);
+    this.roleColorDots = { mod: modDot, vip: vipDot };
+    summary.append(copy, dots);
+    details.appendChild(summary);
+
+    const modFrameColorRow = this.buildHighlightColorControl(
+      'modFrameColor',
+      'setting.mod_frame_color',
+      'setting.mod_frame_color_desc',
+      'setting.mod_frame_color_warn',
+      () => featureFlags.modFrameColor,
+    );
+    const vipFrameColorRow = this.buildHighlightColorControl(
+      'vipFrameColor',
+      'setting.vip_frame_color',
+      'setting.vip_frame_color_desc',
+      'setting.vip_frame_color_warn',
+      () => featureFlags.vipFrameColor,
+    );
+    details.append(modFrameColorRow, vipFrameColorRow);
+    this.syncRoleColorDots();
+    return details;
   }
 
   private buildHighlightColorControl(
@@ -1031,6 +1100,22 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       button.classList.toggle('kickflow-panel__segment--active', value === current);
       button.setAttribute('aria-pressed', value === current ? 'true' : 'false');
     }
+  }
+
+  private syncRoleStyleButtons(): void {
+    const current = featureFlags.roleHighlightStyle;
+    for (const [value, button] of this.roleStyleButtons) {
+      button.classList.toggle('kickflow-panel__segment--active', value === current);
+      button.setAttribute('aria-pressed', value === current ? 'true' : 'false');
+    }
+  }
+
+  private syncRoleColorDots(): void {
+    if (!this.roleColorDots) return;
+    this.roleColorDots.mod.style.backgroundColor =
+      normalizeHexColor(featureFlags.modFrameColor) ?? featureFlags.modFrameColor;
+    this.roleColorDots.vip.style.backgroundColor =
+      normalizeHexColor(featureFlags.vipFrameColor) ?? featureFlags.vipFrameColor;
   }
 
   private syncHighlightColorControls(): void {
@@ -1177,7 +1262,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       this.vipFrameCheckbox.checked = featureFlags.vipFrameEnabled;
     }
     this.syncMentionStyleButtons();
+    this.syncRoleStyleButtons();
     this.syncHighlightColorControls();
+    this.syncRoleColorDots();
     if (this.manualUsernameInput && this.manualUsernameInput.value !== featureFlags.manualUsername
       && document.activeElement !== this.manualUsernameInput) {
       this.manualUsernameInput.value = featureFlags.manualUsername;
@@ -1307,7 +1394,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.modFrameCheckbox = null;
     this.vipFrameCheckbox = null;
     this.mentionStyleButtons.clear();
+    this.roleStyleButtons.clear();
     this.highlightColorControls.clear();
+    this.roleColorDots = null;
     this.manualUsernameInput = null;
     this.identityNote = null;
     this.autoTheaterCheckbox = null;

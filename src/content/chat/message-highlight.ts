@@ -4,10 +4,19 @@
  */
 
 export type MentionHighlightStyle = 'frame' | 'fill' | 'both';
+/** Shared moderator/VIP visual treatment: left bar only, or bar plus faint row fill. */
+export type RoleHighlightStyle = 'frame' | 'both';
 export type RoleBar = 'vip' | 'moderator' | null;
 export type PersonalKind = 'reply' | 'mention' | null;
 
 export const DEFAULT_MENTION_HIGHLIGHT_COLOR = '#FFC94D';
+
+/** Role left-bar width (own-list border / native inset shadow). */
+export const ROLE_BAR_WIDTH_PX = 2;
+/** Role left-bar alpha over the chat surface. */
+export const ROLE_BAR_ALPHA = 0.80;
+/** Opt-in role full-row tint alpha (`both` style only). */
+export const ROLE_FILL_ALPHA = 0.04;
 
 /** Curated swatches for the Sohbet color pickers (personal default first). None are in Kick's reserved green band. */
 export const MENTION_COLOR_SWATCHES = [
@@ -29,12 +38,16 @@ export interface ResolveMessageHighlightInput {
   jumpFlashActive: boolean;
   mentionHighlightEnabled: boolean;
   mentionHighlightStyle: MentionHighlightStyle;
+  /** Shared moderator/VIP style. Missing callers should pass `'frame'`. */
+  roleHighlightStyle: RoleHighlightStyle;
   modFrameEnabled: boolean;
   vipFrameEnabled: boolean;
 }
 
 export interface MessageHighlightState {
   roleBar: RoleBar;
+  /** Role full-row tint when style is `both` and personal fill is not active. */
+  roleFill: RoleBar;
   /** Apply personal fill layer. */
   fill: boolean;
   /** Apply personal outline (false while jump-flash owns the outline). */
@@ -44,9 +57,10 @@ export interface MessageHighlightState {
 }
 
 /**
- * Three independent visual channels:
- * 1. roleBar — vip beats moderator; never suppressed by personal/flash
- * 2. personal fill — when style includes fill
+ * Three independent visual channels (role fill is a supplemental treatment of the role bar,
+ * not a fourth precedence channel):
+ * 1. roleBar — vip beats moderator; never suppressed by personal/flash; always present for both styles
+ * 2. personal fill — when style includes fill (replaces role fill when both would apply)
  * 3. personal outline — yielded to jump-flash while flash is active
  */
 export function resolveMessageHighlightState(input: ResolveMessageHighlightInput): MessageHighlightState {
@@ -66,8 +80,12 @@ export function resolveMessageHighlightState(input: ResolveMessageHighlightInput
   const wantsFill = personal != null && (style === 'fill' || style === 'both');
   const wantsFrame = personal != null && (style === 'frame' || style === 'both');
   const outline = wantsFrame && !input.jumpFlashActive;
+  const roleFill: RoleBar =
+    roleBar != null && input.roleHighlightStyle === 'both' && !wantsFill
+      ? roleBar
+      : null;
 
-  return { roleBar, fill: wantsFill, outline, personal };
+  return { roleBar, roleFill, fill: wantsFill, outline, personal };
 }
 
 export interface Rgb {
