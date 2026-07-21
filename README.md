@@ -67,6 +67,10 @@ Each layer is independently controlled: the personal mention/reply highlight, mo
 
 _Offline component render of the production message renderer, highlight resolver, and CSS with synthetic identities and chat content._
 
+![Mention, reply, moderator, and VIP chat highlights with custom colors](docs/screenshots/mention-mod-vip-highlights-custom-colors.png)
+
+_The same states with independently chosen violet personal, sky moderator, and magenta VIP colors._
+
 ## Live player tools
 
 KickFlow mounts its controls directly into Kick's native player bar:
