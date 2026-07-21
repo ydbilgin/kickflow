@@ -32,6 +32,9 @@ export interface FeatureFlags {
   /** Automatically enter Kick's theater layout when a channel/video loads. Opt-in because it
    * changes the page layout rather than only augmenting it. */
   autoTheater: boolean;
+  /** Clear Kick's persisted auto-caption preference at each player session and turn off an
+   * already-restored native caption state once. Manual in-session use remains available. */
+  captionGuard: boolean;
   /** Show the 10-second rewind/forward controls and enable their configured hotkeys. */
   rewindControls: boolean;
   /** Show the CANLI/behind-live control and run automatic catch-up. */
@@ -44,6 +47,22 @@ export interface FeatureFlags {
   speedControls: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
+  /** Highlight chat rows that @-mention the owner or reply to the owner's messages. */
+  mentionHighlightEnabled: boolean;
+  /** Personal-attention visual style. */
+  mentionHighlightStyle: 'frame' | 'fill' | 'both';
+  /** Personal-attention accent color (hex). Guardrailed via sanitizeHighlightColor on write. */
+  mentionHighlightColor: string;
+  /** Left accent bar on moderator senders. */
+  modFrameEnabled: boolean;
+  /** Moderator accent color (hex). Guardrailed via sanitizeHighlightColor on write. */
+  modFrameColor: string;
+  /** Left accent bar on VIP senders (beats mod when both). */
+  vipFrameEnabled: boolean;
+  /** VIP accent color (hex). Guardrailed via sanitizeHighlightColor on write. */
+  vipFrameColor: string;
+  /** Manual Kick username override for mention/reply detection (wins over DOM identity). */
+  manualUsername: string;
 }
 
 export const featureFlags: FeatureFlags = {
@@ -60,12 +79,21 @@ export const featureFlags: FeatureFlags = {
   showSidebarRefresh: true,
   showChattersBadges: true,
   autoTheater: false,
+  captionGuard: true,
   rewindControls: true,
   liveCatchup: true,
   qualityLock: true,
   screenshot: true,
   speedControls: true,
   modLogPanel: false,
+  mentionHighlightEnabled: true,
+  mentionHighlightStyle: 'both',
+  mentionHighlightColor: '#FFC94D',
+  modFrameEnabled: true,
+  modFrameColor: '#14B8A6',
+  vipFrameEnabled: true,
+  vipFrameColor: '#EC4899',
+  manualUsername: '',
 };
 
 export function setFeatureFlag<K extends keyof FeatureFlags>(key: K, value: FeatureFlags[K]): void {

@@ -10,6 +10,17 @@ export function isExtensionContextValid(): boolean {
   }
 }
 
+/** Installed extension version from the manifest, falling back to 'dev' outside a real
+ * extension context (offline render harnesses, unit tests). Never hardcode a version literal
+ * elsewhere — this is the single source of truth. */
+export function getExtensionVersion(): string {
+  try {
+    return chrome?.runtime?.getManifest?.().version ?? 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
 /** chrome.storage.local.get that resolves to {} instead of throwing/rejecting on a dead
  * context or unavailable storage. */
 export async function safeStorageGet(keys: string | string[]): Promise<Record<string, unknown>> {

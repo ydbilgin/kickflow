@@ -33,6 +33,13 @@ import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import { configureUserCardSession } from './chat/user-card';
 import { clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
+import {
+  refreshMessageHighlights,
+  setHighlightStore,
+  syncHighlightCssVars,
+} from './chat/message-highlight-apply';
+import { sanitizeHighlightColor } from './chat/message-highlight';
+import { invalidateOwnerIdentityCache } from './chat/owner-identity';
 import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
@@ -40,6 +47,7 @@ import { initRewindControls } from './player/rewind-controls';
 import { deactivateSpeedControls, initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
 import { initAutoTheater, syncAutoTheaterFlag } from './player/auto-theater';
+import { initCaptionGuard } from './player/caption-guard';
 import { shareNativeBarMountManager } from './player/native-bar';
 import {
   HOTKEY_ACTIONS,
@@ -74,16 +82,29 @@ const BOOLEAN_FLAG_KEYS = [
   'showSidebarRefresh',
   'showChattersBadges',
   'autoTheater',
+  'captionGuard',
   'rewindControls',
   'liveCatchup',
   'qualityLock',
   'screenshot',
   'speedControls',
+  'mentionHighlightEnabled',
+  'modFrameEnabled',
+  'vipFrameEnabled',
 ] as const;
 
 type BooleanFlagKey = (typeof BOOLEAN_FLAG_KEYS)[number];
 
+const HIGHLIGHT_COLOR_FLAG_KEYS = [
+  'mentionHighlightColor',
+  'modFrameColor',
+  'vipFrameColor',
+] as const;
+
+type HighlightColorFlagKey = (typeof HIGHLIGHT_COLOR_FLAG_KEYS)[number];
+
 const PLAYER_FEATURE_KEYS = [
+  'captionGuard',
   'rewindControls',
   'liveCatchup',
   'qualityLock',
@@ -99,6 +120,10 @@ function isPlayerFeatureFlagKey(key: string): key is PlayerFeatureFlagKey {
 
 function isBooleanFlagKey(key: string): key is BooleanFlagKey {
   return (BOOLEAN_FLAG_KEYS as readonly string[]).includes(key);
+}
+
+function isHighlightColorFlagKey(key: string): key is HighlightColorFlagKey {
+  return (HIGHLIGHT_COLOR_FLAG_KEYS as readonly string[]).includes(key);
 }
 
 interface SystemEventCallbacks {
@@ -443,6 +468,93 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message--jump-highlight {
       outline: 2px solid rgba(83,252,24,0.95); outline-offset: 1px;
       box-shadow: 0 0 0 4px rgba(83,252,24,0.22), 0 0 16px rgba(83,252,24,0.35);
+    }
+    /* Highlight colors: CSS vars are synchronized from their feature flags. */
+    #${OWN_LIST_ID} {
+      --kf-hl-outline: rgba(255,201,77,0.95);
+      --kf-hl-fill: rgba(255,201,77,0.13);
+      --kf-hl-fill-only: rgba(255,201,77,0.18);
+      --kf-mod-bar: rgba(20,184,166,0.95);
+      --kf-mod-fill: rgba(20,184,166,0.07);
+      --kf-vip-bar: rgba(236,72,153,0.95);
+      --kf-vip-fill: rgba(236,72,153,0.07);
+    }
+    #${OWN_LIST_ID} .kickflow-message--mention-me.kickflow-message--hl-frame:not(.kickflow-message--jump-highlight),
+    #${OWN_LIST_ID} .kickflow-message--reply-me.kickflow-message--hl-frame:not(.kickflow-message--jump-highlight) {
+      outline: 2px solid var(--kf-hl-outline); outline-offset: 1px;
+    }
+    #${OWN_LIST_ID} .kickflow-message--mention-me.kickflow-message--hl-fill,
+    #${OWN_LIST_ID} .kickflow-message--reply-me.kickflow-message--hl-fill {
+      background-color: var(--kf-hl-fill);
+    }
+    /* fill-only mode uses the slightly stronger tint */
+    #${OWN_LIST_ID} .kickflow-message--hl-fill:not(.kickflow-message--hl-frame) {
+      background-color: var(--kf-hl-fill-only);
+    }
+    /* Role bars: left accent + faint tint (tint yields to personal fill when both). */
+    #${OWN_LIST_ID} .kickflow-message--role-mod {
+      border-left: 3px solid var(--kf-mod-bar);
+    }
+    #${OWN_LIST_ID} .kickflow-message--role-mod:not(.kickflow-message--hl-fill) {
+      background-color: var(--kf-mod-fill);
+    }
+    #${OWN_LIST_ID} .kickflow-message--role-vip {
+      border-left: 3px solid var(--kf-vip-bar);
+    }
+    #${OWN_LIST_ID} .kickflow-message--role-vip:not(.kickflow-message--hl-fill) {
+      background-color: var(--kf-vip-fill);
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-context--to-me {
+      border-left-color: var(--kf-hl-outline);
+      color: rgba(255,255,255,0.72);
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-me-mark {
+      display: inline-block; margin-right: 4px; color: var(--kf-hl-outline); font-size: 11px;
+    }
+    /* Panel: highlight style segments + color swatches */
+    .kickflow-panel__settings-row--stack {
+      display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+      min-height: 0; padding: 12px 0; border-bottom: 1px solid oklch(0.27 0.01 150);
+      cursor: default;
+    }
+    .kickflow-panel__segmented {
+      display: inline-flex; flex: none; align-self: flex-start; gap: 2px; padding: 2px;
+      border: 1px solid oklch(0.34 0.01 150); border-radius: 8px; background: oklch(0.22 0.012 150);
+    }
+    .kickflow-panel__segment {
+      appearance: none; border: 0; border-radius: 6px; padding: 7px 10px; cursor: pointer;
+      background: transparent; color: oklch(0.72 0.01 150);
+      font: 600 11px/1 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-panel__segment--active {
+      background: oklch(0.86 0.24 145 / .16); color: oklch(0.92 0.007 150);
+    }
+    .kickflow-panel__swatches {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    }
+    .kickflow-panel__swatch {
+      appearance: none; width: 22px; height: 22px; padding: 0; border-radius: 999px; cursor: pointer;
+      border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
+    }
+    .kickflow-panel__swatch--active { border-color: #fff; }
+    .kickflow-panel__swatch-custom {
+      position: relative; width: 22px; height: 22px; border-radius: 999px; overflow: hidden;
+      border: 2px dashed oklch(0.50 0.01 150); cursor: pointer;
+    }
+    .kickflow-panel__swatch-custom input {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0;
+    }
+    .kickflow-panel__identity-input {
+      width: min(220px, 100%); height: 34px; padding: 0 10px;
+      background: oklch(0.22 0.012 150); color: oklch(0.93 0.007 150);
+      border: 1px solid oklch(0.34 0.01 150); border-radius: 8px;
+      font: 600 12px/1 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-panel__identity-note {
+      margin: 0; color: oklch(0.72 0.08 85); font-size: 11px; line-height: 1.4;
+    }
+    .kickflow-panel__color-warn {
+      margin: 0; color: oklch(0.75 0.14 55); font-size: 11px; line-height: 1.35;
     }
     #${OWN_LIST_ID} .kickflow-message__reply-context--miss {
       animation: kickflow-reply-miss 0.5s ease;
@@ -1085,6 +1197,9 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     },
   });
   augmenter = new NativeChatAugmenter(lifecycle, store);
+  setHighlightStore(store);
+  lifecycle.add(() => setHighlightStore(null));
+  syncHighlightCssVars();
   const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
   initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
@@ -1160,6 +1275,9 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   const store = new ChatIntegrityStore({
     onPreservedEvicted: (message: ChatMessage) => reconcileOwnPreservedEviction(message, store, registry),
   });
+  setHighlightStore(store);
+  lifecycle.add(() => setHighlightStore(null));
+  syncHighlightCssVars();
   const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
   initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
@@ -1347,6 +1465,7 @@ export function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
 }
 
 const playerFeatureInitializers: Record<PlayerFeatureFlagKey, (lifecycle: Lifecycle) => void> = {
+  captionGuard: initCaptionGuard,
   rewindControls: initRewindControls,
   liveCatchup: initLiveCatchup,
   qualityLock: initQualityLock,
@@ -1596,6 +1715,14 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'showChattersBadges') {
       syncActiveChattersBadges();
     }
+    if (
+      key === 'mentionHighlightEnabled'
+      || key === 'modFrameEnabled'
+      || key === 'vipFrameEnabled'
+    ) {
+      refreshMessageHighlights();
+      reconcileActiveNativeChat();
+    }
     void safeStorageSet({ ['kf_flag_' + key]: value });
   } else if (key === 'chatMode' && (value === 'native' || value === 'own')) {
     setFeatureFlag('chatMode', value);
@@ -1605,6 +1732,23 @@ export function applyFlagChange(key: string, value: boolean | string): void {
       resetStatus(currentSlug);
       void startSession(currentSlug);
     }
+  } else if (key === 'mentionHighlightStyle' && (value === 'frame' || value === 'fill' || value === 'both')) {
+    setFeatureFlag('mentionHighlightStyle', value);
+    void safeStorageSet({ kf_flag_mentionHighlightStyle: value });
+    refreshMessageHighlights();
+    reconcileActiveNativeChat();
+  } else if (isHighlightColorFlagKey(key) && typeof value === 'string') {
+    const sanitized = sanitizeHighlightColor(value);
+    setFeatureFlag(key, sanitized);
+    void safeStorageSet({ ['kf_flag_' + key]: sanitized });
+    refreshMessageHighlights();
+    reconcileActiveNativeChat();
+  } else if (key === 'manualUsername' && typeof value === 'string') {
+    setFeatureFlag('manualUsername', value.trim());
+    invalidateOwnerIdentityCache();
+    void safeStorageSet({ kf_flag_manualUsername: value.trim() });
+    refreshMessageHighlights();
+    reconcileActiveNativeChat();
   }
 }
 
@@ -1623,11 +1767,20 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showSidebarRefresh: featureFlags.showSidebarRefresh,
     showChattersBadges: featureFlags.showChattersBadges,
     autoTheater: featureFlags.autoTheater,
+    captionGuard: featureFlags.captionGuard,
     rewindControls: featureFlags.rewindControls,
     liveCatchup: featureFlags.liveCatchup,
     qualityLock: featureFlags.qualityLock,
     screenshot: featureFlags.screenshot,
     speedControls: featureFlags.speedControls,
+    mentionHighlightEnabled: featureFlags.mentionHighlightEnabled,
+    mentionHighlightStyle: featureFlags.mentionHighlightStyle,
+    mentionHighlightColor: featureFlags.mentionHighlightColor,
+    modFrameEnabled: featureFlags.modFrameEnabled,
+    modFrameColor: featureFlags.modFrameColor,
+    vipFrameEnabled: featureFlags.vipFrameEnabled,
+    vipFrameColor: featureFlags.vipFrameColor,
+    manualUsername: featureFlags.manualUsername,
   };
 }
 
@@ -1734,11 +1887,20 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showSidebarRefresh',
     'kf_flag_showChattersBadges',
     'kf_flag_autoTheater',
+    'kf_flag_captionGuard',
     'kf_flag_rewindControls',
     'kf_flag_liveCatchup',
     'kf_flag_qualityLock',
     'kf_flag_screenshot',
     'kf_flag_speedControls',
+    'kf_flag_mentionHighlightEnabled',
+    'kf_flag_mentionHighlightStyle',
+    'kf_flag_mentionHighlightColor',
+    'kf_flag_modFrameEnabled',
+    'kf_flag_modFrameColor',
+    'kf_flag_vipFrameEnabled',
+    'kf_flag_vipFrameColor',
+    'kf_flag_manualUsername',
   ]);
   if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
   if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
@@ -1753,11 +1915,32 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
   if (typeof saved.kf_flag_showChattersBadges === 'boolean') setFeatureFlag('showChattersBadges', saved.kf_flag_showChattersBadges);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
+  if (typeof saved.kf_flag_captionGuard === 'boolean') setFeatureFlag('captionGuard', saved.kf_flag_captionGuard);
   if (typeof saved.kf_flag_rewindControls === 'boolean') setFeatureFlag('rewindControls', saved.kf_flag_rewindControls);
   if (typeof saved.kf_flag_liveCatchup === 'boolean') setFeatureFlag('liveCatchup', saved.kf_flag_liveCatchup);
   if (typeof saved.kf_flag_qualityLock === 'boolean') setFeatureFlag('qualityLock', saved.kf_flag_qualityLock);
   if (typeof saved.kf_flag_screenshot === 'boolean') setFeatureFlag('screenshot', saved.kf_flag_screenshot);
   if (typeof saved.kf_flag_speedControls === 'boolean') setFeatureFlag('speedControls', saved.kf_flag_speedControls);
+  if (typeof saved.kf_flag_mentionHighlightEnabled === 'boolean') setFeatureFlag('mentionHighlightEnabled', saved.kf_flag_mentionHighlightEnabled);
+  if (
+    saved.kf_flag_mentionHighlightStyle === 'frame'
+    || saved.kf_flag_mentionHighlightStyle === 'fill'
+    || saved.kf_flag_mentionHighlightStyle === 'both'
+  ) {
+    setFeatureFlag('mentionHighlightStyle', saved.kf_flag_mentionHighlightStyle);
+  }
+  if (typeof saved.kf_flag_mentionHighlightColor === 'string') {
+    setFeatureFlag('mentionHighlightColor', sanitizeHighlightColor(saved.kf_flag_mentionHighlightColor));
+  }
+  if (typeof saved.kf_flag_modFrameEnabled === 'boolean') setFeatureFlag('modFrameEnabled', saved.kf_flag_modFrameEnabled);
+  if (typeof saved.kf_flag_modFrameColor === 'string') {
+    setFeatureFlag('modFrameColor', sanitizeHighlightColor(saved.kf_flag_modFrameColor));
+  }
+  if (typeof saved.kf_flag_vipFrameEnabled === 'boolean') setFeatureFlag('vipFrameEnabled', saved.kf_flag_vipFrameEnabled);
+  if (typeof saved.kf_flag_vipFrameColor === 'string') {
+    setFeatureFlag('vipFrameColor', sanitizeHighlightColor(saved.kf_flag_vipFrameColor));
+  }
+  if (typeof saved.kf_flag_manualUsername === 'string') setFeatureFlag('manualUsername', saved.kf_flag_manualUsername.trim());
 }
 
 function installNavigationHooks(): void {

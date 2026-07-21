@@ -6,6 +6,7 @@ import { configureUserCardSession, openUserCard } from '../../src/content/chat/u
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { setLang } from '../../src/content/shared/i18n';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
+import { hexToRgb, rgbToHsl } from '../../src/content/chat/message-highlight';
 
 type BootstrapModule = typeof import('../../src/content/bootstrap');
 
@@ -467,7 +468,7 @@ describe('bootstrap event display flags', () => {
 
   it('persists, loads, and reports every newly toggleable player feature', async () => {
     storageSet.mockClear();
-    for (const key of ['rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
+    for (const key of ['captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
       bootstrap.applyFlagChange(key, false);
       expect(featureFlags[key]).toBe(false);
       expect(storageSet).toHaveBeenCalledWith({ [`kf_flag_${key}`]: false });
@@ -475,6 +476,7 @@ describe('bootstrap event display flags', () => {
     }
 
     storageGet.mockResolvedValue({
+      kf_flag_captionGuard: true,
       kf_flag_rewindControls: true,
       kf_flag_liveCatchup: true,
       kf_flag_qualityLock: true,
@@ -483,12 +485,48 @@ describe('bootstrap event display flags', () => {
     });
     await bootstrap.applySavedFlags();
     expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
+      captionGuard: true,
       rewindControls: true,
       liveCatchup: true,
       qualityLock: true,
       screenshot: true,
       speedControls: true,
     });
+  });
+
+  it('sanitizes, persists, restores, and reports moderator and VIP frame colors', async () => {
+    storageSet.mockClear();
+
+    bootstrap.applyFlagChange('modFrameColor', '#53FC18');
+    bootstrap.applyFlagChange('vipFrameColor', '#000080');
+
+    const modRgb = hexToRgb(featureFlags.modFrameColor)!;
+    const modHsl = rgbToHsl(modRgb.r, modRgb.g, modRgb.b);
+    const vipRgb = hexToRgb(featureFlags.vipFrameColor)!;
+    const vipHsl = rgbToHsl(vipRgb.r, vipRgb.g, vipRgb.b);
+    expect(modHsl.h < 90 || modHsl.h > 120).toBe(true);
+    expect(vipHsl.l).toBeGreaterThanOrEqual(55);
+    expect(vipHsl.l).toBeLessThanOrEqual(82);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_modFrameColor: featureFlags.modFrameColor });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_vipFrameColor: featureFlags.vipFrameColor });
+    expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
+      modFrameColor: featureFlags.modFrameColor,
+      vipFrameColor: featureFlags.vipFrameColor,
+    });
+
+    storageGet.mockResolvedValue({
+      kf_flag_modFrameColor: '#000080',
+      kf_flag_vipFrameColor: '#53FC18',
+    });
+    await bootstrap.applySavedFlags();
+
+    const restoredModRgb = hexToRgb(featureFlags.modFrameColor)!;
+    const restoredModHsl = rgbToHsl(restoredModRgb.r, restoredModRgb.g, restoredModRgb.b);
+    const restoredVipRgb = hexToRgb(featureFlags.vipFrameColor)!;
+    const restoredVipHsl = rgbToHsl(restoredVipRgb.r, restoredVipRgb.g, restoredVipRgb.b);
+    expect(restoredModHsl.l).toBeGreaterThanOrEqual(55);
+    expect(restoredModHsl.l).toBeLessThanOrEqual(82);
+    expect(restoredVipHsl.h < 90 || restoredVipHsl.h > 120).toBe(true);
   });
 
   it('live OFF tears down each mounted player surface and ON remounts it without restarting chat', () => {
@@ -502,7 +540,7 @@ describe('bootstrap event display flags', () => {
     bar.append(nativeLive);
     wrapper.append(video, bar);
     document.body.append(wrapper);
-    for (const key of ['rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
+    for (const key of ['captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
       featureFlags[key] = true;
     }
     const lifecycle = new Lifecycle();
@@ -515,6 +553,7 @@ describe('bootstrap event display flags', () => {
 
     bootstrap.applyFlagChange('rewindControls', false);
     bootstrap.applyFlagChange('liveCatchup', false);
+    bootstrap.applyFlagChange('captionGuard', false);
     bootstrap.applyFlagChange('screenshot', false);
     bootstrap.applyFlagChange('speedControls', false);
     bootstrap.applyFlagChange('qualityLock', false);

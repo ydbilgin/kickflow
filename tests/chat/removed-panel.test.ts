@@ -613,6 +613,7 @@ describe('RemovedMessagesPanel', () => {
       const originalHostRaid = featureFlags.showHostRaid;
       const originalModeChanges = featureFlags.showModeChanges;
       const originalAutoTheater = featureFlags.autoTheater;
+      const originalCaptionGuard = featureFlags.captionGuard;
       featureFlags.chatMode = 'own';
       featureFlags.showDeletedMessages = false;
       featureFlags.preserveBansInline = false;
@@ -621,6 +622,7 @@ describe('RemovedMessagesPanel', () => {
       featureFlags.showHostRaid = false;
       featureFlags.showModeChanges = false;
       featureFlags.autoTheater = true;
+      featureFlags.captionGuard = false;
 
       try {
         const lifecycle = new Lifecycle();
@@ -640,6 +642,7 @@ describe('RemovedMessagesPanel', () => {
         const modeChangesCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Mod değişiklikleri');
         const player = openDashboardSection(panel, 'player').pane;
         const autoTheaterCheckbox = requiredSettingsControl<HTMLInputElement>(player, 'Otomatik tiyatro modu');
+        const captionGuardCheckbox = requiredSettingsControl<HTMLInputElement>(player, 'Altyazıyı varsayılan olarak kapalı tut');
         expect(modeSelect.value).toBe('own');
         expect(deletedCheckbox.checked).toBe(false);
         expect(banCheckbox.checked).toBe(false);
@@ -648,6 +651,7 @@ describe('RemovedMessagesPanel', () => {
         expect(hostRaidCheckbox.checked).toBe(false);
         expect(modeChangesCheckbox.checked).toBe(false);
         expect(autoTheaterCheckbox.checked).toBe(true);
+        expect(captionGuardCheckbox.checked).toBe(false);
 
         lifecycle.dispose();
       } finally {
@@ -659,6 +663,7 @@ describe('RemovedMessagesPanel', () => {
         featureFlags.showHostRaid = originalHostRaid;
         featureFlags.showModeChanges = originalModeChanges;
         featureFlags.autoTheater = originalAutoTheater;
+        featureFlags.captionGuard = originalCaptionGuard;
       }
     });
 
@@ -743,7 +748,11 @@ describe('RemovedMessagesPanel', () => {
       ['Host / Raid', 'showHostRaid'],
       ['Mod değişiklikleri', 'showModeChanges'],
       ['Aktif sohbetçi rozetleri', 'showChattersBadges'],
+      ['Bana yanıt verildiğinde / benden bahsedildiğinde vurgula', 'mentionHighlightEnabled'],
+      ['Moderatör mesajlarını çerçevele', 'modFrameEnabled'],
+      ['VIP mesajlarını çerçevele', 'vipFrameEnabled'],
       ['Otomatik tiyatro modu', 'autoTheater'],
+      ['Altyazıyı varsayılan olarak kapalı tut', 'captionGuard'],
       ['Geri / ileri sarma', 'rewindControls'],
       ['Canlıya yetişme', 'liveCatchup'],
       ['En yüksek kalite', 'qualityLock'],
@@ -754,7 +763,7 @@ describe('RemovedMessagesPanel', () => {
       const store = new ChatIntegrityStore();
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
       const playerKeys: readonly string[] = [
-        'autoTheater', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls',
+        'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls',
       ];
       const pane = openDashboardSection(panel, playerKeys.includes(key) ? 'player' : 'chat').pane;
       const checkbox = requiredSettingsControl<HTMLInputElement>(pane, label);
@@ -770,6 +779,26 @@ describe('RemovedMessagesPanel', () => {
 
       window.removeEventListener('kickflow:setFlag', listener);
       expect(received).toEqual({ key, value: false });
+      lifecycle.dispose();
+    });
+
+    it('places reusable color pickers directly below the personal, moderator, and VIP controls', () => {
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+      const chat = openDashboardSection(panel, 'chat').pane;
+      const rows = Array.from(chat.querySelectorAll<HTMLElement>('.kickflow-panel__settings-row'));
+      const rowIndex = (label: string) => rows.findIndex((row) => row.querySelector('span')?.textContent === label);
+
+      expect(rowIndex('Vurgu rengi')).toBe(rowIndex('Vurgu stili') + 1);
+      expect(rowIndex('Moderatör çerçeve rengi')).toBe(rowIndex('Moderatör mesajlarını çerçevele') + 1);
+      expect(rowIndex('VIP çerçeve rengi')).toBe(rowIndex('VIP mesajlarını çerçevele') + 1);
+
+      const colorRows = rows.filter((row) => row.querySelector('input[type="color"]'));
+      expect(colorRows).toHaveLength(3);
+      for (const row of colorRows) {
+        expect(row.querySelectorAll('.kickflow-panel__swatch')).toHaveLength(8);
+        expect(row.querySelector('.kickflow-panel__color-warn')).not.toBeNull();
+      }
       lifecycle.dispose();
     });
 

@@ -4,6 +4,10 @@ import { OWN_LIST_ID } from './overlay-mount';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
 import { formatNumber, t, type MessageKey } from '../shared/i18n';
+import { CONTENT_TOKEN_RE } from './content-tokens';
+import { applyOwnListHighlights } from './message-highlight-apply';
+
+export { extractMentionUsernames } from './content-tokens';
 
 export const MESSAGE_CLASS = 'kickflow-message';
 export const PRESERVED_CLASS = 'kickflow-preserved';
@@ -56,12 +60,6 @@ const EMOTE_URL_SUFFIX = '/fullsize';
 
 const TRUSTED_IMAGE_HOST = 'kick.com';
 const TRUSTED_IMAGE_HOST_SUFFIX = '.kick.com';
-
-// 7TV's own tokenizer regex (`/( )|(\[emote:\d{1,10}:.{1,30}\])/`) inspired the emote
-// token shape; extended with url/mention alternatives so one pass over `content` handles
-// all three safely via named capture groups instead of string concatenation.
-const CONTENT_TOKEN_RE =
-  /\[emote:(?<emoteId>\d{1,10}):(?<emoteName>.{1,30})\]|(?<url>https?:\/\/[^\s]+)|(?<mention>@[a-zA-Z0-9_]{1,25})/g;
 
 function isTrustedBadgeImageUrl(value: string): URL | null {
   let url: URL;
@@ -828,6 +826,7 @@ function buildCelebrationElement(message: ChatMessage): HTMLElement {
   body.append(headline, messageLine);
   row.append(icon, body);
   applyPreservedMarking(row, message);
+  applyOwnListHighlights(row, message);
   return row;
 }
 
@@ -873,6 +872,7 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
 
   row.append(time, groupMessageIdentity(badges, username), separator, content);
   applyPreservedMarking(row, message);
+  applyOwnListHighlights(row, message);
 
   return row;
 }

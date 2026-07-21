@@ -20,6 +20,9 @@ export const SELECTORS = {
   controlBar: 'div.z-controls',
   // The real bottom bar specifically — the only z-controls with the `bottom-0` anchor.
   controlBarBottom: 'div.z-controls.bottom-0',
+  // Shipped by Kick's visible caption control on 2026-07-21. Unlike its localized tooltip and
+  // state-dependent SVG, this developer-facing test id is shared by desktop/mobile player bars.
+  nativeCaptionButton: 'button[data-testid="video-player-closed-captions"]',
 } as const;
 
 export function getChatMessagesContainer(): HTMLElement | null {

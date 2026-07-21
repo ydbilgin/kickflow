@@ -11,6 +11,10 @@ import {
   applyPreservedMarking,
   wireUsernameProfileLink,
 } from './message-view';
+import {
+  applyNativeHighlights,
+  clearNativeHighlightStyles,
+} from './message-highlight-apply';
 
 const CHAT_ROOT_SELECTOR = '#chatroom-messages';
 const CHAT_LIST_SELECTOR = '#chatroom-messages .no-scrollbar';
@@ -290,12 +294,17 @@ export class NativeChatAugmenter {
       }
     }
 
+    if (message && !message.systemEvent) {
+      applyNativeHighlights(row, message);
+    }
+
     if (featureFlags.preserveBansInline) this.reapplyGhostsForAnchor(id, row);
   }
 
   private cleanRow(row: HTMLElement): void {
     row.querySelectorAll(INJECTED_SELECTOR).forEach((node) => node.remove());
     row.classList.remove(...PRESERVED_CLASSES);
+    clearNativeHighlightStyles(row);
     row
       .querySelectorAll(`.${DIMMED_NATIVE_CONTENT_CLASS}`)
       .forEach((node) => node.classList.remove(DIMMED_NATIVE_CONTENT_CLASS));

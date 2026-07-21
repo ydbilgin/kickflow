@@ -6,6 +6,13 @@ import { featureFlags } from './feature-flags';
 import type { ChatIntegrityStore, ChatMessage } from './message-store';
 import { appendParsedContent, applyPreservedMarking, wireUsernameProfileLink } from './message-view';
 import {
+  MENTION_COLOR_SWATCHES,
+  normalizeHexColor,
+  sanitizeHighlightColor,
+} from './message-highlight';
+import { isOwnerIdentityResolved } from './owner-identity';
+import { getExtensionVersion } from '../shared/extension-context';
+import {
   HOTKEY_ACTIONS,
   HOTKEY_DEFINITIONS,
   formatHotkeyKey,
@@ -81,6 +88,14 @@ interface ScrollLockState {
   bodyOverflow: string;
 }
 
+type HighlightColorFlagKey = 'mentionHighlightColor' | 'modFrameColor' | 'vipFrameColor';
+
+interface HighlightColorControlRefs {
+  swatchButtons: Map<string, HTMLButtonElement>;
+  customInput: HTMLInputElement;
+  getCurrentColor: () => string;
+}
+
 /** Dispatched by the settings controls; bootstrap.ts's single `applyFlagChange` mutator (also
  * called by the popup's chrome.runtime message) is the only thing that ever writes featureFlags
  * — this window event is the panel's route into that same shared mutator. */
@@ -125,7 +140,15 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private sidebarRefreshCheckbox: HTMLInputElement | null = null;
   private chattersBadgesCheckbox: HTMLInputElement | null = null;
+  private mentionHighlightCheckbox: HTMLInputElement | null = null;
+  private modFrameCheckbox: HTMLInputElement | null = null;
+  private vipFrameCheckbox: HTMLInputElement | null = null;
+  private mentionStyleButtons = new Map<'frame' | 'fill' | 'both', HTMLButtonElement>();
+  private readonly highlightColorControls = new Map<HighlightColorFlagKey, HighlightColorControlRefs>();
+  private manualUsernameInput: HTMLInputElement | null = null;
+  private identityNote: HTMLElement | null = null;
   private autoTheaterCheckbox: HTMLInputElement | null = null;
+  private captionGuardCheckbox: HTMLInputElement | null = null;
   private rewindControlsCheckbox: HTMLInputElement | null = null;
   private liveCatchupCheckbox: HTMLInputElement | null = null;
   private qualityLockCheckbox: HTMLInputElement | null = null;
@@ -339,7 +362,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     const version = document.createElement('span');
     version.className = 'kickflow-panel__version';
-    version.textContent = 'v0.2.0';
+    version.textContent = `v${getExtensionVersion()}`;
     rail.append(wordmark, railCaption, nav, version);
 
     const main = document.createElement('div');
@@ -548,6 +571,54 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.chattersBadgesCheckbox = chattersBadgesCheckbox;
 
+    const { label: mentionHighlightLabel, checkbox: mentionHighlightCheckbox } = this.buildSettingsToggle(
+      t('setting.mention_highlight'),
+      t('setting.mention_highlight_desc'),
+      'mentionHighlightEnabled',
+      featureFlags.mentionHighlightEnabled,
+    );
+    this.mentionHighlightCheckbox = mentionHighlightCheckbox;
+
+    const mentionStyleRow = this.buildMentionStyleControl();
+    const mentionColorRow = this.buildHighlightColorControl(
+      'mentionHighlightColor',
+      'setting.mention_color',
+      'setting.mention_color_desc',
+      'setting.mention_color_warn',
+      () => featureFlags.mentionHighlightColor,
+    );
+    const identityRow = this.buildManualUsernameControl();
+
+    const { label: modFrameLabel, checkbox: modFrameCheckbox } = this.buildSettingsToggle(
+      t('setting.mod_frame'),
+      t('setting.mod_frame_desc'),
+      'modFrameEnabled',
+      featureFlags.modFrameEnabled,
+    );
+    this.modFrameCheckbox = modFrameCheckbox;
+    const modFrameColorRow = this.buildHighlightColorControl(
+      'modFrameColor',
+      'setting.mod_frame_color',
+      'setting.mod_frame_color_desc',
+      'setting.mod_frame_color_warn',
+      () => featureFlags.modFrameColor,
+    );
+
+    const { label: vipFrameLabel, checkbox: vipFrameCheckbox } = this.buildSettingsToggle(
+      t('setting.vip_frame'),
+      t('setting.vip_frame_desc'),
+      'vipFrameEnabled',
+      featureFlags.vipFrameEnabled,
+    );
+    this.vipFrameCheckbox = vipFrameCheckbox;
+    const vipFrameColorRow = this.buildHighlightColorControl(
+      'vipFrameColor',
+      'setting.vip_frame_color',
+      'setting.vip_frame_color_desc',
+      'setting.vip_frame_color_warn',
+      () => featureFlags.vipFrameColor,
+    );
+
     chatGroup.append(
       deletedLabel,
       banLabel,
@@ -558,6 +629,14 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       modeChangesLabel,
       sidebarRefreshLabel,
       chattersBadgesLabel,
+      mentionHighlightLabel,
+      mentionStyleRow,
+      mentionColorRow,
+      identityRow,
+      modFrameLabel,
+      modFrameColorRow,
+      vipFrameLabel,
+      vipFrameColorRow,
     );
     chat.append(chatGroup);
 
@@ -570,6 +649,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       t('setting.auto_theater'), t('setting.auto_theater_desc'), 'autoTheater', featureFlags.autoTheater,
     );
     this.autoTheaterCheckbox = autoTheaterCheckbox;
+
+    const { label: captionGuardLabel, checkbox: captionGuardCheckbox } = this.buildSettingsToggle(
+      t('setting.caption_guard'), t('setting.caption_guard_desc'), 'captionGuard', featureFlags.captionGuard,
+    );
+    this.captionGuardCheckbox = captionGuardCheckbox;
 
     const { label: rewindControlsLabel, checkbox: rewindControlsCheckbox } = this.buildSettingsToggle(
       t('setting.seek'), t('setting.seek_desc'), 'rewindControls', featureFlags.rewindControls,
@@ -598,6 +682,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
     playerGroup.append(
       autoTheaterLabel,
+      captionGuardLabel,
       rewindControlsLabel,
       liveCatchupLabel,
       qualityLockLabel,
@@ -647,7 +732,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     aboutText.textContent = t('about.copy');
     const aboutFacts = document.createElement('dl');
     aboutFacts.className = 'kickflow-panel__about-facts';
-    for (const [label, value] of [[t('about.version'), '0.2.0'], [t('about.platform'), 'Chrome MV3'], [t('about.application'), t('about.application_value')]]) {
+    for (const [label, value] of [[t('about.version'), getExtensionVersion()], [t('about.platform'), 'Chrome MV3'], [t('about.application'), t('about.application_value')]]) {
       const row = document.createElement('div');
       const term = document.createElement('dt');
       term.textContent = label;
@@ -829,6 +914,142 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     return { label, checkbox };
   }
 
+  private buildMentionStyleControl(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--stack';
+    row.appendChild(this.buildRowCopy(t('setting.mention_style'), t('setting.mention_style_desc')));
+    const group = document.createElement('div');
+    group.className = 'kickflow-panel__segmented';
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', t('setting.mention_style'));
+    this.mentionStyleButtons.clear();
+    const options: Array<{ value: 'frame' | 'fill' | 'both'; labelKey: MessageKey }> = [
+      { value: 'frame', labelKey: 'setting.mention_style_frame' },
+      { value: 'fill', labelKey: 'setting.mention_style_fill' },
+      { value: 'both', labelKey: 'setting.mention_style_both' },
+    ];
+    for (const option of options) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'kickflow-panel__segment';
+      button.textContent = t(option.labelKey);
+      button.addEventListener('click', () => dispatchFlag('mentionHighlightStyle', option.value));
+      this.mentionStyleButtons.set(option.value, button);
+      group.appendChild(button);
+    }
+    this.syncMentionStyleButtons();
+    row.appendChild(group);
+    return row;
+  }
+
+  private buildHighlightColorControl(
+    key: HighlightColorFlagKey,
+    labelKey: MessageKey,
+    descriptionKey: MessageKey,
+    warningKey: MessageKey,
+    getCurrentColor: () => string,
+  ): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--stack';
+    row.appendChild(this.buildRowCopy(t(labelKey), t(descriptionKey)));
+    const swatches = document.createElement('div');
+    swatches.className = 'kickflow-panel__swatches';
+    const swatchButtons = new Map<string, HTMLButtonElement>();
+    const warn = document.createElement('p');
+    warn.className = 'kickflow-panel__color-warn';
+    warn.textContent = t(warningKey);
+    warn.hidden = true;
+    for (const hex of MENTION_COLOR_SWATCHES) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'kickflow-panel__swatch';
+      button.title = hex;
+      button.setAttribute('aria-label', hex);
+      button.style.backgroundColor = hex;
+      button.addEventListener('click', () => {
+        warn.hidden = true;
+        dispatchFlag(key, hex);
+      });
+      swatchButtons.set(hex.toUpperCase(), button);
+      swatches.appendChild(button);
+    }
+    const customWrap = document.createElement('label');
+    customWrap.className = 'kickflow-panel__swatch-custom';
+    customWrap.title = t(labelKey);
+    const custom = document.createElement('input');
+    custom.type = 'color';
+    custom.value = normalizeHexColor(getCurrentColor()) ?? MENTION_COLOR_SWATCHES[0];
+    custom.addEventListener('input', () => {
+      const raw = custom.value;
+      const sanitized = sanitizeHighlightColor(raw);
+      const changed = normalizeHexColor(sanitized) !== normalizeHexColor(raw);
+      warn.hidden = !changed;
+      dispatchFlag(key, sanitized);
+      if (changed) custom.value = sanitized;
+    });
+    customWrap.appendChild(custom);
+    swatches.appendChild(customWrap);
+    row.append(swatches, warn);
+    this.highlightColorControls.set(key, { swatchButtons, customInput: custom, getCurrentColor });
+    this.syncHighlightColorControls();
+    return row;
+  }
+
+  private buildManualUsernameControl(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'kickflow-panel__settings-row kickflow-panel__settings-row--stack';
+    row.appendChild(this.buildRowCopy(t('setting.manual_username'), t('setting.manual_username_desc')));
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'kickflow-panel__identity-input';
+    input.autocomplete = 'username';
+    input.spellcheck = false;
+    input.maxLength = 25;
+    input.placeholder = t('setting.manual_username_placeholder');
+    input.value = featureFlags.manualUsername;
+    input.addEventListener('change', () => dispatchFlag('manualUsername', input.value));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        dispatchFlag('manualUsername', input.value);
+        input.blur();
+      }
+    });
+    this.manualUsernameInput = input;
+    const note = document.createElement('p');
+    note.className = 'kickflow-panel__identity-note';
+    note.textContent = t('setting.identity_unresolved');
+    this.identityNote = note;
+    this.syncIdentityNote();
+    row.append(input, note);
+    return row;
+  }
+
+  private syncMentionStyleButtons(): void {
+    const current = featureFlags.mentionHighlightStyle;
+    for (const [value, button] of this.mentionStyleButtons) {
+      button.classList.toggle('kickflow-panel__segment--active', value === current);
+      button.setAttribute('aria-pressed', value === current ? 'true' : 'false');
+    }
+  }
+
+  private syncHighlightColorControls(): void {
+    for (const { swatchButtons, customInput, getCurrentColor } of this.highlightColorControls.values()) {
+      const current = (normalizeHexColor(getCurrentColor()) ?? MENTION_COLOR_SWATCHES[0]).toUpperCase();
+      for (const [hex, button] of swatchButtons) {
+        button.classList.toggle('kickflow-panel__swatch--active', hex === current);
+      }
+      if (customInput.value.toUpperCase() !== current) {
+        customInput.value = current;
+      }
+    }
+  }
+
+  private syncIdentityNote(): void {
+    if (!this.identityNote) return;
+    this.identityNote.hidden = isOwnerIdentityResolved();
+  }
+
   private showDashboardSection(key: DashboardSection, resetScroll = true): void {
     this.activeSection = key;
     for (const item of DASHBOARD_SECTIONS) {
@@ -946,8 +1167,27 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.chattersBadgesCheckbox && this.chattersBadgesCheckbox.checked !== featureFlags.showChattersBadges) {
       this.chattersBadgesCheckbox.checked = featureFlags.showChattersBadges;
     }
+    if (this.mentionHighlightCheckbox && this.mentionHighlightCheckbox.checked !== featureFlags.mentionHighlightEnabled) {
+      this.mentionHighlightCheckbox.checked = featureFlags.mentionHighlightEnabled;
+    }
+    if (this.modFrameCheckbox && this.modFrameCheckbox.checked !== featureFlags.modFrameEnabled) {
+      this.modFrameCheckbox.checked = featureFlags.modFrameEnabled;
+    }
+    if (this.vipFrameCheckbox && this.vipFrameCheckbox.checked !== featureFlags.vipFrameEnabled) {
+      this.vipFrameCheckbox.checked = featureFlags.vipFrameEnabled;
+    }
+    this.syncMentionStyleButtons();
+    this.syncHighlightColorControls();
+    if (this.manualUsernameInput && this.manualUsernameInput.value !== featureFlags.manualUsername
+      && document.activeElement !== this.manualUsernameInput) {
+      this.manualUsernameInput.value = featureFlags.manualUsername;
+    }
+    this.syncIdentityNote();
     if (this.autoTheaterCheckbox && this.autoTheaterCheckbox.checked !== featureFlags.autoTheater) {
       this.autoTheaterCheckbox.checked = featureFlags.autoTheater;
+    }
+    if (this.captionGuardCheckbox && this.captionGuardCheckbox.checked !== featureFlags.captionGuard) {
+      this.captionGuardCheckbox.checked = featureFlags.captionGuard;
     }
     if (this.rewindControlsCheckbox && this.rewindControlsCheckbox.checked !== featureFlags.rewindControls) {
       this.rewindControlsCheckbox.checked = featureFlags.rewindControls;
@@ -1063,7 +1303,15 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.modeChangesCheckbox = null;
     this.sidebarRefreshCheckbox = null;
     this.chattersBadgesCheckbox = null;
+    this.mentionHighlightCheckbox = null;
+    this.modFrameCheckbox = null;
+    this.vipFrameCheckbox = null;
+    this.mentionStyleButtons.clear();
+    this.highlightColorControls.clear();
+    this.manualUsernameInput = null;
+    this.identityNote = null;
     this.autoTheaterCheckbox = null;
+    this.captionGuardCheckbox = null;
     this.rewindControlsCheckbox = null;
     this.liveCatchupCheckbox = null;
     this.qualityLockCheckbox = null;
