@@ -58,7 +58,6 @@ import {
   type HotkeyAction,
   type HotkeyBinding,
 } from './player/hotkey-registry';
-import { SIDEBAR_CHANNEL_ROW_SELECTOR, SidebarRefreshController } from './sidebar/sidebar-refresh';
 
 const STYLE_ID = 'kickflow-styles';
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
@@ -79,7 +78,6 @@ const BOOLEAN_FLAG_KEYS = [
   'showPolls',
   'showHostRaid',
   'showModeChanges',
-  'showSidebarRefresh',
   'showChattersBadges',
   'autoTheater',
   'captionGuard',
@@ -616,12 +614,6 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
-    a[data-testid^="sidebar-following-channel-"][data-kickflow-live="false"],
-    a[data-testid^="sidebar-recommended-channel-"][data-kickflow-live="false"] { display: none !important; }
-    a[data-testid^="sidebar-following-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="true"],
-    a[data-testid^="sidebar-recommended-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="true"] { background: #22c55e !important; }
-    a[data-testid^="sidebar-following-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="false"],
-    a[data-testid^="sidebar-recommended-channel-"] div.rounded-full.h-2.w-2[data-kickflow-live="false"] { background: #6b7280 !important; }
     .kickflow-scroll-pill {
       position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
       display: inline-flex; align-items: center; gap: 5px;
@@ -1558,8 +1550,6 @@ let currentLifecycle: Lifecycle | null = null;
 let currentSlug: string | null = null;
 let sessionToken = 0;
 let navPollId: number | null = null;
-let sidebarRefreshLifecycle: Lifecycle | null = null;
-let sidebarRefreshController: SidebarRefreshController | null = null;
 interface ActiveChattersBadgesContext {
   sessionLifecycle: Lifecycle;
   store: ChatIntegrityStore;
@@ -1568,29 +1558,6 @@ interface ActiveChattersBadgesContext {
   controller: ActiveChattersBadgesController | null;
 }
 let activeChattersBadgesContext: ActiveChattersBadgesContext | null = null;
-
-function stopSidebarRefresh(): void {
-  const lifecycle = sidebarRefreshLifecycle;
-  sidebarRefreshLifecycle = null;
-  sidebarRefreshController = null;
-  lifecycle?.dispose();
-}
-
-function syncSidebarRefresh(): void {
-  if (!featureFlags.showSidebarRefresh) {
-    stopSidebarRefresh();
-    return;
-  }
-  if (sidebarRefreshLifecycle && !sidebarRefreshLifecycle.isDisposed) return;
-
-  ensureStyles();
-  const lifecycle = new Lifecycle();
-  sidebarRefreshLifecycle = lifecycle;
-  whenElementPresent<HTMLAnchorElement>(SIDEBAR_CHANNEL_ROW_SELECTOR, lifecycle, () => {
-    if (lifecycle.isDisposed || sidebarRefreshLifecycle !== lifecycle || sidebarRefreshController) return;
-    sidebarRefreshController = new SidebarRefreshController(lifecycle);
-  });
-}
 
 function stopActiveChattersBadges(): void {
   const context = activeChattersBadgesContext;
@@ -1691,7 +1658,6 @@ function teardownZombie(): void {
     navPollId = null;
   }
   stopSession();
-  stopSidebarRefresh();
   configureUserCardSession(null);
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.querySelector('.kickflow-panel')?.remove();
@@ -1706,7 +1672,7 @@ function onWindowFlagChange(event: Event): void {
   if (detail && typeof detail.key === 'string') applyFlagChange(detail.key, detail.value);
 }
 
-function handlePotentialNavigation(event?: Event): void {
+function handlePotentialNavigation(): void {
   if (!isExtensionContextValid()) {
     // Belt-and-suspenders: a queued popstate/locationchange can still fire this before
     // teardownZombie's removeEventListener above takes effect.
@@ -1714,10 +1680,6 @@ function handlePotentialNavigation(event?: Event): void {
     return;
   }
 
-  // The page-wide sidebar controller survives SPA route changes, but a navigation event is still
-  // a useful immediate refresh signal. The event is absent for main's initial bootstrap because
-  // the controller already performs its own initial round.
-  if (event) void sidebarRefreshController?.refresh();
   const slug = getChannelSlugFromLocation();
   if (slug === currentSlug) return;
 
@@ -1741,9 +1703,6 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'debugLogging') setDebugLogging(value);
     if (key === 'autoTheater') syncAutoTheaterFlag();
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
-    if (key === 'showSidebarRefresh') {
-      syncSidebarRefresh();
-    }
     if (key === 'showChattersBadges') {
       syncActiveChattersBadges();
     }
@@ -1801,7 +1760,6 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showPolls: featureFlags.showPolls,
     showHostRaid: featureFlags.showHostRaid,
     showModeChanges: featureFlags.showModeChanges,
-    showSidebarRefresh: featureFlags.showSidebarRefresh,
     showChattersBadges: featureFlags.showChattersBadges,
     autoTheater: featureFlags.autoTheater,
     captionGuard: featureFlags.captionGuard,
@@ -1922,7 +1880,6 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showPolls',
     'kf_flag_showHostRaid',
     'kf_flag_showModeChanges',
-    'kf_flag_showSidebarRefresh',
     'kf_flag_showChattersBadges',
     'kf_flag_autoTheater',
     'kf_flag_captionGuard',
@@ -1951,7 +1908,6 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showPolls === 'boolean') setFeatureFlag('showPolls', saved.kf_flag_showPolls);
   if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
-  if (typeof saved.kf_flag_showSidebarRefresh === 'boolean') setFeatureFlag('showSidebarRefresh', saved.kf_flag_showSidebarRefresh);
   if (typeof saved.kf_flag_showChattersBadges === 'boolean') setFeatureFlag('showChattersBadges', saved.kf_flag_showChattersBadges);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
   if (typeof saved.kf_flag_captionGuard === 'boolean') setFeatureFlag('captionGuard', saved.kf_flag_captionGuard);
@@ -2006,7 +1962,6 @@ async function main(): Promise<void> {
   setDebugLogging(featureFlags.debugLogging);
   installStatusBridge();
   installNavigationHooks();
-  syncSidebarRefresh();
   handlePotentialNavigation();
 }
 

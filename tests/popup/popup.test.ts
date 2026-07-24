@@ -27,7 +27,6 @@ const statusResponse = {
     showKicks: true,
     showHostRaid: false,
     showModeChanges: false,
-    showSidebarRefresh: true,
     showChattersBadges: true,
     autoTheater: false,
     rewindControls: true,

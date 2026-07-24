@@ -124,8 +124,6 @@ export const messages = {
   'setting.host_raid_desc': { en: 'Adds host and raid events to the chat feed.', tr: 'Host ve raid etkinliklerini sohbet akışına ekler.' },
   'setting.mode_changes': { en: 'Mode changes', tr: 'Mod değişiklikleri' },
   'setting.mode_changes_desc': { en: 'Reports chat setting changes such as slow mode.', tr: 'Yavaş mod gibi sohbet ayarı değişikliklerini bildirir.' },
-  'setting.sidebar_refresh': { en: 'Sidebar refresh', tr: 'Sidebar yenileme' },
-  'setting.sidebar_refresh_desc': { en: 'Keeps followed channels’ live status up to date.', tr: 'Takip edilen kanalların canlı durumunu güncel tutar.' },
   'setting.chatters_badges': { en: 'Active chatter badges', tr: 'Aktif sohbetçi rozetleri' },
   'setting.chatters_badges_desc': { en: 'Shows session removed-message evidence beside native chatter rows.', tr: 'Yerel sohbetçi satırlarında oturumdaki kaldırılan mesaj kanıtlarını gösterir.' },
   'setting.mention_highlight': { en: 'Highlight replies to me / mentions of me', tr: 'Bana yanıt verildiğinde / benden bahsedildiğinde vurgula' },

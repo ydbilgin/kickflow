@@ -27,8 +27,6 @@ export interface FeatureFlags {
   showHostRaid: boolean;
   /** Show rows describing chatroom mode changes after the initial state snapshot. */
   showModeChanges: boolean;
-  /** Refresh native followed-channel sidebar viewer counts and live indicators. */
-  showSidebarRefresh: boolean;
   /** Show session removed-message evidence beside Kick's native Active Chatters rows. */
   showChattersBadges: boolean;
   /** Automatically enter Kick's theater layout when a channel/video loads. Opt-in because it
@@ -80,7 +78,6 @@ export const featureFlags: FeatureFlags = {
   showPolls: true,
   showHostRaid: true,
   showModeChanges: true,
-  showSidebarRefresh: true,
   showChattersBadges: true,
   autoTheater: false,
   captionGuard: true,

@@ -140,7 +140,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private kicksCheckbox: HTMLInputElement | null = null;
   private hostRaidCheckbox: HTMLInputElement | null = null;
   private modeChangesCheckbox: HTMLInputElement | null = null;
-  private sidebarRefreshCheckbox: HTMLInputElement | null = null;
   private chattersBadgesCheckbox: HTMLInputElement | null = null;
   private mentionHighlightCheckbox: HTMLInputElement | null = null;
   private modFrameCheckbox: HTMLInputElement | null = null;
@@ -565,11 +564,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.modeChangesCheckbox = modeChangesCheckbox;
 
-    const { label: sidebarRefreshLabel, checkbox: sidebarRefreshCheckbox } = this.buildSettingsToggle(
-      t('setting.sidebar_refresh'), t('setting.sidebar_refresh_desc'), 'showSidebarRefresh', featureFlags.showSidebarRefresh,
-    );
-    this.sidebarRefreshCheckbox = sidebarRefreshCheckbox;
-
     const { label: chattersBadgesLabel, checkbox: chattersBadgesCheckbox } = this.buildSettingsToggle(
       t('setting.chatters_badges'), t('setting.chatters_badges_desc'), 'showChattersBadges', featureFlags.showChattersBadges,
     );
@@ -621,7 +615,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       kicksLabel,
       hostRaidLabel,
       modeChangesLabel,
-      sidebarRefreshLabel,
       chattersBadgesLabel,
       mentionHighlightLabel,
       mentionStyleRow,
@@ -1246,9 +1239,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.modeChangesCheckbox && this.modeChangesCheckbox.checked !== featureFlags.showModeChanges) {
       this.modeChangesCheckbox.checked = featureFlags.showModeChanges;
     }
-    if (this.sidebarRefreshCheckbox && this.sidebarRefreshCheckbox.checked !== featureFlags.showSidebarRefresh) {
-      this.sidebarRefreshCheckbox.checked = featureFlags.showSidebarRefresh;
-    }
     if (this.chattersBadgesCheckbox && this.chattersBadgesCheckbox.checked !== featureFlags.showChattersBadges) {
       this.chattersBadgesCheckbox.checked = featureFlags.showChattersBadges;
     }
@@ -1388,7 +1378,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.kicksCheckbox = null;
     this.hostRaidCheckbox = null;
     this.modeChangesCheckbox = null;
-    this.sidebarRefreshCheckbox = null;
     this.chattersBadgesCheckbox = null;
     this.mentionHighlightCheckbox = null;
     this.modFrameCheckbox = null;
