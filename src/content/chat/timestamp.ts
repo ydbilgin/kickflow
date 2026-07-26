@@ -23,5 +23,6 @@ export function formatVodReplayTimestamp(
     (elapsedSeconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE,
   );
   const seconds = elapsedSeconds % SECONDS_PER_MINUTE;
+  if (hours === 0) return `${padTwoDigits(minutes)}:${padTwoDigits(seconds)}`;
   return `${padTwoDigits(hours)}:${padTwoDigits(minutes)}:${padTwoDigits(seconds)}`;
 }
