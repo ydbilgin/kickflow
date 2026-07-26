@@ -31,6 +31,11 @@ import { RenderQueue } from './chat/render-queue';
 import { ScrollFollowController, trimMessageWindow, decideScrollFollow } from './chat/dom-window';
 import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
+import {
+  parseChatSessionContext,
+  type ChatSessionContext,
+} from './chat/session-context';
+import { VodChatReplayController } from './chat/vod-replay';
 import { configureUserCardSession } from './chat/user-card';
 import { clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
 import {
@@ -271,33 +276,6 @@ export function createSystemEventCallbacks(
       }
     },
   };
-}
-
-const NON_CHANNEL_SLUGS = new Set([
-  'video',
-  'videos',
-  'categories',
-  'category',
-  'browse',
-  'search',
-  'subscription',
-  'subscriptions',
-  'wallet',
-  'dashboard',
-  'settings',
-  'following',
-  'clips',
-  'messages',
-  'notifications',
-  'shop',
-]);
-
-function getChannelSlugFromLocation(): string | null {
-  const segments = window.location.pathname.split('/').filter(Boolean);
-  if (segments.length === 0) return null;
-  const [first] = segments;
-  if (NON_CHANNEL_SLUGS.has(first.toLowerCase())) return null;
-  return first;
 }
 
 const CHATROOM_ID_MAX_ATTEMPTS = 3;
@@ -1207,7 +1185,8 @@ function ensureStyles(): void {
   document.head.appendChild(style);
 }
 
-function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle): void {
+  const { slug } = context;
   setSubscriberBadges([]);
   configureUserCardSession(slug);
   lifecycle.add(() => configureUserCardSession(null));
@@ -1229,6 +1208,17 @@ function initNativeChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
   lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
+
+  // Kick owns the correct timestamp-synchronized replay DOM. Background live Pusher traffic has
+  // no valid role on a VOD and would pollute this session's evidence store with present-day chat.
+  if (context.kind === 'vod') {
+    setStatus({
+      active: true,
+      pusherConnected: false,
+      reason: t('status.active_native_replay'),
+    });
+    return;
+  }
 
   resolveChannel(slug).then((resolved) => {
     if (lifecycle.isDisposed) return;
@@ -1290,7 +1280,8 @@ export function reconcileOwnPreservedEviction(
   element.remove();
 }
 
-function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle): void {
+  const { slug } = context;
   setSubscriberBadges([]);
   configureUserCardSession(slug);
   lifecycle.add(() => configureUserCardSession(null));
@@ -1340,7 +1331,13 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     onFlush: (appended /*, wasAtBottom */) => {
       mount.noteContentAppended(appended);
       if (mount.state === 'active') {
-        setStatus({ active: true, reason: t('status.active_own') });
+        setStatus({
+          active: true,
+          pusherConnected: context.kind === 'live' ? getStatus().pusherConnected : false,
+          reason: context.kind === 'vod'
+            ? t('status.active_vod_replay')
+            : t('status.active_own'),
+        });
       }
 
       const decision = decideScrollFollow(scrollFollow.isPinned, appended.length);
@@ -1380,7 +1377,64 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
     }
     setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId, channelId } = resolved;
-    setStatus({ chatroomId, reason: t('status.pusher_connecting') });
+    setStatus({
+      chatroomId,
+      pusherConnected: false,
+      reason: context.kind === 'vod'
+        ? t('status.vod_replay_loading')
+        : t('status.pusher_connecting'),
+    });
+
+    if (context.kind === 'vod') {
+      const resetReplayWindow = (): void => {
+        renderQueue.clearPending();
+        store.reset();
+        registry.clear();
+        for (const row of ownList.querySelectorAll<HTMLElement>(
+          '.kickflow-message, .kickflow-event-row',
+        )) {
+          row.remove();
+        }
+        scrollPill.style.display = 'none';
+        mount.setReplayLoading();
+        setStatus({
+          active: mount.state === 'active',
+          pusherConnected: false,
+          reason: t('status.vod_replay_loading'),
+        });
+      };
+
+      const replay = new VodChatReplayController(
+        lifecycle,
+        channelId,
+        context.videoId,
+        {
+          onReset: resetReplayWindow,
+          onMessages: (messages) => {
+            for (const message of messages) enqueueOnce(message);
+          },
+          onReady: () => {
+            mount.setReplayReady();
+            setStatus({
+              active: mount.state === 'active',
+              pusherConnected: false,
+              reason: t('status.active_vod_replay'),
+            });
+          },
+          onUnavailable: () => {
+            mount.failOpen('vod-replay-unavailable');
+            setStatus({
+              active: false,
+              pusherConnected: false,
+              reason: t('status.vod_replay_failed_native'),
+            });
+          },
+        },
+      );
+      void replay.start();
+      return;
+    }
+
     let primaryReady = false;
     let hasPrimaryReadyOnce = false;
     let reconnectGraceTimer: number | null = null;
@@ -1480,11 +1534,11 @@ function initOwnChatIntegrity(slug: string, lifecycle: Lifecycle): void {
   });
 }
 
-export function initChatIntegrity(slug: string, lifecycle: Lifecycle): void {
+export function initChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle): void {
   if (featureFlags.chatMode === 'own') {
-    initOwnChatIntegrity(slug, lifecycle);
+    initOwnChatIntegrity(context, lifecycle);
   } else {
-    initNativeChatIntegrity(slug, lifecycle);
+    initNativeChatIntegrity(context, lifecycle);
   }
 }
 
@@ -1547,7 +1601,7 @@ export function initPlayerQolSession(lifecycle: Lifecycle): void {
 }
 
 let currentLifecycle: Lifecycle | null = null;
-let currentSlug: string | null = null;
+let currentSessionContext: ChatSessionContext | null = null;
 let sessionToken = 0;
 let navPollId: number | null = null;
 interface ActiveChattersBadgesContext {
@@ -1611,7 +1665,8 @@ function onPopstate(): void {
   window.dispatchEvent(new Event('kickflow:locationchange'));
 }
 
-function startSession(slug: string): void {
+function startSession(context: ChatSessionContext): void {
+  const { slug } = context;
   const token = ++sessionToken;
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
@@ -1633,7 +1688,7 @@ function startSession(slug: string): void {
     if (token !== sessionToken || lifecycle.isDisposed) return;
     // chatContainer is the gate that the chat panel exists; the native augmenter then
     // observes #chatroom-messages and survives Kick replacing the inner list.
-    initChatIntegrity(slug, lifecycle);
+    initChatIntegrity(context, lifecycle);
   });
 }
 
@@ -1680,15 +1735,17 @@ function handlePotentialNavigation(): void {
     return;
   }
 
-  const slug = getChannelSlugFromLocation();
-  if (slug === currentSlug) return;
+  const context = parseChatSessionContext(window.location.pathname);
+  const previousSessionKey = currentSessionContext?.sessionKey ?? null;
+  const nextSessionKey = context?.sessionKey ?? null;
+  if (nextSessionKey === previousSessionKey) return;
 
-  logger.debug('bootstrap: channel changed', currentSlug, '->', slug);
+  logger.debug('bootstrap: chat session changed', previousSessionKey, '->', nextSessionKey);
   stopSession();
-  currentSlug = slug;
-  resetStatus(slug);
-  if (slug) {
-    void startSession(slug);
+  currentSessionContext = context;
+  resetStatus(context?.slug ?? null);
+  if (context) {
+    startSession(context);
   }
 }
 
@@ -1718,10 +1775,10 @@ export function applyFlagChange(key: string, value: boolean | string): void {
   } else if (key === 'chatMode' && (value === 'native' || value === 'own')) {
     setFeatureFlag('chatMode', value);
     void safeStorageSet({ kf_flag_chatMode: value });
-    if (currentSlug) {
+    if (currentSessionContext) {
       stopSession();
-      resetStatus(currentSlug);
-      void startSession(currentSlug);
+      resetStatus(currentSessionContext.slug);
+      startSession(currentSessionContext);
     }
   } else if (key === 'mentionHighlightStyle' && (value === 'frame' || value === 'fill' || value === 'both')) {
     setFeatureFlag('mentionHighlightStyle', value);

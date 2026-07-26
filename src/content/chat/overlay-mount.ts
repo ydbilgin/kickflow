@@ -280,6 +280,19 @@ export class ChatOverlayMount {
     this.transitionToActive();
   }
 
+  /** VOD replay has no primary Pusher subscription. A visible status is nevertheless a complete
+   * readiness proof, so own chat can stay active while a seek clears the old rows and loads the
+   * new timestamp instead of briefly exposing native chat underneath. */
+  setReplayLoading(): void {
+    this.setReplaySourceReady(t('overlay.replay_loading'));
+  }
+
+  /** A successful replay response—including a legitimate empty window—keeps the selected own
+   * view active. The status disappears as soon as RenderQueue appends a visible row. */
+  setReplayReady(): void {
+    this.setReplaySourceReady(t('overlay.replay_ready'));
+  }
+
   /** Existing rows stay mounted during a short reconnect grace. Bootstrap owns the grace timer;
    * this method only supplies the explicit visible state required by the invariant. */
   setReconnecting(): void {
@@ -396,6 +409,16 @@ export class ChatOverlayMount {
     this.updatePresentation();
     document.documentElement.classList.add(CHAT_ACTIVE_CLASS);
     this.assertActiveInvariant();
+  }
+
+  private setReplaySourceReady(statusText: string): void {
+    if (this.disposed) return;
+    this.primaryReady = true;
+    this.refreshContentReadiness();
+    if (!this.contentReady) this.setStatus('connected', statusText);
+    else this.setStatus(null);
+    this.takeoverState = 'ready';
+    this.transitionToActive();
   }
 
   private repairStructure(): void {

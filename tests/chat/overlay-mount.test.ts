@@ -233,6 +233,26 @@ describe('ChatOverlayMount takeover readiness', () => {
     lifecycle.dispose();
   });
 
+  it('keeps own chat active with a visible replay status while a seek window reloads', () => {
+    addCapturedChatFixture(rect(320, 480, 10, 20));
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setProbing();
+
+    mount.setReplayLoading();
+    expect(mount.state).toBe('active');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(true);
+    expect(mount.ownList.textContent).toContain('Yayın sohbeti yükleniyor');
+
+    const row = addOwnRow(mount, 'old-window');
+    mount.noteContentAppended([row]);
+    row.remove();
+    mount.setReplayReady();
+    expect(mount.state).toBe('active');
+    expect(mount.ownList.textContent).toContain('Yayın sohbeti hazır');
+    lifecycle.dispose();
+  });
+
   it('mirrors native chat typography and timestamp tokens onto the body-level overlay', () => {
     const { anchor } = addCapturedChatFixture(rect(320, 480, 10, 20));
     anchor.style.setProperty('--chatroom-font-size', '14px');

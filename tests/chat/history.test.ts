@@ -67,6 +67,18 @@ describe('fetchChatHistory', () => {
     await expect(fetchChatHistoryResult(123)).resolves.toMatchObject({ status: 'error', reason: 'terminal-http' });
   });
 
+  it('adds an encoded replay timestamp only for VOD history requests', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(200, { data: { messages: [] } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchChatHistoryResult(123, '2026-07-26T01:25:48.000Z');
+    await fetchChatHistoryResult(123);
+
+    expect(fetchMock.mock.calls[0]?.[0])
+      .toBe('https://web.kick.com/api/v1/chat/123/history?start_time=2026-07-26T01%3A25%3A48.000Z');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://web.kick.com/api/v1/chat/123/history');
+  });
+
   it('preserves reply context from a realistic history message with stringified metadata', async () => {
     const historyReply = {
       id: 'e007f390-e69b-4f60-bd0c-1e827ce6efc9',

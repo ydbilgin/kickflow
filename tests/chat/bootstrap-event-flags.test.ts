@@ -688,7 +688,11 @@ describe('bootstrap event display flags', () => {
     const lifecycle = new Lifecycle();
 
     try {
-      bootstrap.initChatIntegrity('current-channel', lifecycle);
+      bootstrap.initChatIntegrity({
+        kind: 'live',
+        slug: 'current-channel',
+        sessionKey: 'live:current-channel',
+      }, lifecycle);
       const subscriber = buildMessageElement({
         id: 'subscriber', chatroomId: 1, content: 'hello', type: 'message', createdAt: '',
         sender: {
@@ -712,6 +716,119 @@ describe('bootstrap event display flags', () => {
       featureFlags.chatMode = priorMode;
       fetchSpy.mockRestore();
       document.body.replaceChildren();
+    }
+  });
+
+  it('uses timestamped replay history in own VOD mode without opening a live WebSocket', async () => {
+    const priorMode = featureFlags.chatMode;
+    featureFlags.chatMode = 'own';
+    const lifecycle = new Lifecycle();
+    const anchor = document.createElement('div');
+    anchor.id = 'chatroom-messages';
+    vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, right: 320, bottom: 480, left: 0,
+      width: 320, height: 480, toJSON: () => ({}),
+    });
+    const chatParent = document.createElement('div');
+    chatParent.append(anchor);
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    document.body.replaceChildren(chatParent, video);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === 'https://kick.com/api/v2/channels/current-channel') {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue({
+            id: 24783370,
+            chatroom: { id: 24495088, channel_id: 24783370 },
+            subscriber_badges: [],
+          }),
+        } as unknown as Response;
+      }
+      if (url === 'https://web.kick.com/api/v1/channels/24783370/videos') {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue({
+            data: [{
+              id: 'vod-id',
+              start_time: '2026-07-25T18:12:38Z',
+            }],
+          }),
+        } as unknown as Response;
+      }
+      if (
+        url
+        === 'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-25T18%3A12%3A38.000Z'
+      ) {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue({ data: { messages: [] } }),
+        } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const websocketConstructed = vi.fn();
+    class GuardWebSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly readyState = 0;
+      constructor(url: string | URL) {
+        super();
+        websocketConstructed(String(url));
+      }
+      send(): void {}
+      close(): void {}
+    }
+    class NoopResizeObserver {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    const websocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+    const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+    Object.defineProperty(globalThis, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: GuardWebSocket,
+    });
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      writable: true,
+      value: NoopResizeObserver,
+    });
+
+    try {
+      bootstrap.initChatIntegrity({
+        kind: 'vod',
+        slug: 'current-channel',
+        videoId: 'vod-id',
+        sessionKey: 'vod:current-channel:vod-id',
+      }, lifecycle);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-25T18%3A12%3A38.000Z',
+        expect.objectContaining({ headers: { accept: 'application/json' } }),
+      );
+      expect(websocketConstructed).not.toHaveBeenCalled();
+    } finally {
+      lifecycle.dispose();
+      featureFlags.chatMode = priorMode;
+      fetchSpy.mockRestore();
+      if (websocketDescriptor) Object.defineProperty(globalThis, 'WebSocket', websocketDescriptor);
+      else Reflect.deleteProperty(globalThis, 'WebSocket');
+      if (resizeObserverDescriptor) {
+        Object.defineProperty(globalThis, 'ResizeObserver', resizeObserverDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, 'ResizeObserver');
+      }
+      document.body.replaceChildren();
+      document.documentElement.classList.remove('kickflow-chat-active');
     }
   });
 

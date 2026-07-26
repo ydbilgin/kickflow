@@ -2,7 +2,11 @@ import { logger } from '../shared/logger';
 import { normalizeMessage } from './pusher-client';
 import type { ChatMessage } from './message-store';
 
-const historyUrl = (channelId: number): string => `https://web.kick.com/api/v1/chat/${channelId}/history`;
+const historyUrl = (channelId: number, startTime?: string): string => {
+  const base = `https://web.kick.com/api/v1/chat/${channelId}/history`;
+  if (!startTime) return base;
+  return `${base}?${new URLSearchParams({ start_time: startTime }).toString()}`;
+};
 const HISTORY_MAX_ATTEMPTS = 3;
 const HISTORY_RETRY_BASE_MS = 800;
 export const HISTORY_FETCH_ATTEMPT_TIMEOUT_MS = 6_000;
@@ -64,12 +68,15 @@ export async function fetchChatHistory(channelId: number): Promise<ChatMessage[]
   return result.status === 'success' ? result.messages : [];
 }
 
-export async function fetchChatHistoryResult(channelId: number): Promise<ChatHistoryResult> {
+export async function fetchChatHistoryResult(
+  channelId: number,
+  startTime?: string,
+): Promise<ChatHistoryResult> {
   for (let attempt = 0; attempt < HISTORY_MAX_ATTEMPTS; attempt++) {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), HISTORY_FETCH_ATTEMPT_TIMEOUT_MS);
     try {
-      const response = await fetch(historyUrl(channelId), {
+      const response = await fetch(historyUrl(channelId, startTime), {
         headers: { accept: 'application/json' },
         signal: controller.signal,
       });

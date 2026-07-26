@@ -40,6 +40,23 @@ export class RenderQueue {
     }
   }
 
+  /** A VOD seek invalidates every row captured for the previous playback window, including rows
+   * still waiting for the 250ms batch. Cancel scheduled work as well as clearing the array so an
+   * old animation-frame callback cannot race the reset. */
+  clearPending(): void {
+    this.pending = [];
+    if (this.timerId !== null) {
+      window.clearTimeout(this.timerId);
+      this.timerId = null;
+    }
+    if (this.frameId !== null) {
+      if (this.frameUsesTimeout) window.clearTimeout(this.frameId);
+      else window.cancelAnimationFrame(this.frameId);
+      this.frameId = null;
+      this.frameUsesTimeout = false;
+    }
+  }
+
   private flush(): void {
     if (this.timerId !== null) {
       window.clearTimeout(this.timerId);
@@ -120,16 +137,7 @@ export class RenderQueue {
 
   dispose(): void {
     this.disposed = true;
-    if (this.timerId !== null) {
-      window.clearTimeout(this.timerId);
-      this.timerId = null;
-    }
-    if (this.frameId !== null) {
-      if (this.frameUsesTimeout) window.clearTimeout(this.frameId);
-      else window.cancelAnimationFrame(this.frameId);
-      this.frameId = null;
-    }
+    this.clearPending();
     document.removeEventListener('visibilitychange', this.handleVisibilityChange);
-    this.pending = [];
   }
 }

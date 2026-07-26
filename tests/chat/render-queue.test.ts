@@ -106,6 +106,27 @@ describe('RenderQueue', () => {
     expect(onFlush).not.toHaveBeenCalled();
   });
 
+  it('drops pending rows when a VOD seek resets the replay window', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry: new ChatDomRegistry(),
+    });
+
+    queue.enqueue(message('old-vod-window'));
+    queue.clearPending();
+    vi.runAllTimers();
+
+    expect(container.childElementCount).toBe(0);
+    queue.dispose();
+  });
+
   it('uses a timer fallback while hidden instead of leaving a batch behind a suspended animation frame', () => {
     vi.useFakeTimers();
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
