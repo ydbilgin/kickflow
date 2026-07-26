@@ -830,7 +830,14 @@ function buildCelebrationElement(message: ChatMessage): HTMLElement {
   return row;
 }
 
-export function buildMessageElement(message: ChatMessage): HTMLElement {
+export interface MessageElementOptions {
+  timestampText?: string;
+}
+
+export function buildMessageElement(
+  message: ChatMessage,
+  options: MessageElementOptions = {},
+): HTMLElement {
   if (message.systemEvent) return buildSystemEventElement(message);
   if (message.celebration?.type === 'subscription_renewed') return buildCelebrationElement(message);
 
@@ -841,10 +848,14 @@ export function buildMessageElement(message: ChatMessage): HTMLElement {
 
   const time = document.createElement('span');
   time.className = 'kickflow-message__time';
-  const createdAt = new Date(message.createdAt);
-  time.textContent = Number.isNaN(createdAt.getTime())
-    ? ''
-    : createdAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (options.timestampText !== undefined) {
+    time.textContent = options.timestampText;
+  } else {
+    const createdAt = new Date(message.createdAt);
+    time.textContent = Number.isNaN(createdAt.getTime())
+      ? ''
+      : createdAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
 
   const badges = document.createElement('span');
   badges.className = 'kickflow-message__badges';

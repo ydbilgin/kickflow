@@ -199,7 +199,10 @@ describe('VodChatReplayController', () => {
     await flushAsync();
 
     expect(setup.onMessages).toHaveBeenCalledTimes(1);
-    expect(setup.onMessages).toHaveBeenCalledWith([expect.objectContaining({ id: 'new-window' })]);
+    expect(setup.onMessages).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: 'new-window' })],
+      Date.parse('2026-07-25T18:12:38Z'),
+    );
     expect(setup.onReady).toHaveBeenCalledTimes(1);
     setup.lifecycle.dispose();
   });
@@ -208,7 +211,10 @@ describe('VodChatReplayController', () => {
     const success = setupController(vi.fn().mockResolvedValue({ status: 'success', messages: [] }));
     await success.controller.start();
     await flushAsync();
-    expect(success.onMessages).toHaveBeenCalledWith([]);
+    expect(success.onMessages).toHaveBeenCalledWith(
+      [],
+      Date.parse('2026-07-25T18:12:38Z'),
+    );
     expect(success.onReady).toHaveBeenCalledTimes(1);
     success.lifecycle.dispose();
 

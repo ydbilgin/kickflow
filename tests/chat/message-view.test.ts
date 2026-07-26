@@ -36,6 +36,22 @@ describe('message-view safe rendering', () => {
     document.body.innerHTML = '';
   });
 
+  it('renders an injected VOD timestamp while preserving the default live formatter', () => {
+    const createdAt = '2026-07-26T01:25:48Z';
+    const vodRow = buildMessageElement(
+      message('alice', undefined, { createdAt }),
+      { timestampText: '07:13:10' },
+    );
+    const liveRow = buildMessageElement(message('alice', undefined, { createdAt }));
+
+    expect(vodRow.querySelector('.kickflow-message__time')?.textContent).toBe('07:13:10');
+    expect(liveRow.querySelector('.kickflow-message__time')?.textContent)
+      .toBe(new Date(createdAt).toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+      }));
+  });
+
   it('renders parsed emotes, mentions, links, and script-looking text safely', () => {
     const parent = document.createElement('span');
 

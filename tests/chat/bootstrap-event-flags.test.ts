@@ -733,6 +733,7 @@ describe('bootstrap event display flags', () => {
     chatParent.append(anchor);
     const video = document.createElement('video');
     video.id = 'video-player';
+    video.currentTime = 25_990;
     document.body.replaceChildren(chatParent, video);
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -762,12 +763,28 @@ describe('bootstrap event display flags', () => {
       }
       if (
         url
-        === 'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-25T18%3A12%3A38.000Z'
+        === 'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A48.000Z'
       ) {
         return {
           ok: true,
           status: 200,
-          json: vi.fn().mockResolvedValue({ data: { messages: [] } }),
+          json: vi.fn().mockResolvedValue({
+            data: {
+              messages: [{
+                id: '18cf655b-4eab-4bb0-9c07-87c23f746410',
+                chatroom_id: 24495088,
+                content: 'yardımcı fulle',
+                type: 'message',
+                created_at: '2026-07-26T01:25:48Z',
+                sender: {
+                  id: 17,
+                  username: 'omercanturk',
+                  slug: 'omercanturk',
+                  identity: { color: '#53FC18', badges: [], badges_v2: [] },
+                },
+              }],
+            },
+          }),
         } as unknown as Response;
       }
       throw new Error(`unexpected fetch: ${url}`);
@@ -791,6 +808,7 @@ describe('bootstrap event display flags', () => {
     }
     const websocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
     const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+    const animationFrameDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame');
     Object.defineProperty(globalThis, 'WebSocket', {
       configurable: true,
       writable: true,
@@ -803,6 +821,11 @@ describe('bootstrap event display flags', () => {
     });
 
     try {
+      vi.useFakeTimers();
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        callback(0);
+        return 0;
+      });
       bootstrap.initChatIntegrity({
         kind: 'vod',
         slug: 'current-channel',
@@ -810,14 +833,20 @@ describe('bootstrap event display flags', () => {
         sessionKey: 'vod:current-channel:vod-id',
       }, lifecycle);
       for (let i = 0; i < 10; i++) await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(250);
 
       expect(fetchSpy).toHaveBeenCalledWith(
-        'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-25T18%3A12%3A38.000Z',
+        'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A48.000Z',
         expect.objectContaining({ headers: { accept: 'application/json' } }),
       );
+      expect(
+        document.querySelector('[data-message-id="18cf655b-4eab-4bb0-9c07-87c23f746410"] .kickflow-message__time')
+          ?.textContent,
+      ).toBe('07:13:10');
       expect(websocketConstructed).not.toHaveBeenCalled();
     } finally {
       lifecycle.dispose();
+      vi.useRealTimers();
       featureFlags.chatMode = priorMode;
       fetchSpy.mockRestore();
       if (websocketDescriptor) Object.defineProperty(globalThis, 'WebSocket', websocketDescriptor);
@@ -826,6 +855,11 @@ describe('bootstrap event display flags', () => {
         Object.defineProperty(globalThis, 'ResizeObserver', resizeObserverDescriptor);
       } else {
         Reflect.deleteProperty(globalThis, 'ResizeObserver');
+      }
+      if (animationFrameDescriptor) {
+        Object.defineProperty(globalThis, 'requestAnimationFrame', animationFrameDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
       }
       document.body.replaceChildren();
       document.documentElement.classList.remove('kickflow-chat-active');

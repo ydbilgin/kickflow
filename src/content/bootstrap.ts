@@ -36,6 +36,7 @@ import {
   type ChatSessionContext,
 } from './chat/session-context';
 import { VodChatReplayController } from './chat/vod-replay';
+import { formatVodReplayTimestamp } from './chat/timestamp';
 import { configureUserCardSession } from './chat/user-card';
 import { clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
 import {
@@ -1321,6 +1322,7 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
   mount.root.appendChild(scrollPill);
   lifecycle.add(() => scrollPill.remove());
 
+  let vodStartTimeMs: number | null = null;
   const renderQueue = new RenderQueue({
     getContainer: () => mount.getRenderContainer(),
     registry,
@@ -1328,6 +1330,11 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
     // Only render objects that this session's store still owns: this drops those removed-before-
     // flush rows and also prevents a replayed Pusher/history id from creating a duplicate row.
     shouldRender: (message) => store.getMessageById(message.id) === message,
+    formatTimestamp: context.kind === 'vod'
+      ? (message) => vodStartTimeMs === null
+        ? ''
+        : formatVodReplayTimestamp(message.createdAt, vodStartTimeMs)
+      : undefined,
     onFlush: (appended /*, wasAtBottom */) => {
       mount.noteContentAppended(appended);
       if (mount.state === 'active') {
@@ -1410,7 +1417,8 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
         context.videoId,
         {
           onReset: resetReplayWindow,
-          onMessages: (messages) => {
+          onMessages: (messages, startTimeMs) => {
+            vodStartTimeMs = startTimeMs;
             for (const message of messages) enqueueOnce(message);
           },
           onReady: () => {

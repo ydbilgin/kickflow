@@ -14,6 +14,8 @@ export interface RenderQueueOptions {
   /** Re-check that a queued message is still eligible immediately before it reaches the DOM.
    * Moderation events can remove a message from the store during the batching interval. */
   shouldRender?: (message: ChatMessage) => boolean;
+  /** Overrides the default live wall-clock label for session-specific sources such as VOD replay. */
+  formatTimestamp?: (message: ChatMessage) => string;
   onFlush?: (appended: HTMLElement[], wasAtBottom: boolean) => void;
 }
 
@@ -116,7 +118,8 @@ export class RenderQueue {
     for (const message of batch) {
       if (this.options.shouldRender && !this.options.shouldRender(message)) continue;
       try {
-        const element = buildMessageElement(message);
+        const timestampText = this.options.formatTimestamp?.(message);
+        const element = buildMessageElement(message, { timestampText });
         this.options.registry.register(element, message);
         fragment.appendChild(element);
         appended.push(element);

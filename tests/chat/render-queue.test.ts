@@ -28,6 +28,27 @@ afterEach(() => {
 });
 
 describe('RenderQueue', () => {
+  it('passes a session timestamp formatter to rendered message rows', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry: new ChatDomRegistry(),
+      formatTimestamp: () => '07:13:10',
+    });
+
+    queue.enqueue(message('vod-timestamp'));
+    vi.advanceTimersByTime(250);
+
+    expect(container.querySelector('.kickflow-message__time')?.textContent).toBe('07:13:10');
+    queue.dispose();
+  });
+
   it('retains a batch while the guarded mount is unavailable and renders it after recovery', () => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {

@@ -19,7 +19,7 @@ export type VodMetadataResult =
 
 export interface VodChatReplayCallbacks {
   onReset(): void;
-  onMessages(messages: readonly ChatMessage[]): void;
+  onMessages(messages: readonly ChatMessage[], startTimeMs: number): void;
   onReady(): void;
   onUnavailable(): void;
 }
@@ -217,7 +217,7 @@ export class VodChatReplayController {
           this.markUnavailable();
           return;
         }
-        this.callbacks.onMessages(result.messages);
+        this.callbacks.onMessages(result.messages, this.startTimeMs!);
         this.callbacks.onReady();
       }
     } finally {
