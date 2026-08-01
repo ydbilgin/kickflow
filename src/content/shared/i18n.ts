@@ -126,6 +126,8 @@ export const messages = {
   'setting.mode_changes_desc': { en: 'Reports chat setting changes such as slow mode.', tr: 'Yavaş mod gibi sohbet ayarı değişikliklerini bildirir.' },
   'setting.chatters_badges': { en: 'Active chatter badges', tr: 'Aktif sohbetçi rozetleri' },
   'setting.chatters_badges_desc': { en: 'Shows session removed-message evidence beside native chatter rows.', tr: 'Yerel sohbetçi satırlarında oturumdaki kaldırılan mesaj kanıtlarını gösterir.' },
+  'setting.user_messages': { en: 'Messages this session', tr: 'Bu oturumdaki mesajlar' },
+  'setting.user_messages_desc': { en: 'Shows this user’s messages retained during the current session.', tr: 'Bu kullanıcının mevcut oturumda tutulan mesajlarını gösterir.' },
   'setting.mention_highlight': { en: 'Highlight replies to me / mentions of me', tr: 'Bana yanıt verildiğinde / benden bahsedildiğinde vurgula' },
   'setting.mention_highlight_desc': { en: 'Frames or fills chat rows that @mention you or reply to your messages.', tr: 'Seni @bahseden veya mesajına yanıt veren satırları çerçeveler ya da doldurur.' },
   'setting.mention_style': { en: 'Highlight style', tr: 'Vurgu stili' },
@@ -279,6 +281,10 @@ export const messages = {
   'user.created': { en: 'account created', tr: 'hesap oluşturma' },
   'user.following': { en: 'following', tr: 'takip' },
   'user.subscription': { en: 'subscription', tr: 'abonelik' },
+  'user.messages': { en: 'Messages this session', tr: 'Bu oturumdaki mesajlar' },
+  'user.messages_empty': { en: 'No messages recorded in this session.', tr: 'Bu oturumda kayıtlı mesaj yok.' },
+  'user.messages_truncated': { en: 'Older messages were not retained.', tr: 'Daha eskisi tutulmadı.' },
+  'user.messages_jump': { en: 'Click to jump to this message', tr: 'Mesaja gitmek için tıkla' },
   'user.open': { en: 'open', tr: 'aç' },
 } as const satisfies Record<string, { en: LocalizedTemplate; tr: LocalizedTemplate }>;
 

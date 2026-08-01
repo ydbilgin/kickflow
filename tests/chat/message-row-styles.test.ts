@@ -1,27 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-
-const bootstrapSource = readFileSync(
-  resolve(process.cwd(), 'src/content/bootstrap.ts'),
-  'utf8',
-).replace(/\r\n?/g, '\n');
-
-function styleTemplate(): string {
-  const marker = 'style.textContent = `';
-  const start = bootstrapSource.indexOf(marker);
-  const end = bootstrapSource.indexOf('`;\n  document.head.appendChild(style);', start + marker.length);
-  if (start < 0 || end < 0) throw new Error('bootstrap style template not found');
-  return bootstrapSource.slice(start + marker.length, end);
-}
-
-function declarations(selector: string): string {
-  const css = styleTemplate();
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
-  if (!match) throw new Error(`CSS rule not found: ${selector}`);
-  return match[1].replace(/\s+/g, ' ').trim();
-}
+import { declarations } from '../helpers/bootstrap-css';
 
 describe('own-mode message row geometry styles', () => {
   it('uses the native chat typography and keeps all badge spacing on the container', () => {

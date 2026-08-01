@@ -1,13 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildUserCardElement, configureUserCardSession, mapUserCardResponse, openUserCard } from '../../src/content/chat/user-card';
+import {
+  buildUserCardElement,
+  configureUserCardSession,
+  configureUserMessageArchive,
+  mapUserCardResponse,
+  openUserCard,
+} from '../../src/content/chat/user-card';
+import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
+import { chatMessage } from '../helpers/chat-message';
 import { setLang } from '../../src/content/shared/i18n';
 
 describe('user-card', () => {
   beforeEach(() => setLang('tr'));
   afterEach(() => {
+    configureUserMessageArchive(null);
     configureUserCardSession(null);
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+  });
+
+  // Regression: the fallback card used to pass `messages: null`, hiding the session archive exactly
+  // when Kick's profile endpoint fails or rate-limits — the one case where local data is all we have.
+  it('still renders the session message list when the profile fetch fails', async () => {
+    configureUserCardSession('channel');
+    const archive = new UserMessageArchive();
+    archive.add(chatMessage('m1', { userId: 7, content: 'kayitli mesaj' }));
+    configureUserMessageArchive(archive);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+
+    await openUserCard('alice', 'Alice', 10, 10, 7);
+
+    const card = document.querySelector<HTMLElement>('.kickflow-user-card');
+    expect(card?.querySelector('.kickflow-user-messages')).not.toBeNull();
+    expect(card?.textContent).toContain('kayitli mesaj');
   });
 
   it('maps card + channel fields (avatar/bio/followers/verified) without exposing a level field', () => {
@@ -114,7 +139,7 @@ describe('user-card', () => {
       }),
     })));
 
-    await openUserCard('alice', 'Alice', 10, 10);
+    await openUserCard('alice', 'Alice', 10, 10, null);
 
     expect(fetch).toHaveBeenCalledWith(
       'https://kick.com/api/v2/channels/channel/users/alice',

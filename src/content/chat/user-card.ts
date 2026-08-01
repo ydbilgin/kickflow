@@ -1,5 +1,8 @@
 import { appendBadges } from './message-view';
 import { mergeIdentityBadges } from './message-store';
+import { featureFlags } from './feature-flags';
+import { UserMessageArchive } from './user-message-archive';
+import { buildUserMessageList, scrollUserMessageListToLatest, type UserMessageListModel } from './user-message-list';
 import { makeDraggable } from '../shared/draggable';
 import { openInNewTab, wireNewTabGestures } from '../shared/new-tab';
 import type { ChatBadge } from './message-store';
@@ -49,6 +52,8 @@ export interface KickChannelResponse {
 }
 
 export interface UserCardViewModel {
+  userId: number | null;
+  messages: UserMessageListModel | null;
   username: string;
   slug: string;
   profilePic: string | null;
@@ -65,9 +70,15 @@ export interface UserCardViewModel {
 let channelSlug: string | null = null;
 const cache = new Map<string, Promise<UserCardViewModel | null>>();
 let activeCard: HTMLElement | null = null;
+let userMessageArchive: UserMessageArchive | null = null;
+
+export function configureUserMessageArchive(archive: UserMessageArchive | null): void {
+  userMessageArchive = archive;
+}
 
 export function configureUserCardSession(slug: string | null): void {
   channelSlug = slug && SAFE_SLUG_RE.test(slug) ? slug : null;
+  if (slug === null) userMessageArchive = null;
   cache.clear();
   dismissUserCard();
 }
@@ -162,6 +173,8 @@ export function mapUserCardResponse(
   const { profilePic: channelPic, bio } = readChannel(channel);
   const cardPic = typeof card.profile_pic === 'string' && card.profile_pic ? card.profile_pic : null;
   return {
+    userId: null,
+    messages: null,
     username,
     slug,
     profilePic: cardPic ?? channelPic,
@@ -209,17 +222,27 @@ async function fetchUserCard(username: string, fallbackName: string): Promise<Us
   return promise;
 }
 
+/** One cell of the profile-facts grid. These four facts are metadata, not the payload: stacked as
+ * full-width label/value rows they took as much height as the messages themselves, so they are laid
+ * out two-up with the label above its value. */
 function appendField(parent: HTMLElement, label: string, value: string): void {
-  const row = document.createElement('div');
-  row.className = FIELD_CLASS;
+  const cell = document.createElement('div');
+  cell.className = FIELD_CLASS;
   const key = document.createElement('span');
   key.className = 'kickflow-user-card__key';
   key.textContent = label;
   const val = document.createElement('span');
   val.className = 'kickflow-user-card__value';
   val.textContent = value;
-  row.append(key, val);
-  parent.appendChild(row);
+  val.title = value;
+  cell.append(key, val);
+  parent.appendChild(cell);
+}
+
+function buildFieldGrid(): HTMLElement {
+  const grid = document.createElement('div');
+  grid.className = 'kickflow-user-card__facts';
+  return grid;
 }
 
 export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
@@ -287,16 +310,22 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
     card.appendChild(bio);
   }
 
-  if (model.followers) appendField(card, t('user.followers'), model.followers);
-  appendField(card, t('user.created'), model.createdAt);
-  appendField(card, t('user.following'), model.followingSince);
-  appendField(card, t('user.subscription'), model.subscribedFor);
+  const facts = buildFieldGrid();
+  if (model.followers) appendField(facts, t('user.followers'), model.followers);
+  appendField(facts, t('user.created'), model.createdAt);
+  appendField(facts, t('user.following'), model.followingSince);
+  appendField(facts, t('user.subscription'), model.subscribedFor);
+  card.appendChild(facts);
 
   if (model.badges.length > 0) {
     const badges = document.createElement('div');
     badges.className = 'kickflow-user-card__badges';
     appendBadges(badges, model.badges);
     card.appendChild(badges);
+  }
+
+  if (featureFlags.showUserMessages && model.messages) {
+    card.appendChild(buildUserMessageList(model.messages));
   }
 
   const link = document.createElement('a');
@@ -317,8 +346,17 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   return card;
 }
 
-function buildMinimalCard(displayName: string, slug: string): HTMLElement {
+/** The archive is local data that needs no network, so the minimal card carries it too: it is the
+ * card the owner gets when Kick's profile endpoint fails or is rate-limited, which is exactly when
+ * hiding the one section that still works would be worst. */
+function buildMinimalCard(
+  displayName: string,
+  slug: string,
+  messages: UserMessageListModel | null,
+): HTMLElement {
   const card = buildUserCardElement({
+    userId: null,
+    messages,
     username: displayName,
     slug: SAFE_SLUG_RE.test(slug) ? slug : displayName,
     profilePic: null,
@@ -334,10 +372,59 @@ function buildMinimalCard(displayName: string, slug: string): HTMLElement {
   return card;
 }
 
+export const CARD_VIEWPORT_MARGIN_PX = 8;
+export const CARD_ANCHOR_GAP_PX = 8;
+/** Total vertical space the card leaves free, used as `max-height: calc(100vh - Npx)`. Declared as
+ * its own constant rather than an inline `${A * 2}` expression because the visual harnesses replace
+ * CSS placeholders by identifier — an expression would survive as literal text and void the rule. */
+export const CARD_MAX_HEIGHT_INSET_PX = CARD_VIEWPORT_MARGIN_PX * 2;
+
+export interface CardPlacementInput {
+  anchorX: number;
+  anchorY: number;
+  cardWidth: number;
+  cardHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+/** Pure placement maths, kept separate from the DOM so the "never leaves the viewport" guarantee is
+ * assertable instead of eyeballed. The old version subtracted hard-coded 284/260 constants, which
+ * silently stopped being the card's real size the moment the message list made its height variable
+ * — that is how the card ended up hanging off the bottom of the screen. */
+export function resolveCardPlacement(input: CardPlacementInput): { left: number; top: number } {
+  const m = CARD_VIEWPORT_MARGIN_PX;
+  const gap = CARD_ANCHOR_GAP_PX;
+  const maxLeft = Math.max(m, input.viewportWidth - input.cardWidth - m);
+  const left = Math.min(Math.max(input.anchorX + gap, m), maxLeft);
+
+  const below = input.anchorY + gap;
+  const above = input.anchorY - gap - input.cardHeight;
+  let top: number;
+  if (below + input.cardHeight + m <= input.viewportHeight) {
+    top = below;
+  } else if (above >= m) {
+    // No room under the cursor, but room over it: flipping beats covering the name that was clicked.
+    top = above;
+  } else {
+    top = Math.max(m, input.viewportHeight - input.cardHeight - m);
+  }
+  return { left, top };
+}
+
+/** Must run while the card is in the document — placement needs its measured size. */
 function positionCard(card: HTMLElement, x: number, y: number): void {
-  const margin = 8;
-  card.style.left = `${Math.min(x + margin, window.innerWidth - 284)}px`;
-  card.style.top = `${Math.min(y + margin, window.innerHeight - 260)}px`;
+  const rect = card.getBoundingClientRect();
+  const { left, top } = resolveCardPlacement({
+    anchorX: x,
+    anchorY: y,
+    cardWidth: rect.width,
+    cardHeight: rect.height,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  });
+  card.style.left = `${left}px`;
+  card.style.top = `${top}px`;
 }
 
 function installDismissHandlers(card: HTMLElement): void {
@@ -360,20 +447,46 @@ export function dismissUserCard(): void {
   activeCard = null;
 }
 
-export async function openUserCard(username: string, displayName: string, clientX: number, clientY: number): Promise<void> {
+function getUserMessageListModel(userId: number | null): UserMessageListModel | null {
+  if (!featureFlags.showUserMessages || !userMessageArchive || typeof userId !== 'number' || !Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+  return {
+    messages: userMessageArchive.getByUserId(userId),
+    truncated: userMessageArchive.truncated,
+  };
+}
+
+export async function openUserCard(
+  username: string,
+  displayName: string,
+  clientX: number,
+  clientY: number,
+  userId: number | null,
+): Promise<void> {
   dismissUserCard();
-  const loading = buildMinimalCard(displayName, username);
+  // Built once and reused for both cards: the archive is a live object, so re-querying it after
+  // the await could hand the two cards different rows for the same click.
+  const messages = getUserMessageListModel(userId);
+  const loading = buildMinimalCard(displayName, username, messages);
   document.body.appendChild(loading);
   positionCard(loading, clientX, clientY);
   installDismissHandlers(loading);
+  scrollUserMessageListToLatest(loading);
   activeCard = loading;
 
   const model = await fetchUserCard(username, displayName);
   if (activeCard !== loading) return;
-  const next = model ? buildUserCardElement(model) : buildMinimalCard(displayName, username);
+  const next = model
+    ? buildUserCardElement({ ...model, userId, messages })
+    : buildMinimalCard(displayName, username, messages);
+  // The entrance animation belongs to the click, not to the fetch finishing. Replaying it on the
+  // swap would read as a second card appearing a fifth of a second after the first.
+  next.classList.add('kickflow-user-card--instant');
   loading.dispatchEvent(new Event('kickflow:dismiss'));
   loading.replaceWith(next);
   activeCard = next;
+  scrollUserMessageListToLatest(next);
   positionCard(next, clientX, clientY);
   installDismissHandlers(next);
 }

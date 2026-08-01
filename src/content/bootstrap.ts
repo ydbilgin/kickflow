@@ -37,7 +37,9 @@ import {
 } from './chat/session-context';
 import { VodChatReplayController } from './chat/vod-replay';
 import { formatVodReplayTimestamp } from './chat/timestamp';
-import { configureUserCardSession } from './chat/user-card';
+import { CARD_MAX_HEIGHT_INSET_PX, configureUserCardSession, configureUserMessageArchive } from './chat/user-card';
+import { UserMessageArchive } from './chat/user-message-archive';
+import { USER_MESSAGE_TIME_COLUMN_PX } from './chat/user-message-list';
 import { clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
 import {
   refreshMessageHighlights,
@@ -85,6 +87,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showHostRaid',
   'showModeChanges',
   'showChattersBadges',
+  'showUserMessages',
   'autoTheater',
   'captionGuard',
   'rewindControls',
@@ -605,13 +608,22 @@ function ensureStyles(): void {
     .kickflow-scroll-pill:hover { background: #45e00f; }
     .kickflow-scroll-pill:active { transform: translateX(-50%) scale(0.95); }
     .kickflow-user-card {
-      position: fixed; z-index: 2147483647; width: 276px; padding: 10px;
-      border: 1px solid rgba(255,255,255,0.16); border-radius: 8px;
-      background: rgba(18,20,24,0.98); color: #efeff1;
-      box-shadow: 0 12px 34px rgba(0,0,0,0.44);
+      position: fixed; z-index: 2147483647; width: 320px; padding: 12px;
+      box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;
+      max-height: calc(100vh - ${CARD_MAX_HEIGHT_INSET_PX}px);
+      border: 1px solid rgba(255,255,255,0.13); border-radius: 10px;
+      background: oklch(0.19 0.008 260 / 0.985); color: #efeff1;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 16px 40px rgba(0,0,0,0.52);
       font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px;
+      animation: kickflow-card-in 160ms cubic-bezier(0.25, 1, 0.5, 1) both;
     }
-    .kickflow-user-card__header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; padding-right: 20px; cursor: move; user-select: none; }
+    .kickflow-user-card--instant { animation: none; }
+    @keyframes kickflow-card-in {
+      from { opacity: 0; transform: translateY(6px) scale(0.985); }
+      to   { opacity: 1; transform: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { .kickflow-user-card { animation: none; } }
+    .kickflow-user-card__header { display: flex; align-items: center; gap: 10px; padding-right: 22px; cursor: move; user-select: none; }
     .kickflow-user-card__avatar {
       display: block; width: 44px; height: 44px; border-radius: 50%; object-fit: cover;
       background: rgba(255,255,255,0.08); flex: none;
@@ -631,20 +643,101 @@ function ensureStyles(): void {
     }
     .kickflow-user-card__close:hover { background: rgba(233,17,60,0.7); color: #fff; }
     .kickflow-user-card__bio {
-      color: #c7c7d1; font-size: 11px; line-height: 1.4; margin: 0 0 8px;
+      color: #c7c7d1; font-size: 11px; line-height: 1.45; margin: 0;
       max-height: 56px; overflow: auto; white-space: pre-wrap; word-break: break-word;
     }
-    .kickflow-user-card__field {
-      display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
-      border-top: 1px solid rgba(255,255,255,0.07);
+    .kickflow-user-card__facts {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
+      padding: 9px 10px; border-radius: 8px; background: rgba(255,255,255,0.035);
     }
-    .kickflow-user-card__key { color: #adadb8; }
-    .kickflow-user-card__value { color: #fff; text-align: right; }
-    .kickflow-user-card__badges { padding-top: 7px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+    .kickflow-user-card__field { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .kickflow-user-card__key {
+      color: #8b8b93; font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .kickflow-user-card__value {
+      color: #efeff1; font-size: 12px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .kickflow-user-card__badges { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+    .kickflow-user-messages {
+      display: flex; flex-direction: column; min-height: 0;
+      padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08);
+    }
+    .kickflow-user-messages__toggle {
+      appearance: none; width: 100%; display: flex; align-items: center; gap: 8px; flex: none;
+      padding: 0 0 6px; border: 0; background: transparent; color: #adadb8; cursor: pointer;
+      font: 700 9px/1.4 'Inter','Segoe UI',system-ui,sans-serif; letter-spacing: 0.05em;
+      text-transform: uppercase; text-align: left;
+    }
+    .kickflow-user-messages__toggle:hover { color: #efeff1; }
+    .kickflow-user-messages__toggle:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; border-radius: 3px; }
+    .kickflow-user-messages__title { min-width: 0; flex: 1; }
+    .kickflow-user-messages__count {
+      min-width: 16px; padding: 1px 6px; border-radius: 999px;
+      background: rgba(255,255,255,0.08); color: #adadb8; text-align: center;
+      font-size: 10px; letter-spacing: 0; font-variant-numeric: tabular-nums;
+    }
+    .kickflow-user-messages__body {
+      flex: 1 1 auto; min-height: 0; max-height: 260px; overflow-y: auto; padding-right: 4px;
+      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.16) transparent;
+    }
+    .kickflow-user-messages__row {
+      display: block; min-width: 0; padding: 5px 6px; border-radius: 6px;
+      color: #efeff1; cursor: pointer; line-height: 1.45;
+      word-break: break-word; overflow-wrap: anywhere;
+      transition: background 120ms ease;
+    }
+    .kickflow-user-messages__row + .kickflow-user-messages__row {
+      box-shadow: 0 -1px 0 rgba(255,255,255,0.05);
+    }
+    .kickflow-user-messages__row:hover,
+    .kickflow-user-messages__row:focus-visible { outline: none; background: rgba(255,255,255,0.06); }
+    .kickflow-user-messages__row:focus-visible { box-shadow: 0 0 0 2px rgba(83,252,24,0.75); }
+    .kickflow-user-messages__row--deleted .kickflow-user-messages__text {
+      text-decoration: line-through; color: #9a9aa4;
+    }
+    .kickflow-user-messages__reply {
+      display: flex; align-items: baseline; gap: 4px; min-width: 0;
+      margin: 0 0 2px ${USER_MESSAGE_TIME_COLUMN_PX}px;
+      color: #8b8b93; font-size: 10px; line-height: 1.35;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .kickflow-user-messages__reply > * { flex: none; }
+    .kickflow-user-messages__replyIcon { opacity: 0.7; }
+    .kickflow-user-messages__replyUser { color: #adadb8; font-weight: 600; }
+    .kickflow-user-messages__replyText {
+      min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* Same box-then-image pattern as the chat's own reply snippet: sizing lives on the wrapper, and
+       the absolutely-positioned image follows it. Overriding the image alone would fight the
+       line-box-neutral emote geometry that own-mode rows depend on. */
+    .kickflow-user-messages__reply .kickflow-emote-box {
+      width: 14px; height: 14px; vertical-align: -3px; margin: 0 1px;
+    }
+    .kickflow-user-messages__reply .kickflow-emote {
+      width: 14px !important; height: 14px !important;
+    }
+    .kickflow-user-messages__line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+    .kickflow-user-messages__time {
+      flex: none; width: ${USER_MESSAGE_TIME_COLUMN_PX}px; color: #7c7c86;
+      font-size: 10px; font-variant-numeric: tabular-nums;
+    }
+    .kickflow-user-messages__text { min-width: 0; flex: 1; }
+    .kickflow-user-messages__empty,
+    .kickflow-user-messages__note {
+      color: #8b8b93; font-size: 10px; line-height: 1.45;
+    }
+    .kickflow-user-messages__empty { padding: 4px 6px 2px; }
+    .kickflow-user-messages__note { flex: none; padding: 7px 6px 0; }
+    .kickflow-user-messages--collapsed .kickflow-user-messages__body,
+    .kickflow-user-messages--collapsed .kickflow-user-messages__empty,
+    .kickflow-user-messages--collapsed .kickflow-user-messages__note { display: none; }
     .kickflow-user-card__link {
-      display: inline-block; margin-top: 8px; color: #66bfff; text-decoration: underline;
+      display: inline-block; color: #66bfff; text-decoration: none; font-size: 11px;
       max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    .kickflow-user-card__link:hover { text-decoration: underline; }
     .kickflow-badge-icon {
       display: inline-block !important; height: 18px !important; width: 18px !important;
     }
@@ -1190,7 +1283,12 @@ function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecyc
   const { slug } = context;
   setSubscriberBadges([]);
   configureUserCardSession(slug);
-  lifecycle.add(() => configureUserCardSession(null));
+  const archive = new UserMessageArchive();
+  configureUserMessageArchive(archive);
+  lifecycle.add(() => {
+    configureUserMessageArchive(null);
+    configureUserCardSession(null);
+  });
   let augmenter: NativeChatAugmenter | null = null;
   const store = new ChatIntegrityStore({
     onPreservedEvicted: (message) => {
@@ -1199,6 +1297,11 @@ function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecyc
       // TTL/cap releases it; forgetGhost only covers rows that Kick removed from the list.
       augmenter?.markById(message.id);
     },
+    onMessageAdded: (message) => {
+      archive.add(message);
+      if (message.preserved) archive.markDeleted(message.id);
+    },
+    onMessagePreserved: (message) => archive.markDeleted(message.id),
   });
   augmenter = new NativeChatAugmenter(lifecycle, store);
   setHighlightStore(store);
@@ -1208,7 +1311,10 @@ function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecyc
   initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
-  lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
+  lifecycle.setInterval(() => {
+    store.sweepExpiredPreserved();
+    archive.sweepExpired();
+  }, PRESERVED_SWEEP_INTERVAL_MS);
 
   // Kick owns the correct timestamp-synchronized replay DOM. Background live Pusher traffic has
   // no valid role on a VOD and would pollute this session's evidence store with present-day chat.
@@ -1285,11 +1391,21 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
   const { slug } = context;
   setSubscriberBadges([]);
   configureUserCardSession(slug);
-  lifecycle.add(() => configureUserCardSession(null));
+  const archive = new UserMessageArchive();
+  configureUserMessageArchive(archive);
+  lifecycle.add(() => {
+    configureUserMessageArchive(null);
+    configureUserCardSession(null);
+  });
 
   const registry = new ChatDomRegistry();
   const store = new ChatIntegrityStore({
     onPreservedEvicted: (message: ChatMessage) => reconcileOwnPreservedEviction(message, store, registry),
+    onMessageAdded: (message) => {
+      archive.add(message);
+      if (message.preserved) archive.markDeleted(message.id);
+    },
+    onMessagePreserved: (message) => archive.markDeleted(message.id),
   });
   setHighlightStore(store);
   lifecycle.add(() => setHighlightStore(null));
@@ -1361,7 +1477,10 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
     },
   });
   lifecycle.add(() => renderQueue.dispose());
-  lifecycle.setInterval(() => store.sweepExpiredPreserved(), PRESERVED_SWEEP_INTERVAL_MS);
+  lifecycle.setInterval(() => {
+    store.sweepExpiredPreserved();
+    archive.sweepExpired();
+  }, PRESERVED_SWEEP_INTERVAL_MS);
 
   const enqueueOnce = (message: ChatMessage): void => {
     if (store.addMessage(message)) renderQueue.enqueue(message);
@@ -1826,6 +1945,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showHostRaid: featureFlags.showHostRaid,
     showModeChanges: featureFlags.showModeChanges,
     showChattersBadges: featureFlags.showChattersBadges,
+    showUserMessages: featureFlags.showUserMessages,
     autoTheater: featureFlags.autoTheater,
     captionGuard: featureFlags.captionGuard,
     rewindControls: featureFlags.rewindControls,
@@ -1946,6 +2066,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showHostRaid',
     'kf_flag_showModeChanges',
     'kf_flag_showChattersBadges',
+    'kf_flag_showUserMessages',
     'kf_flag_autoTheater',
     'kf_flag_captionGuard',
     'kf_flag_rewindControls',
@@ -1974,6 +2095,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showHostRaid === 'boolean') setFeatureFlag('showHostRaid', saved.kf_flag_showHostRaid);
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showChattersBadges === 'boolean') setFeatureFlag('showChattersBadges', saved.kf_flag_showChattersBadges);
+  if (typeof saved.kf_flag_showUserMessages === 'boolean') setFeatureFlag('showUserMessages', saved.kf_flag_showUserMessages);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
   if (typeof saved.kf_flag_captionGuard === 'boolean') setFeatureFlag('captionGuard', saved.kf_flag_captionGuard);
   if (typeof saved.kf_flag_rewindControls === 'boolean') setFeatureFlag('rewindControls', saved.kf_flag_rewindControls);

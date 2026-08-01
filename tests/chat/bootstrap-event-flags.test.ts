@@ -704,7 +704,7 @@ describe('bootstrap event display flags', () => {
       expect(subscriber.querySelector('.kickflow-badge-icon')).toBeNull();
       expect(subscriber.querySelector('.kickflow-badge-role')).not.toBeNull();
 
-      await openUserCard('alice', 'Alice', 10, 10);
+      await openUserCard('alice', 'Alice', 10, 10, null);
       expect(fetchSpy).toHaveBeenCalledWith(
         'https://kick.com/api/v2/channels/current-channel/users/alice',
         { headers: { accept: 'application/json' } },

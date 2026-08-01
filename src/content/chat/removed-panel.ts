@@ -141,6 +141,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private hostRaidCheckbox: HTMLInputElement | null = null;
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private chattersBadgesCheckbox: HTMLInputElement | null = null;
+  private userMessagesCheckbox: HTMLInputElement | null = null;
   private mentionHighlightCheckbox: HTMLInputElement | null = null;
   private modFrameCheckbox: HTMLInputElement | null = null;
   private vipFrameCheckbox: HTMLInputElement | null = null;
@@ -569,6 +570,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.chattersBadgesCheckbox = chattersBadgesCheckbox;
 
+    const { label: userMessagesLabel, checkbox: userMessagesCheckbox } = this.buildSettingsToggle(
+      t('setting.user_messages'), t('setting.user_messages_desc'), 'showUserMessages', featureFlags.showUserMessages,
+    );
+    this.userMessagesCheckbox = userMessagesCheckbox;
+
     const { label: mentionHighlightLabel, checkbox: mentionHighlightCheckbox } = this.buildSettingsToggle(
       t('setting.mention_highlight'),
       t('setting.mention_highlight_desc'),
@@ -616,6 +622,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       hostRaidLabel,
       modeChangesLabel,
       chattersBadgesLabel,
+      userMessagesLabel,
       mentionHighlightLabel,
       mentionStyleRow,
       mentionColorRow,
@@ -1242,6 +1249,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.chattersBadgesCheckbox && this.chattersBadgesCheckbox.checked !== featureFlags.showChattersBadges) {
       this.chattersBadgesCheckbox.checked = featureFlags.showChattersBadges;
     }
+    if (this.userMessagesCheckbox && this.userMessagesCheckbox.checked !== featureFlags.showUserMessages) {
+      this.userMessagesCheckbox.checked = featureFlags.showUserMessages;
+    }
     if (this.mentionHighlightCheckbox && this.mentionHighlightCheckbox.checked !== featureFlags.mentionHighlightEnabled) {
       this.mentionHighlightCheckbox.checked = featureFlags.mentionHighlightEnabled;
     }
@@ -1379,6 +1389,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.hostRaidCheckbox = null;
     this.modeChangesCheckbox = null;
     this.chattersBadgesCheckbox = null;
+    this.userMessagesCheckbox = null;
     this.mentionHighlightCheckbox = null;
     this.modFrameCheckbox = null;
     this.vipFrameCheckbox = null;

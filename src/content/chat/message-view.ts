@@ -1,6 +1,6 @@
 import { getSeenChatIdentityColor, mergeIdentityBadges, normalizeChatIdentity, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
 import { isSafeKickSlug, openUserCard } from './user-card';
-import { OWN_LIST_ID } from './overlay-mount';
+import { jumpToMessage } from './message-jump';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
 import { formatNumber, t, type MessageKey } from '../shared/i18n';
@@ -50,6 +50,7 @@ function styleAndWireEventIdentity(element: HTMLElement, username: string): void
     username.toLowerCase(),
     username,
     'kickflow-event-row__identity--link',
+    null,
   );
 }
 
@@ -145,6 +146,7 @@ export function wireProfileSlugLink(
   slug: string,
   displayName: string,
   linkClass: string,
+  userId: number | null,
 ): void {
   if (!isSafeKickSlug(slug)) return;
   const profileUrl = `https://kick.com/${slug}`;
@@ -157,7 +159,7 @@ export function wireProfileSlugLink(
     if (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey) {
       openInNewTab(profileUrl);
     } else {
-      void openUserCard(slug, displayName, event.clientX, event.clientY);
+      void openUserCard(slug, displayName, event.clientX, event.clientY, userId);
     }
   };
   element.addEventListener('click', (event) => { if (event.button === 0) act(event); });
@@ -176,7 +178,7 @@ export function wireProfileSlugLink(
     event.preventDefault();
     event.stopImmediatePropagation();
     const rect = element.getBoundingClientRect();
-    void openUserCard(slug, displayName, rect.left, rect.bottom);
+    void openUserCard(slug, displayName, rect.left, rect.bottom, userId);
   });
 }
 
@@ -185,7 +187,7 @@ function appendMention(parent: HTMLElement, rawMention: string): void {
   span.className = 'kickflow-mention';
   span.textContent = rawMention;
   const displayName = rawMention.slice(1);
-  wireProfileSlugLink(span, displayName.toLowerCase(), displayName, 'kickflow-mention--link');
+  wireProfileSlugLink(span, displayName.toLowerCase(), displayName, 'kickflow-mention--link', null);
   parent.appendChild(span);
 }
 
@@ -195,7 +197,7 @@ export function wireUsernameProfileLink(
   displayName: string,
   linkClass: string,
 ): void {
-  wireProfileSlugLink(username, sender.slug, displayName, linkClass);
+  wireProfileSlugLink(username, sender.slug, displayName, linkClass, sender.id);
 }
 
 function groupMessageIdentity(badges: HTMLElement, username: HTMLElement): HTMLSpanElement {
@@ -548,36 +550,15 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
     const replyToMessageId = context.replyToMessageId;
     reply.setAttribute('role', 'button');
     reply.tabIndex = 0;
-    const jumpToOriginal = (): void => {
-      const ownList = document.getElementById(OWN_LIST_ID);
-      const target = ownList
-        ? Array.from(ownList.querySelectorAll<HTMLElement>('[data-message-id]'))
-            .find((element) => element.dataset.messageId === replyToMessageId)
-        : undefined;
-      if (!target) {
-        // The original row has almost certainly scrolled past KickFlow's own DOM trim window
-        // (dom-window.ts MAX_NON_PRESERVED_NODES) — a silent no-op here reads as broken, so
-        // give the preview itself a brief "miss" cue instead of pretending nothing happened.
-        reply.classList.remove('kickflow-message__reply-context--miss');
-        // Force reflow so the animation restarts on a second click while it's still playing.
-        void reply.offsetWidth;
-        reply.classList.add('kickflow-message__reply-context--miss');
-        window.setTimeout(() => reply.classList.remove('kickflow-message__reply-context--miss'), 500);
-        return;
-      }
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      target.classList.add('kickflow-message--jump-highlight');
-      window.setTimeout(() => target.classList.remove('kickflow-message--jump-highlight'), 1800);
-    };
     reply.addEventListener('click', (event) => {
       if (event.button !== 0) return;
       event.preventDefault();
-      jumpToOriginal();
+      jumpToMessage(replyToMessageId, reply);
     });
     reply.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
-      jumpToOriginal();
+      jumpToMessage(replyToMessageId, reply);
     });
   }
   row.appendChild(reply);

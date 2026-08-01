@@ -319,3 +319,46 @@ describe('GLOBAL_CAPACITY vs Mode A paused DOM cap', () => {
     expect(store.markMessageDeleted(oldestId)?.id).toBe(oldestId);
   });
 });
+
+describe('ChatIntegrityStore observers', () => {
+  it('fires onMessageAdded once per accepted non-system message', () => {
+    const onMessageAdded = vi.fn();
+    const store = new ChatIntegrityStore({ onMessageAdded });
+    const system = message('system');
+    system.systemEvent = { kind: 'host', username: 'host', numberViewers: 1, optionalMessage: null };
+
+    expect(store.addMessage(message('normal'))).toBe(true);
+    expect(store.addMessage(message('normal'))).toBe(false);
+    expect(store.addMessage(system)).toBe(true);
+
+    expect(onMessageAdded).toHaveBeenCalledOnce();
+    expect(onMessageAdded).toHaveBeenCalledWith(expect.objectContaining({ id: 'normal' }));
+  });
+
+  it('fires onMessagePreserved once for delete and ban transitions', () => {
+    const onMessagePreserved = vi.fn();
+    const store = new ChatIntegrityStore({ onMessagePreserved });
+    store.addMessage(message('deleted', 1));
+    store.addMessage(message('banned', 2));
+
+    store.markMessageDeleted('deleted');
+    store.markMessageDeleted('deleted');
+    store.markUserBanned(2);
+    store.markUserBanned(2);
+
+    expect(onMessagePreserved).toHaveBeenCalledTimes(2);
+    expect(onMessagePreserved).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: 'deleted' }), 'deleted');
+    expect(onMessagePreserved).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 'banned' }), 'banned');
+  });
+
+  it('keeps store state consistent when observer callbacks throw', () => {
+    const onMessageAdded = vi.fn(() => { throw new Error('added observer failure'); });
+    const onMessagePreserved = vi.fn(() => { throw new Error('preserved observer failure'); });
+    const store = new ChatIntegrityStore({ onMessageAdded, onMessagePreserved });
+
+    expect(() => store.addMessage(message('safe'))).not.toThrow();
+    expect(store.getMessageById('safe')).toBeDefined();
+    expect(() => store.markMessageDeleted('safe')).not.toThrow();
+    expect(store.getMessageById('safe')).toMatchObject({ preserved: true, preservedReason: 'deleted' });
+  });
+});

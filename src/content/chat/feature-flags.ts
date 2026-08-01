@@ -29,6 +29,8 @@ export interface FeatureFlags {
   showModeChanges: boolean;
   /** Show session removed-message evidence beside Kick's native Active Chatters rows. */
   showChattersBadges: boolean;
+  /** Show the per-user "messages this session" list inside KickFlow's user card. */
+  showUserMessages: boolean;
   /** Automatically enter Kick's theater layout when a channel/video loads. Opt-in because it
    * changes the page layout rather than only augmenting it. */
   autoTheater: boolean;
@@ -79,6 +81,7 @@ export const featureFlags: FeatureFlags = {
   showHostRaid: true,
   showModeChanges: true,
   showChattersBadges: true,
+  showUserMessages: true,
   autoTheater: false,
   captionGuard: true,
   rewindControls: true,

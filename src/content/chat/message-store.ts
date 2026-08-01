@@ -1,3 +1,5 @@
+import { logger } from '../shared/logger';
+
 export interface ChatBadge {
   type?: string;      // role badges (old array): moderator/vip/broadcaster/verified/subscriber/...
   name?: string;      // badges_v2 label: 'level' / 'GoldenK'
@@ -246,6 +248,10 @@ export interface ChatIntegrityStoreOptions {
   /** Called whenever a preserved (banned/deleted) message stops being preserved — either
    * evicted by the 50-entry preserved cap or expired by the TTL sweep. */
   onPreservedEvicted?: (message: ChatMessage) => void;
+  /** Fired once per newly accepted, non-system message, after it is indexed. */
+  onMessageAdded?: (message: ChatMessage) => void;
+  /** Fired when a message becomes preserved (banned or deleted). */
+  onMessagePreserved?: (message: ChatMessage, reason: PreservedReason) => void;
 }
 
 interface PendingDelete {
@@ -301,6 +307,13 @@ export class ChatIntegrityStore {
     if (pendingDelete && !message.systemEvent) {
       this.pendingDeletedById.delete(message.id);
       this.preserveMessage(message, 'deleted', pendingDelete.meta);
+    }
+    if (!message.systemEvent) {
+      try {
+        this.options.onMessageAdded?.(message);
+      } catch (error) {
+        logger.debug('ChatIntegrityStore onMessageAdded callback threw', error);
+      }
     }
     return true;
   }
@@ -433,6 +446,7 @@ export class ChatIntegrityStore {
       if (reason === 'banned' && message.preservedReason !== 'banned') {
         message.preservedReason = 'banned';
         message.preservedAt = Date.now();
+        this.notifyMessagePreserved(message, reason);
       }
       return;
     }
@@ -449,6 +463,15 @@ export class ChatIntegrityStore {
       // preserved nodes/objects grow without bound during a ban wave (the target
       // scenario this extension is built for).
       this.unpreserve(evicted);
+    }
+    this.notifyMessagePreserved(message, reason);
+  }
+
+  private notifyMessagePreserved(message: ChatMessage, reason: PreservedReason): void {
+    try {
+      this.options.onMessagePreserved?.(message, reason);
+    } catch (error) {
+      logger.debug('ChatIntegrityStore onMessagePreserved callback threw', error);
     }
   }
 
