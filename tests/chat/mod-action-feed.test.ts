@@ -20,6 +20,10 @@ function action(at: number, overrides: Partial<ModAction> = {}): ModAction {
   };
 }
 
+function victim(name: string, messageId: string | null): { name: string; messageId: string | null } {
+  return { name, messageId };
+}
+
 function createFeed(
   now: () => number,
   notices: ModActionNotice[],
@@ -120,7 +124,21 @@ describe('ModActionFeed', () => {
     feed.push(action(0, { victim: 'same-user' }));
     feed.push(action(1_000, { victim: 'same-user' }));
 
-    expect(updated[0]).toMatchObject({ count: 2, victims: ['same-user'] });
+    expect(updated[0]).toMatchObject({ count: 2, victims: [victim('same-user', 'message-0')] });
+  });
+
+  it('keeps each distinct victim message id when a burst collapses', () => {
+    const notices: ModActionNotice[] = [];
+    const updated: ModActionNotice[] = [];
+    const feed = createFeed(() => 0, notices, updated);
+
+    feed.push(action(0, { victim: 'first', messageId: 'first-message' }));
+    feed.push(action(1_000, { victim: 'second', messageId: 'second-message' }));
+
+    expect(updated[0]?.victims).toEqual([
+      victim('first', 'first-message'),
+      victim('second', 'second-message'),
+    ]);
   });
 
   it('keeps notice identifiers monotonic and clears the open notice', () => {

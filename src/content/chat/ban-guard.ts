@@ -29,6 +29,11 @@ function newestMessage(messages: ReturnType<ChatIntegrityStore['markUserBanned']
   return newest;
 }
 
+function fallbackVictimName(payload: BanEventPayload): string {
+  const username = payload.username?.trim();
+  return username || `user ${payload.userId}`;
+}
+
 /** The store is the single source of truth; Mode B updates native rows through the augmenter,
  * while Mode A updates already-rendered own rows through the DOM registry. */
 export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): void {
@@ -37,7 +42,21 @@ export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): 
     durationMin: payload.durationMin,
     bannedBy: payload.bannedBy,
   });
-  if (messages.length === 0) return;
+  const actionKind = payload.permanent === false ? 'timeout' : 'ban';
+  if (messages.length === 0) {
+    // The ban payload still identifies the user even when the bounded store retained no message.
+    // A notice without a jump target is more honest than silently dropping the moderation event.
+    notifyModAction(deps, {
+      kind: actionKind,
+      moderator: payload.bannedBy,
+      victim: fallbackVictimName(payload),
+      messageId: null,
+      durationMin: actionKind === 'timeout' ? payload.durationMin : null,
+      at: Date.now(),
+    });
+    logger.debug('ban-guard: no retained message for banned user', payload.userId);
+    return;
+  }
 
   let updatedCount = 0;
   for (const message of messages) {
@@ -56,7 +75,7 @@ export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): 
     payload.permanent === false ? `(timeout ${payload.durationMin ?? '?'}m by ${payload.bannedBy ?? '?'})` : '(ban)');
   const newest = newestMessage(messages);
   notifyModAction(deps, {
-    kind: payload.permanent === false ? 'timeout' : 'ban',
+    kind: actionKind,
     moderator: payload.bannedBy,
     victim: newest.sender.displayName?.trim() || newest.sender.username,
     messageId: newest.id,

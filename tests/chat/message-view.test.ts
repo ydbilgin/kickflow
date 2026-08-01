@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
+import * as messageJump from '../../src/content/chat/message-jump';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
 import { setLang } from '../../src/content/shared/i18n';
 
@@ -143,6 +144,107 @@ describe('message-view safe rendering', () => {
     expect(firstUser?.getAttribute('role')).toBe('link');
     expect(firstUser?.tabIndex).toBe(0);
     expect(first.querySelector('a[href*="kick.com"]')).toBeNull();
+  });
+
+  it('renders moderator-first mod-action rows with safe identity text', () => {
+    setLang('en');
+    const unsafeName = '<img src=x onerror=alert(1)>';
+    const row = buildMessageElement(message('', undefined, {
+      id: 'mod-action:ban-1',
+      type: 'mod-action',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'ban',
+        moderator: 'moderator_one',
+        durationMin: null,
+        victims: [{ name: unsafeName, messageId: null }],
+        count: 1,
+      },
+    }));
+
+    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('🛡');
+    expect(row.textContent).toBe(`🛡moderator_one banned ${unsafeName}`);
+    expect(row.querySelector('.kickflow-event-row__username')?.textContent).toBe('moderator_one');
+    expect(row.querySelector('.kickflow-event-row__victim')?.textContent).toBe(unsafeName);
+    expect(row.querySelector('img')).toBeNull();
+    expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('role')).toBeNull();
+    expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('tabindex')).toBeNull();
+  });
+
+  it('jumps to the clicked victim message and keeps a null target plain', () => {
+    setLang('en');
+    const jumpSpy = vi.spyOn(messageJump, 'jumpToMessage').mockReturnValue(true);
+    const openPanel = vi.fn();
+    const row = buildMessageElement(message('', undefined, {
+      id: 'mod-action:bulk-1',
+      type: 'mod-action',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'ban',
+        moderator: 'moderator_one',
+        durationMin: null,
+        victims: [
+          { name: 'first', messageId: 'first-message' },
+          { name: 'second', messageId: 'second-message' },
+          { name: 'no-target', messageId: null },
+          { name: 'fourth', messageId: 'fourth-message' },
+        ],
+        count: 4,
+      },
+    }), { onOpenRemovedPanel: openPanel });
+
+    const first = row.querySelector<HTMLElement>('.kickflow-event-row__victim')!;
+    first.click();
+    expect(jumpSpy).toHaveBeenCalledWith('first-message', first);
+    expect(openPanel).not.toHaveBeenCalled();
+
+    const more = row.querySelector<HTMLElement>('.kickflow-event-row__more')!;
+    more.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    const fourth = [...row.querySelectorAll<HTMLElement>('.kickflow-event-row__victim')]
+      .find((element) => element.textContent === 'fourth');
+    expect(fourth).not.toBeUndefined();
+    fourth!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+    expect(jumpSpy).toHaveBeenCalledWith('fourth-message', fourth);
+
+    const noTarget = [...row.querySelectorAll<HTMLElement>('.kickflow-event-row__victim')]
+      .find((element) => element.textContent === 'no-target')!;
+    expect(noTarget.getAttribute('role')).toBeNull();
+    expect(noTarget.getAttribute('tabindex')).toBeNull();
+    expect(openPanel).not.toHaveBeenCalled();
+  });
+
+  it('uses the victim jump for a single row and opens the panel for a burst background', () => {
+    setLang('en');
+    const jumpSpy = vi.spyOn(messageJump, 'jumpToMessage').mockReturnValue(true);
+    const openPanel = vi.fn();
+    const single = buildMessageElement(message('', undefined, {
+      id: 'mod-action:single-row',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'delete',
+        moderator: null,
+        durationMin: null,
+        victims: [{ name: 'single-user', messageId: 'single-message' }],
+        count: 1,
+      },
+    }), { onOpenRemovedPanel: openPanel });
+    single.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+    expect(jumpSpy).toHaveBeenCalledWith('single-message', single);
+    expect(openPanel).not.toHaveBeenCalled();
+
+    const burst = buildMessageElement(message('', undefined, {
+      id: 'mod-action:burst-row',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'ban',
+        moderator: null,
+        durationMin: null,
+        victims: [{ name: 'first-user', messageId: 'first-message' }],
+        count: 2,
+      },
+    }), { onOpenRemovedPanel: openPanel });
+    burst.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+    expect(openPanel).toHaveBeenCalledTimes(1);
   });
 
   it('wires every bulk-gift recipient, including recipients revealed later, as a profile link', async () => {

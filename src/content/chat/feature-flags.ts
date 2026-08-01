@@ -31,7 +31,7 @@ export interface FeatureFlags {
   showChattersBadges: boolean;
   /** Show the per-user "messages this session" list inside KickFlow's user card. */
   showUserMessages: boolean;
-  /** Show a docked notice at the bottom of chat when a moderator bans, times out or deletes.
+  /** Show moderator-action notices in the chat flow when a moderator bans, times out or deletes.
    *  Bursts inside a short window collapse into one expandable notice. */
   showModActions: boolean;
   /** Automatically enter Kick's theater layout when a channel/video loads. Opt-in because it

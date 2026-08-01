@@ -123,6 +123,40 @@ describe('bootstrap event display flags', () => {
     expect(store.getMessagesInArrivalOrder()[0]?.id).toBe('gift:5389830:340002752602494');
   });
 
+  it('ingests a moderator-action notice as one deduplicated Mode-A system row', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showModActions = true;
+    const notice = {
+      id: 'mod-action-test-1',
+      kind: 'ban' as const,
+      moderator: 'moderator_one',
+      durationMin: null,
+      victims: [{ name: 'victim_one', messageId: 'message_one' }],
+      count: 1,
+      messageId: 'message_one',
+      firstAt: 1,
+      lastAt: 1,
+    };
+
+    callbacks.onModAction(notice);
+    callbacks.onModAction(notice);
+
+    const rows = store.getMessagesInArrivalOrder();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('mod-action:mod-action-test-1');
+    expect(rows[0]?.systemEvent).toEqual({
+      kind: 'mod-action',
+      actionKind: 'ban',
+      moderator: 'moderator_one',
+      durationMin: null,
+      victims: [{ name: 'victim_one', messageId: 'message_one' }],
+      count: 1,
+    });
+  });
+
   it('matches native by suppressing the captured renewal SubscriptionEvent', () => {
     const store = new ChatIntegrityStore();
     const callbacks = bootstrap.createSystemEventCallbacks((message) => {

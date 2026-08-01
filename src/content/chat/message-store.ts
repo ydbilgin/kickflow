@@ -1,4 +1,5 @@
 import { logger } from '../shared/logger';
+import type { ModActionKind, ModActionVictim } from './mod-action-feed';
 
 export interface ChatBadge {
   type?: string;      // role badges (old array): moderator/vip/broadcaster/verified/subscriber/...
@@ -94,7 +95,15 @@ export type ChatSystemEvent =
   | { kind: 'gifted-subscription'; username: string; giftCount: number; giftedUsernames: string[] }
   | { kind: 'kicks'; username: string; amount: number; giftName: string | null; senderMessage: string | null }
   | { kind: 'host'; username: string; numberViewers: number; optionalMessage: string | null }
-  | { kind: 'mode'; mode: ChatroomModeKey; text: string };
+  | { kind: 'mode'; mode: ChatroomModeKey; text: string }
+  | {
+    kind: 'mod-action';
+    actionKind: ModActionKind;
+    moderator: string | null;
+    durationMin: number | null;
+    victims: readonly ModActionVictim[];
+    count: number;
+  };
 
 export type ChatroomModeKey = 'slow_mode' | 'followers_mode' | 'subscribers_mode' | 'emotes_mode';
 

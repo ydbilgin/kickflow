@@ -16,6 +16,8 @@ export interface RenderQueueOptions {
   shouldRender?: (message: ChatMessage) => boolean;
   /** Overrides the default live wall-clock label for session-specific sources such as VOD replay. */
   formatTimestamp?: (message: ChatMessage) => string;
+  /** Opens the removed-message panel from a multi-victim moderator-action event row. */
+  onOpenRemovedPanel?: () => void;
   onFlush?: (appended: HTMLElement[], wasAtBottom: boolean) => void;
 }
 
@@ -119,7 +121,10 @@ export class RenderQueue {
       if (this.options.shouldRender && !this.options.shouldRender(message)) continue;
       try {
         const timestampText = this.options.formatTimestamp?.(message);
-        const element = buildMessageElement(message, { timestampText });
+        const element = buildMessageElement(message, {
+          timestampText,
+          onOpenRemovedPanel: this.options.onOpenRemovedPanel,
+        });
         this.options.registry.register(element, message);
         fragment.appendChild(element);
         appended.push(element);

@@ -57,6 +57,28 @@ describe('ban-guard', () => {
     expect(augmenter.seedBannedGhosts).toHaveBeenCalledWith(['a', 'b', 'c']);
   });
 
+  it('emits a name-only notice when no message for the banned user is retained', () => {
+    const store = { markUserBanned: vi.fn(() => []) };
+    const onModAction = vi.fn();
+    const payload: BanEventPayload = {
+      userId: 77,
+      username: 'late_user',
+      permanent: true,
+      durationMin: null,
+      bannedBy: 'moderator',
+      expiresAt: null,
+    };
+
+    handleUserBanned(payload, { store, onModAction } as never);
+
+    expect(onModAction).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'ban',
+      moderator: 'moderator',
+      victim: 'late_user',
+      messageId: null,
+    }));
+  });
+
   it('preserves deleted messages only when showDeletedMessages is on', () => {
     const payload: DeleteEventPayload = {
       messageId: 'm1',

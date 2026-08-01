@@ -14,16 +14,21 @@ export interface ModAction {
   readonly at: number;
 }
 
+export interface ModActionVictim {
+  readonly name: string;
+  readonly messageId: string | null;
+}
+
 export interface ModActionNotice {
   readonly id: string;
   readonly kind: ModActionKind;
   readonly moderator: string | null;
   readonly durationMin: number | null;
   /** Distinct victims, oldest first, capped at MOD_ACTION_NOTICE_VICTIM_CAP. */
-  readonly victims: readonly string[];
+  readonly victims: readonly ModActionVictim[];
   /** Total actions folded in, INCLUDING victims dropped past the cap. */
   readonly count: number;
-  /** Jump target. Non-null only when count === 1. */
+  /** Legacy single-notice target; burst victims carry their own targets. */
   readonly messageId: string | null;
   readonly firstAt: number;
   readonly lastAt: number;
@@ -50,7 +55,7 @@ interface MutableNotice {
   kind: ModActionKind;
   moderator: string | null;
   durationMin: number | null;
-  victims: string[];
+  victims: ModActionVictim[];
   count: number;
   messageId: string | null;
   firstAt: number;
@@ -69,7 +74,7 @@ function asNotice(notice: MutableNotice): ModActionNotice {
     kind: notice.kind,
     moderator: notice.moderator,
     durationMin: notice.durationMin,
-    victims: notice.victims.slice(),
+    victims: notice.victims.map((victim) => ({ ...victim })),
     count: notice.count,
     messageId: notice.messageId,
     firstAt: notice.firstAt,
@@ -114,7 +119,7 @@ export class ModActionFeed {
       kind: action.kind,
       moderator: action.moderator,
       durationMin: action.kind === 'timeout' ? action.durationMin : null,
-      victims: this.victimCap > 0 ? [action.victim] : [],
+      victims: this.victimCap > 0 ? [{ name: action.victim, messageId: action.messageId }] : [],
       count: 1,
       messageId: action.messageId,
       firstAt: at,
@@ -145,8 +150,8 @@ export class ModActionFeed {
     open.count++;
     open.messageId = null;
     open.lastAt = Math.max(open.lastAt, at);
-    if (open.victims.length < this.victimCap && !open.victims.includes(action.victim)) {
-      open.victims.push(action.victim);
+    if (open.victims.length < this.victimCap && !open.victims.some(({ name }) => name === action.victim)) {
+      open.victims.push({ name: action.victim, messageId: action.messageId });
     }
   }
 }

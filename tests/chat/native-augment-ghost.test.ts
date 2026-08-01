@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
-import { NativeChatAugmenter } from '../../src/content/chat/native-augment';
+import { MOD_ACTION_MAX_ROWS_IN_CHAT, NativeChatAugmenter } from '../../src/content/chat/native-augment';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 import { Lifecycle as RealLifecycle } from '../../src/content/shared/lifecycle';
 import type { Lifecycle } from '../../src/content/shared/lifecycle';
 import type { StatusSnapshotProvider } from '../../src/content/status';
+import type { ModActionNotice } from '../../src/content/chat/mod-action-feed';
 
 const getTestStatusSnapshot: StatusSnapshotProvider = () => ({
   slug: null,
@@ -55,6 +56,20 @@ function message(id: string, userId: number, content = id): ChatMessage {
   };
 }
 
+function modNotice(id: string, lastAt: number, name: string): ModActionNotice {
+  return {
+    id,
+    kind: 'ban',
+    moderator: 'moderator',
+    durationMin: null,
+    victims: [{ name, messageId: `${id}-message` }],
+    count: 1,
+    messageId: `${id}-message`,
+    firstAt: lastAt,
+    lastAt,
+  };
+}
+
 function installChat(rows: string[]): HTMLElement {
   document.body.innerHTML = '<div id="chatroom-messages"><div class="no-scrollbar"></div></div>';
   const list = document.querySelector<HTMLElement>('.no-scrollbar');
@@ -67,7 +82,7 @@ function makeRow(id: string, index = 0): HTMLElement {
   const row = document.createElement('div');
   row.dataset.index = String(index);
   row.dataset.kickflowMid = id;
-  row.className = 'relative w-full px-2 py-1';
+  row.className = 'block relative w-full px-2 py-1';
   const group = document.createElement('div');
   group.className = 'group relative flex w-full min-w-0 items-start gap-2';
   const messageShell = document.createElement('div');
@@ -268,5 +283,62 @@ describe('NativeChatAugmenter ghost blocks', () => {
     expect(panelRows?.querySelector('[data-kickflow-removed-mid="ban1"]')).not.toBeNull();
     expect(panelRows?.querySelector('[data-kickflow-removed-mid="deleted1"]')).not.toBeNull();
     panelLifecycle.dispose();
+  });
+
+  it('anchors mod-action blocks to the newest row and heals recycled hosts within the real row shape', async () => {
+    const list = installChat(['m1', 'm2', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1));
+    store.addMessage(message('m2', 2));
+    store.addMessage(message('m3', 3));
+    const lifecycle = new FakeLifecycle();
+    const augmenter = new NativeChatAugmenter(lifecycle as unknown as Lifecycle, store);
+    const callbacks = {
+      onJump: () => undefined,
+      onOpenPanel: () => undefined,
+    };
+
+    augmenter.showModActionNotice(modNotice('notice-1', 1, 'victim-one'), callbacks);
+    await flushObserver();
+
+    const host = list.querySelector<HTMLElement>('[data-kickflow-mid="m3"]');
+    expect(host).not.toBeNull();
+    expect(host?.querySelector('.kickflow-modaction-block')?.getAttribute('data-kickflow-modaction-anchor'))
+      .toBe('m3');
+    expect(host?.querySelector('.kickflow-modaction-block')?.parentElement?.classList.contains('group')).toBe(true);
+    expect(list.querySelectorAll('.kickflow-modaction-block')).toHaveLength(1);
+
+    // A newer message must NOT drag the block down. Re-resolving the newest row every pass is the
+    // docked-strip behaviour the owner rejected: the notice would never scroll away.
+    store.addMessage(message('m4', 4));
+    list.appendChild(makeRow('m4', 3));
+    await flushObserver();
+    expect(list.querySelector('.kickflow-modaction-block')?.getAttribute('data-kickflow-modaction-anchor'))
+      .toBe('m3');
+    expect(list.querySelectorAll('.kickflow-modaction-block')).toHaveLength(1);
+
+    // Virtuoso recycles the host row to another message: the block leaves with its host, exactly as
+    // the message it is attached to does.
+    host!.dataset.kickflowMid = 'm5';
+    await flushObserver();
+    expect(list.querySelector('.kickflow-modaction-block')).toBeNull();
+
+    // Scrolled back into the window: it returns with its own message.
+    host!.dataset.kickflowMid = 'm3';
+    await flushObserver();
+    expect(list.querySelector('.kickflow-modaction-block')?.getAttribute('data-kickflow-modaction-anchor'))
+      .toBe('m3');
+
+    augmenter.showModActionNotice(modNotice('notice-2', 2, 'victim-two'), callbacks);
+    augmenter.showModActionNotice(modNotice('notice-3', 3, 'victim-three'), callbacks);
+    augmenter.showModActionNotice(modNotice('notice-4', 4, 'victim-four'), callbacks);
+    await flushObserver();
+
+    expect(list.querySelectorAll('.kickflow-modaction-block')).toHaveLength(MOD_ACTION_MAX_ROWS_IN_CHAT);
+    expect(list.querySelector('[data-kickflow-modaction-id="notice-1"]')).toBeNull();
+    expect(list.querySelector('[data-kickflow-modaction-id="notice-4"]')).not.toBeNull();
+
+    lifecycle.disposers.forEach((dispose) => dispose());
+    expect(list.querySelector('[class*="kickflow-"]')).toBeNull();
   });
 });

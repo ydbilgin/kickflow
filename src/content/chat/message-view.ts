@@ -1,4 +1,5 @@
 import { getSeenChatIdentityColor, mergeIdentityBadges, normalizeChatIdentity, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
+import type { ModActionKind, ModActionVictim } from './mod-action-feed';
 import { isSafeKickSlug, openUserCard } from './user-card';
 import { jumpToMessage } from './message-jump';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
@@ -43,8 +44,32 @@ function identityColor(username: string): string {
   return getSeenChatIdentityColor(username) || fallbackIdentityColor(username);
 }
 
-function styleAndWireEventIdentity(element: HTMLElement, username: string): void {
+function styleAndWireEventIdentity(
+  element: HTMLElement,
+  username: string,
+  onActivate?: (event: Event) => void,
+): void {
   element.style.color = identityColor(username);
+  if (onActivate) {
+    element.classList.add('kickflow-event-row__identity--link');
+    element.setAttribute('role', 'button');
+    element.tabIndex = 0;
+    element.addEventListener('click', (event) => {
+      const mouseEvent = event as MouseEvent;
+      if (mouseEvent.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onActivate(event);
+    });
+    element.addEventListener('keydown', (event) => {
+      const keyboardEvent = event as KeyboardEvent;
+      if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onActivate(event);
+    });
+    return;
+  }
   wireProfileSlugLink(
     element,
     username.toLowerCase(),
@@ -566,7 +591,7 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
 
 /** Safe-render only: username and counts originate in public Pusher payloads and are assigned via
  * textContent. Fixed connecting words are separate text nodes; no event value becomes markup. */
-function buildSystemEventElement(message: ChatMessage): HTMLElement {
+function buildSystemEventElement(message: ChatMessage, options: MessageElementOptions = {}): HTMLElement {
   const event = message.systemEvent;
   if (!event) throw new Error('buildSystemEventElement requires a system event');
 
@@ -584,6 +609,8 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
         ? '💰'
         : event.kind === 'host'
           ? '📡'
+          : event.kind === 'mod-action'
+            ? '🛡'
           : '⚙';
 
   if (event.kind === 'mode') {
@@ -594,34 +621,222 @@ function buildSystemEventElement(message: ChatMessage): HTMLElement {
     return row;
   }
 
-  const username = document.createElement('span');
-  username.className = `${EVENT_ROW_CLASS}__username`;
-  username.textContent = event.username;
-  styleAndWireEventIdentity(username, event.username);
-
   // Flex-item boundaries collapse adjacent whitespace (CSS Flexbox ยง4), so bare text
   // nodes can't sit directly between elements here — everything but the icon goes in
   // one non-flex text container where normal inline whitespace rules apply.
   const body = document.createElement('span');
   body.className = `${EVENT_ROW_CLASS}__body`;
-  body.appendChild(username);
 
-  const appendCountTemplate = (key: MessageKey, value: number, formatted = String(value)): HTMLElement | null => {
-    const localized = t(key, { n: value });
+  const appendCountTemplate = (
+    key: MessageKey,
+    value: number,
+    formatted = String(value),
+    params: Record<string, string | number> = {},
+    cursor = 0,
+    leadingSpace = cursor === 0,
+    trailingText = cursor === 0,
+  ): HTMLElement | null => {
+    const localized = t(key, { ...params, n: value });
     const raw = String(value);
-    const splitAt = localized.indexOf(raw);
-    body.appendChild(document.createTextNode(' '));
+    const splitAt = localized.indexOf(raw, cursor);
+    if (leadingSpace) body.appendChild(document.createTextNode(' '));
     if (splitAt < 0) {
-      body.appendChild(document.createTextNode(localized));
+      body.appendChild(document.createTextNode(localized.slice(cursor)));
       return null;
     }
-    body.appendChild(document.createTextNode(localized.slice(0, splitAt)));
+    body.appendChild(document.createTextNode(localized.slice(cursor, splitAt)));
     const count = document.createElement('span');
     count.className = `${EVENT_ROW_CLASS}__count`;
     count.textContent = formatted;
-    body.append(count, document.createTextNode(localized.slice(splitAt + raw.length)));
+    body.appendChild(count);
+    if (trailingText) body.appendChild(document.createTextNode(localized.slice(splitAt + raw.length)));
     return count;
   };
+
+  if (event.kind === 'mod-action') {
+    const moderatorToken = '__kickflow_moderator__';
+    const victimToken = '__kickflow_victim__';
+    const firstVictim: ModActionVictim = event.victims[0] ?? { name: 'unknown user', messageId: null };
+    const jump = options.onJumpToMessage ?? ((messageId: string, cue: HTMLElement) => jumpToMessage(messageId, cue));
+
+    const createModerator = (): HTMLSpanElement | null => {
+      const moderator = event.moderator?.trim();
+      if (!moderator) return null;
+      const element = document.createElement('span');
+      element.className = `${EVENT_ROW_CLASS}__username`;
+      element.textContent = moderator;
+      styleAndWireEventIdentity(element, moderator);
+      return element;
+    };
+
+    const createVictim = (victim: ModActionVictim): HTMLSpanElement => {
+      const name = victim.name || 'unknown user';
+      const element = document.createElement('span');
+      element.className = `${EVENT_ROW_CLASS}__victim`;
+      element.textContent = name;
+      if (victim.messageId === null) {
+        element.style.color = identityColor(name);
+      } else {
+        styleAndWireEventIdentity(element, name, () => jump(victim.messageId!, element));
+      }
+      return element;
+    };
+
+    const appendTemplate = (
+      key: MessageKey,
+      params: Record<string, string | number>,
+      parts: Array<{ token: string; node: HTMLElement } | { count: number; formatted?: string }>,
+    ): void => {
+      const localized = t(key, params);
+      let cursor = 0;
+      for (const part of parts) {
+        if ('count' in part) {
+          const rawCount = String(part.count);
+          const splitAt = localized.indexOf(rawCount, cursor);
+          appendCountTemplate(
+            key,
+            part.count,
+            part.formatted,
+            params,
+            cursor,
+            false,
+            false,
+          );
+          cursor = splitAt < 0 ? localized.length : splitAt + rawCount.length;
+          continue;
+        }
+        const splitAt = localized.indexOf(part.token, cursor);
+        if (splitAt < 0) {
+          body.appendChild(document.createTextNode(localized.slice(cursor)));
+          cursor = localized.length;
+          break;
+        }
+        body.appendChild(document.createTextNode(localized.slice(cursor, splitAt)));
+        body.appendChild(part.node);
+        cursor = splitAt + part.token.length;
+      }
+      body.appendChild(document.createTextNode(localized.slice(cursor)));
+    };
+
+    const moderator = event.moderator?.trim();
+    const hasModerator = Boolean(moderator);
+    const single = event.count === 1;
+    const actionKey = (
+      kind: ModActionKind,
+      bulk: boolean,
+      knownModerator: boolean,
+      hasDuration: boolean,
+    ): MessageKey => {
+      if (kind === 'ban') {
+        if (bulk) return knownModerator ? 'modaction.ban.bulk' : 'modaction.ban.bulk.unknown';
+        return knownModerator ? 'modaction.ban.single' : 'modaction.ban.single.unknown';
+      }
+      if (kind === 'timeout') {
+        if (bulk) return knownModerator ? 'modaction.timeout.bulk' : 'modaction.timeout.bulk.unknown';
+        if (!hasDuration) return knownModerator
+          ? 'modaction.timeout.single.no_duration'
+          : 'modaction.timeout.single.no_duration.unknown';
+        return knownModerator ? 'modaction.timeout.single' : 'modaction.timeout.single.unknown';
+      }
+      if (bulk) return knownModerator ? 'modaction.delete.bulk' : 'modaction.delete.bulk.unknown';
+      return knownModerator ? 'modaction.delete.single' : 'modaction.delete.single.unknown';
+    };
+
+    const key = actionKey(event.actionKind, !single, hasModerator, event.durationMin !== null);
+    const countValue = single ? event.durationMin : event.count;
+    const templateParams: Record<string, string | number> = {
+      mod: moderatorToken,
+      name: victimToken,
+      n: countValue ?? event.count,
+    };
+    const parts: Array<{ token: string; node: HTMLElement } | { count: number; formatted?: string }> = [];
+    if (hasModerator) {
+      const moderatorElement = createModerator();
+      if (moderatorElement) parts.push({ token: moderatorToken, node: moderatorElement });
+    }
+    if (single) {
+      parts.push({ token: victimToken, node: createVictim(firstVictim) });
+      if (event.actionKind === 'timeout' && event.durationMin !== null) {
+        parts.push({ count: event.durationMin });
+      }
+    } else {
+      parts.push({ count: event.count });
+    }
+    appendTemplate(key, templateParams, parts);
+
+    if (!single) {
+      const preview = document.createElement('span');
+      preview.className = `${EVENT_ROW_CLASS}__victims`;
+      const shown = event.victims.slice(0, GIFT_RECIPIENTS_SHOWN_MAX);
+      const hiddenKnown = event.victims.slice(shown.length);
+      const unknownRemainder = Math.max(0, event.count - event.victims.length);
+      const appendVictim = (victim: ModActionVictim, index: number): void => {
+        if (index > 0) preview.appendChild(document.createTextNode(', '));
+        preview.appendChild(createVictim(victim));
+      };
+      shown.forEach(appendVictim);
+      if (hiddenKnown.length > 0) {
+        if (shown.length > 0) preview.appendChild(document.createTextNode(', '));
+        const more = document.createElement('span');
+        more.className = `${EVENT_ROW_CLASS}__more`;
+        more.setAttribute('role', 'button');
+        more.tabIndex = 0;
+        more.textContent = t('modaction.more', { n: event.count - shown.length });
+        const expand = (eventObject: Event): void => {
+          eventObject.preventDefault();
+          eventObject.stopPropagation();
+          hiddenKnown.forEach((victim) => {
+            preview.insertBefore(document.createTextNode(', '), more);
+            preview.insertBefore(createVictim(victim), more);
+          });
+          if (unknownRemainder > 0) {
+            more.removeAttribute('role');
+            more.removeAttribute('tabindex');
+            more.className = `${EVENT_ROW_CLASS}__remainder`;
+            more.textContent = t('modaction.more', { n: unknownRemainder });
+          } else {
+            more.remove();
+          }
+        };
+        more.addEventListener('click', expand);
+        more.addEventListener('keydown', (eventObject) => {
+          if (eventObject.key === 'Enter' || eventObject.key === ' ') expand(eventObject);
+        });
+        preview.appendChild(more);
+      } else if (unknownRemainder > 0) {
+        if (shown.length > 0) preview.appendChild(document.createTextNode(', '));
+        preview.appendChild(document.createTextNode(t('modaction.more', { n: unknownRemainder })));
+      }
+      if (preview.childNodes.length > 0) body.append(document.createTextNode(' '), preview);
+    }
+
+    const activateRow = (): void => {
+      if (single && firstVictim.messageId !== null) {
+        jump(firstVictim.messageId, row);
+      } else {
+        options.onOpenRemovedPanel?.();
+      }
+    };
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.addEventListener('click', (eventObject) => {
+      if ((eventObject as MouseEvent).button !== 0) return;
+      activateRow();
+    });
+    row.addEventListener('keydown', (eventObject) => {
+      if (eventObject.key !== 'Enter' && eventObject.key !== ' ') return;
+      eventObject.preventDefault();
+      activateRow();
+    });
+    row.append(icon, body);
+    return row;
+  }
+
+  const username = document.createElement('span');
+  username.className = `${EVENT_ROW_CLASS}__username`;
+  username.textContent = event.username;
+  styleAndWireEventIdentity(username, event.username);
+  body.appendChild(username);
 
   if (event.kind === 'subscription') {
     if (event.months === 1) {
@@ -813,13 +1028,15 @@ function buildCelebrationElement(message: ChatMessage): HTMLElement {
 
 export interface MessageElementOptions {
   timestampText?: string;
+  onOpenRemovedPanel?: () => void;
+  onJumpToMessage?: (messageId: string, cueElement: HTMLElement) => void;
 }
 
 export function buildMessageElement(
   message: ChatMessage,
   options: MessageElementOptions = {},
 ): HTMLElement {
-  if (message.systemEvent) return buildSystemEventElement(message);
+  if (message.systemEvent) return buildSystemEventElement(message, options);
   if (message.celebration?.type === 'subscription_renewed') return buildCelebrationElement(message);
 
   const row = document.createElement('div');

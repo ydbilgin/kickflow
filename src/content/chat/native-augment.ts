@@ -1,8 +1,10 @@
 import { featureFlags } from './feature-flags';
 import type { Lifecycle } from '../shared/lifecycle';
-import { mergeIdentityBadges, type ChatIntegrityStore } from './message-store';
+import { mergeIdentityBadges, type ChatIntegrityStore, type ChatMessage } from './message-store';
+import type { ModActionNotice } from './mod-action-feed';
 import {
   BANNED_CLASS,
+  buildMessageElement,
   DELETED_CLASS,
   PRESERVED_CLASS,
   TIMEOUT_CLASS,
@@ -24,6 +26,10 @@ const ORIGINAL_CONTENT_CLASS = 'kickflow-original-content';
 const DIMMED_NATIVE_CONTENT_CLASS = 'kickflow-native-content-dimmed';
 const GHOST_BLOCK_CLASS = 'kickflow-ghost-block';
 const GHOST_ROW_CLASS = 'kickflow-ghost-row';
+const MOD_ACTION_BLOCK_CLASS = 'kickflow-modaction-block';
+const MOD_ACTION_ANCHOR_ATTRIBUTE = 'data-kickflow-modaction-anchor';
+const MOD_ACTION_ID_ATTRIBUTE = 'data-kickflow-modaction-id';
+const MOD_ACTION_SIGNATURE_ATTRIBUTE = 'data-kickflow-modaction-signature';
 const NATIVE_CONTENT_SELECTOR = '.break-words, [class*="break-words"]';
 
 // Bounds so a high-moderation channel (mass bans) can't pile ghosts onto the few visible
@@ -32,9 +38,11 @@ const NATIVE_CONTENT_SELECTOR = '.break-words, [class*="break-words"]';
 // the shared RemovedMessagesPanel, owned by bootstrap.ts, not by this augmenter).
 const ANCHOR_MAX_SEQ_DISTANCE = 20;
 const MAX_GHOSTS_PER_ANCHOR = 4;
+export const MOD_ACTION_MAX_ROWS_IN_CHAT = 3;
 
 const INJECTED_SELECTOR = [
   `.${GHOST_BLOCK_CLASS}`,
+  `.${MOD_ACTION_BLOCK_CLASS}`,
   '.kickflow-status-label',
   '.kickflow-mod-label',
   `.${ORIGINAL_CONTENT_CLASS}`,
@@ -61,6 +69,19 @@ export interface NativeChatGhostStats {
   ghostEvicted: number;
 }
 
+export interface NativeModActionCallbacks {
+  onJump: (messageId: string, cueElement: HTMLElement) => void;
+  onOpenPanel: () => void;
+}
+
+interface ModActionNoticeState {
+  notice: ModActionNotice;
+  callbacks: NativeModActionCallbacks;
+  /** The row this notice is pinned to, resolved once on first render and never re-resolved.
+   *  Null until a native row is actually mounted to pin to. */
+  anchorMid: string | null;
+}
+
 export function getActiveNativeChatGhostStats(): NativeChatGhostStats {
   return activeAugmenter?.getGhostStats() ?? {
     ghostAnchored: 0,
@@ -76,6 +97,7 @@ export class NativeChatAugmenter {
   private readonly ghostsNeeded = new Set<string>();
   private readonly ghostAnchorById = new Map<string, string>();
   private readonly ghostsByAnchor = new Map<string, Set<string>>();
+  private readonly modActionNotices = new Map<string, ModActionNoticeState>();
   private reanchorTimer: number | null = null;
   private ghostEvicted = 0;
 
@@ -111,6 +133,30 @@ export class NativeChatAugmenter {
     if (changed) this.scheduleAnchorPass();
   }
 
+  showModActionNotice(notice: ModActionNotice, callbacks: NativeModActionCallbacks): void {
+    if (this.lifecycle.isDisposed) return;
+    const existing = this.modActionNotices.get(notice.id);
+    if (existing) {
+      // A growing burst must KEEP its pin. Re-resolving it here would walk the block down the chat
+      // on every ban folded into the notice.
+      existing.notice = notice;
+      existing.callbacks = callbacks;
+    } else {
+      this.modActionNotices.set(notice.id, { notice, callbacks, anchorMid: null });
+      while (this.modActionNotices.size > MOD_ACTION_MAX_ROWS_IN_CHAT) {
+        const oldestId = this.modActionNotices.keys().next().value;
+        if (oldestId === undefined) break;
+        this.modActionNotices.delete(oldestId);
+      }
+    }
+    this.scheduleAnchorPass();
+  }
+
+  clearModActionNotices(): void {
+    this.modActionNotices.clear();
+    this.observedRoot?.querySelectorAll(`.${MOD_ACTION_BLOCK_CLASS}`).forEach((node) => node.remove());
+  }
+
   forgetGhost(id: string): void {
     const hadGhost = this.ghostsNeeded.delete(id) || this.ghostAnchorById.has(id);
     this.removeGhostFromAnchor(id);
@@ -120,7 +166,7 @@ export class NativeChatAugmenter {
   reconcileAll(): void {
     if (!featureFlags.preserveBansInline) this.clearGhosts();
     this.reconcileVisibleRows();
-    if (featureFlags.preserveBansInline) this.scheduleAnchorPass();
+    if (featureFlags.preserveBansInline || this.modActionNotices.size > 0) this.scheduleAnchorPass();
   }
 
   getGhostStats(): NativeChatGhostStats {
@@ -154,6 +200,7 @@ export class NativeChatAugmenter {
       attributeFilter: ['data-kickflow-mid'],
     });
     this.reconcileVisibleRows();
+    if (this.modActionNotices.size > 0) this.scheduleAnchorPass();
   }
 
   private disconnectObserver(): void {
@@ -164,6 +211,7 @@ export class NativeChatAugmenter {
 
   private dispose(): void {
     this.clearGhosts();
+    this.clearModActionNotices();
     this.disconnectObserver();
   }
 
@@ -202,24 +250,25 @@ export class NativeChatAugmenter {
         if (row) this.reconcileRow(row);
       }
 
-      if (featureFlags.preserveBansInline) {
-        for (const node of mutation.removedNodes) {
-          const rows = this.collectRows(node);
-          if (rows.length > 0) mountedSetChanged = true;
-          for (const id of this.collectMessageIds(node)) {
-            if (this.store.isPreservedBanned(id)) {
-              this.ghostsNeeded.add(id);
-              needsAnchorPass = true;
-            }
-            if (this.ghostsByAnchor.has(id)) needsAnchorPass = true;
+      for (const node of mutation.removedNodes) {
+        const rows = this.collectRows(node);
+        if (rows.length > 0) mountedSetChanged = true;
+        if (this.containsModActionBlock(node)) needsAnchorPass = true;
+        if (!featureFlags.preserveBansInline) continue;
+        for (const id of this.collectMessageIds(node)) {
+          if (this.store.isPreservedBanned(id)) {
+            this.ghostsNeeded.add(id);
+            needsAnchorPass = true;
           }
+          if (this.ghostsByAnchor.has(id)) needsAnchorPass = true;
         }
       }
     }
 
     if (
-      featureFlags.preserveBansInline &&
-      (needsAnchorPass || (mountedSetChanged && (this.ghostsNeeded.size > 0 || this.ghostAnchorById.size > 0)))
+      (featureFlags.preserveBansInline &&
+        (needsAnchorPass || (mountedSetChanged && (this.ghostsNeeded.size > 0 || this.ghostAnchorById.size > 0))))
+      || (this.modActionNotices.size > 0 && (needsAnchorPass || mountedSetChanged))
     ) {
       this.scheduleAnchorPass();
     }
@@ -264,6 +313,13 @@ export class NativeChatAugmenter {
     return ids;
   }
 
+  private containsModActionBlock(node: Node): boolean {
+    return node instanceof HTMLElement && (
+      node.matches(`.${MOD_ACTION_BLOCK_CLASS}`)
+      || node.querySelector(`.${MOD_ACTION_BLOCK_CLASS}`) !== null
+    );
+  }
+
   private reconcileRow(row: HTMLElement, retryIfUnstamped = true): void {
     if (this.lifecycle.isDisposed) return;
     this.cleanRow(row);
@@ -299,6 +355,7 @@ export class NativeChatAugmenter {
     }
 
     if (featureFlags.preserveBansInline) this.reapplyGhostsForAnchor(id, row);
+    if (this.modActionNotices.size > 0) this.scheduleAnchorPass();
   }
 
   private cleanRow(row: HTMLElement): void {
@@ -349,21 +406,21 @@ export class NativeChatAugmenter {
   }
 
   private reanchorGhosts(): void {
-    if (!featureFlags.preserveBansInline) {
+    if (featureFlags.preserveBansInline) {
+      this.pruneStrayGhosts();
+
+      const ids = new Set<string>(this.ghostsNeeded);
+      for (const id of this.ghostAnchorById.keys()) ids.add(id);
+      for (const message of this.store.getPreserved()) {
+        if (message.preservedReason === 'banned' && !this.isMessageMounted(message.id)) ids.add(message.id);
+      }
+      Array.from(ids)
+        .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0))
+        .forEach((id) => this.reanchorGhost(id));
+    } else {
       this.clearGhosts();
-      return;
     }
-
-    this.pruneStrayGhosts();
-
-    const ids = new Set<string>(this.ghostsNeeded);
-    for (const id of this.ghostAnchorById.keys()) ids.add(id);
-    for (const message of this.store.getPreserved()) {
-      if (message.preservedReason === 'banned' && !this.isMessageMounted(message.id)) ids.add(message.id);
-    }
-    Array.from(ids)
-      .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0))
-      .forEach((id) => this.reanchorGhost(id));
+    this.reanchorModActionBlocks();
   }
 
   /** Removes ghost DOM that duplicates or strands — the main defense against the same banned
@@ -400,6 +457,145 @@ export class NativeChatAugmenter {
     root.querySelectorAll<HTMLElement>(`.${GHOST_BLOCK_CLASS}`).forEach((block) => {
       if (!block.querySelector(`.${GHOST_ROW_CLASS}`)) block.remove();
     });
+  }
+
+  private reanchorModActionBlocks(): void {
+    const root = this.observedRoot;
+    if (!root) return;
+
+    this.pruneStrayModActionBlocks();
+    if (this.modActionNotices.size === 0) return;
+
+    // A notice is PINNED to whichever row was newest when it arrived, and it stays there. Re-resolving
+    // the newest row on every pass would drag the block down with each incoming message, so it would
+    // never scroll away — that is the docked-strip behaviour the owner already rejected, just drawn
+    // inside the list. Pinned, it behaves like the chat message it is meant to read as: it appears at
+    // the bottom, rides up with the conversation, and leaves the DOM when its host row unmounts.
+    for (const state of this.modActionNotices.values()) {
+      if (state.anchorMid !== null) continue;
+      const newest = this.findNewestMountedNativeRow();
+      if (!newest) continue;
+      state.anchorMid = newest.mid;
+    }
+
+    // Group by pinned anchor: two notices minutes apart belong at two different points in the chat.
+    const byAnchor = new Map<string, Array<[string, ModActionNoticeState]>>();
+    for (const [noticeId, state] of this.modActionNotices) {
+      if (state.anchorMid === null) continue;
+      let group = byAnchor.get(state.anchorMid);
+      if (!group) {
+        group = [];
+        byAnchor.set(state.anchorMid, group);
+      }
+      group.push([noticeId, state]);
+    }
+
+    for (const [anchorMid, group] of byAnchor) {
+      const row = this.findMountedRowByMid(anchorMid);
+      // Host row is outside the virtualized window. The block goes with it, exactly as the message
+      // it is attached to does, and comes back if the reader scrolls that far up again.
+      if (!row) continue;
+
+      const host = this.findGhostHost(row);
+      const existing = Array.from(host.children).filter((child): child is HTMLElement => (
+        child instanceof HTMLElement && child.classList.contains(MOD_ACTION_BLOCK_CLASS)
+      ));
+      const alreadyCurrent = existing.length === group.length
+        && existing.every((block, index) => {
+          const [noticeId, state] = group[index]!;
+          return block.getAttribute(MOD_ACTION_ANCHOR_ATTRIBUTE) === anchorMid
+            && block.getAttribute(MOD_ACTION_ID_ATTRIBUTE) === noticeId
+            && block.getAttribute(MOD_ACTION_SIGNATURE_ATTRIBUTE) === this.modActionSignature(state.notice);
+        });
+      if (alreadyCurrent) continue;
+
+      existing.forEach((block) => block.remove());
+      for (const [noticeId, state] of group) {
+        host.appendChild(this.buildModActionBlock(noticeId, state.notice, state.callbacks, anchorMid));
+      }
+    }
+  }
+
+
+  private pruneStrayModActionBlocks(): void {
+    const root = this.observedRoot;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>(`.${MOD_ACTION_BLOCK_CLASS}`).forEach((block) => {
+      const noticeId = block.getAttribute(MOD_ACTION_ID_ATTRIBUTE);
+      const anchorMid = block.getAttribute(MOD_ACTION_ANCHOR_ATTRIBUTE);
+      const row = block.closest<HTMLElement>(ROW_SELECTOR);
+      if (
+        !noticeId
+        || !anchorMid
+        || !row
+        || row.dataset.kickflowMid !== anchorMid
+        || !this.modActionNotices.has(noticeId)
+      ) {
+        block.remove();
+      }
+    });
+  }
+
+  private findNewestMountedNativeRow(): { mid: string; row: HTMLElement; seq: number } | null {
+    let newest: { mid: string; row: HTMLElement; seq: number } | null = null;
+    document.querySelectorAll<HTMLElement>(`${CHAT_LIST_SELECTOR} ${ROW_SELECTOR}[data-kickflow-mid]`).forEach((row) => {
+      const mid = row.dataset.kickflowMid;
+      if (!mid) return;
+      const seq = this.store.getMessageSeq(mid);
+      if (seq == null || (newest && seq <= newest.seq)) return;
+      newest = { mid, row, seq };
+    });
+    return newest;
+  }
+
+  private modActionSignature(notice: ModActionNotice): string {
+    return JSON.stringify({
+      kind: notice.kind,
+      moderator: notice.moderator,
+      durationMin: notice.durationMin,
+      count: notice.count,
+      victims: notice.victims,
+    });
+  }
+
+  private buildModActionBlock(
+    noticeId: string,
+    notice: ModActionNotice,
+    callbacks: NativeModActionCallbacks,
+    anchorMid: string,
+  ): HTMLElement {
+    const block = document.createElement('div');
+    block.className = MOD_ACTION_BLOCK_CLASS;
+    block.setAttribute(MOD_ACTION_ANCHOR_ATTRIBUTE, anchorMid);
+    block.setAttribute(MOD_ACTION_ID_ATTRIBUTE, noticeId);
+    block.setAttribute(MOD_ACTION_SIGNATURE_ATTRIBUTE, this.modActionSignature(notice));
+    const message: ChatMessage = {
+      id: `mod-action:${noticeId}`,
+      chatroomId: 0,
+      content: '',
+      type: 'mod-action',
+      createdAt: new Date().toISOString(),
+      sender: {
+        id: 0,
+        username: notice.moderator ?? '',
+        slug: '',
+        identity: { color: '', badges: [], badgesV2: [] },
+      },
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: notice.kind,
+        moderator: notice.moderator,
+        durationMin: notice.durationMin,
+        victims: notice.victims,
+        count: notice.count,
+      },
+      preserved: false,
+    };
+    block.appendChild(buildMessageElement(message, {
+      onJumpToMessage: callbacks.onJump,
+      onOpenRemovedPanel: callbacks.onOpenPanel,
+    }));
+    return block;
   }
 
   private reanchorGhost(id: string): void {
