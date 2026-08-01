@@ -4,11 +4,29 @@ import { applyPreservedMarking } from './message-view';
 import type { BanEventPayload, DeleteEventPayload } from './pusher-client';
 import type { ChatDomRegistry, ChatIntegrityStore } from './message-store';
 import type { NativeChatAugmenter } from './native-augment';
+import type { ModAction } from './mod-action-feed';
 
 export interface BanGuardDeps {
   store: ChatIntegrityStore;
   augmenter?: NativeChatAugmenter;
   registry?: ChatDomRegistry;
+  onModAction?: (action: ModAction) => void;
+}
+
+function notifyModAction(deps: BanGuardDeps, action: ModAction): void {
+  try {
+    deps.onModAction?.(action);
+  } catch (error) {
+    logger.debug('ban-guard: onModAction callback threw', error);
+  }
+}
+
+function newestMessage(messages: ReturnType<ChatIntegrityStore['markUserBanned']>): (typeof messages)[number] {
+  let newest = messages[0]!;
+  for (const message of messages.slice(1)) {
+    if ((message.seq ?? 0) >= (newest.seq ?? 0)) newest = message;
+  }
+  return newest;
 }
 
 /** The store is the single source of truth; Mode B updates native rows through the augmenter,
@@ -36,6 +54,15 @@ export function handleUserBanned(payload: BanEventPayload, deps: BanGuardDeps): 
   deps.augmenter?.seedBannedGhosts(messages.map((message) => message.id));
   logger.debug('ban-guard: updated', updatedCount, 'message(s) for user', payload.userId,
     payload.permanent === false ? `(timeout ${payload.durationMin ?? '?'}m by ${payload.bannedBy ?? '?'})` : '(ban)');
+  const newest = newestMessage(messages);
+  notifyModAction(deps, {
+    kind: payload.permanent === false ? 'timeout' : 'ban',
+    moderator: payload.bannedBy,
+    victim: newest.sender.displayName?.trim() || newest.sender.username,
+    messageId: newest.id,
+    durationMin: payload.permanent === false ? payload.durationMin : null,
+    at: Date.now(),
+  });
 }
 
 /** Delete events are always delivered here (the pusher-client gate was removed); this decides
@@ -58,6 +85,14 @@ export function handleMessageDeleted(payload: DeleteEventPayload, deps: BanGuard
       if (element) applyPreservedMarking(element, message);
     }
     logger.debug('ban-guard: struck-through deleted message', messageId, payload.aiModerated ? '(AI)' : '(mod)');
+    notifyModAction(deps, {
+      kind: 'delete',
+      moderator: payload.deletedBy,
+      victim: message.sender.displayName?.trim() || message.sender.username,
+      messageId: message.id,
+      durationMin: null,
+      at: Date.now(),
+    });
     return;
   }
 

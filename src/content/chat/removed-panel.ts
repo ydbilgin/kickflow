@@ -142,6 +142,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private chattersBadgesCheckbox: HTMLInputElement | null = null;
   private userMessagesCheckbox: HTMLInputElement | null = null;
+  private modActionsCheckbox: HTMLInputElement | null = null;
   private mentionHighlightCheckbox: HTMLInputElement | null = null;
   private modFrameCheckbox: HTMLInputElement | null = null;
   private vipFrameCheckbox: HTMLInputElement | null = null;
@@ -575,6 +576,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.userMessagesCheckbox = userMessagesCheckbox;
 
+    const { label: modActionsLabel, checkbox: modActionsCheckbox } = this.buildSettingsToggle(
+      t('setting.mod_actions'), t('setting.mod_actions_desc'), 'showModActions', featureFlags.showModActions,
+    );
+    this.modActionsCheckbox = modActionsCheckbox;
+
     const { label: mentionHighlightLabel, checkbox: mentionHighlightCheckbox } = this.buildSettingsToggle(
       t('setting.mention_highlight'),
       t('setting.mention_highlight_desc'),
@@ -623,6 +629,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       modeChangesLabel,
       chattersBadgesLabel,
       userMessagesLabel,
+      modActionsLabel,
       mentionHighlightLabel,
       mentionStyleRow,
       mentionColorRow,
@@ -1252,6 +1259,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.userMessagesCheckbox && this.userMessagesCheckbox.checked !== featureFlags.showUserMessages) {
       this.userMessagesCheckbox.checked = featureFlags.showUserMessages;
     }
+    if (this.modActionsCheckbox && this.modActionsCheckbox.checked !== featureFlags.showModActions) {
+      this.modActionsCheckbox.checked = featureFlags.showModActions;
+    }
     if (this.mentionHighlightCheckbox && this.mentionHighlightCheckbox.checked !== featureFlags.mentionHighlightEnabled) {
       this.mentionHighlightCheckbox.checked = featureFlags.mentionHighlightEnabled;
     }
@@ -1409,6 +1419,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.hotkeyRows.clear();
     this.hotkeyStatus = null;
     this.filterChip = null;
+    this.modActionsCheckbox = null;
   }
 
   private lockDocumentScroll(): void {

@@ -25,6 +25,8 @@ import {
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
 import { ActiveChattersBadgesController } from './chat/active-chatters-badges';
 import { RemovedMessagesPanel } from './chat/removed-panel';
+import { ModActionFeed, type ModAction } from './chat/mod-action-feed';
+import { ModActionStrip } from './chat/mod-action-strip';
 import { FooterToggleButton } from './chat/footer-toggle';
 import { NavbarSettingsButton } from './chat/navbar-settings';
 import { RenderQueue } from './chat/render-queue';
@@ -41,6 +43,7 @@ import { CARD_MAX_HEIGHT_INSET_PX, configureUserCardSession, configureUserMessag
 import { UserMessageArchive } from './chat/user-message-archive';
 import { USER_MESSAGE_TIME_COLUMN_PX } from './chat/user-message-list';
 import { clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
+import { jumpToMessage } from './chat/message-jump';
 import {
   refreshMessageHighlights,
   setHighlightStore,
@@ -88,6 +91,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showModeChanges',
   'showChattersBadges',
   'showUserMessages',
+  'showModActions',
   'autoTheater',
   'captionGuard',
   'rewindControls',
@@ -832,6 +836,54 @@ function ensureStyles(): void {
     .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.7; }
     .kickflow-ghost-empty { color: #8b8b93; font-size: 11px; text-align: center; padding: 22px 10px; opacity: 0.9; }
 
+    .kickflow-modaction-strip {
+      position: fixed; z-index: 2147482990; display: flex; flex-direction: column; gap: 6px;
+      min-width: 0; max-width: 100vw; box-sizing: border-box; padding: 8px;
+      pointer-events: none; overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.13); border-radius: 10px;
+      background: oklch(0.19 0.008 260 / 0.985); color: #efeff1;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 10px 28px rgba(0,0,0,0.42);
+      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px; line-height: 1.35;
+    }
+    .kickflow-modaction-row {
+      min-width: 0; max-width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center; gap: 7px; padding: 7px 8px; border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 7px; background: rgba(255,255,255,0.045); color: inherit; cursor: pointer;
+      pointer-events: auto; overflow: hidden; text-align: left;
+      animation: kickflow-modaction-in var(--kickflow-modaction-animation-duration) cubic-bezier(.16,1,.3,1) both;
+    }
+    .kickflow-modaction-row:hover { background: rgba(255,255,255,0.085); }
+    .kickflow-modaction-row:focus-visible {
+      outline: 2px solid rgba(83,252,24,0.85); outline-offset: 1px;
+    }
+    .kickflow-modaction-row__icon { flex: none; font-size: 14px; line-height: 1; }
+    .kickflow-modaction-row__text {
+      min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .kickflow-modaction-row__headline { font-weight: 700; }
+    .kickflow-modaction-row__names { min-width: 0; }
+    .kickflow-modaction-row__name {
+      display: inline-block; max-width: 38%; min-width: 0; overflow: hidden;
+      text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap;
+    }
+    .kickflow-modaction-more { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+    .kickflow-modaction-more:hover { opacity: 0.82; }
+    .kickflow-modaction-row__dismiss {
+      flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px;
+      background: rgba(255,255,255,0.08); color: #d0d0d8; cursor: pointer; font-size: 15px; line-height: 1;
+    }
+    .kickflow-modaction-row__dismiss:hover { background: rgba(233,17,60,0.7); color: #fff; }
+    .kickflow-modaction-row__dismiss:focus-visible {
+      outline: 2px solid rgba(83,252,24,0.85); outline-offset: 1px;
+    }
+    @keyframes kickflow-modaction-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .kickflow-modaction-row { animation: none; }
+    }
+
     /* --- KickFlow settings dashboard: one shared body-level modal for navbar + footer. --- */
     @keyframes kickflow-dashboard-in {
       from { opacity: 0; transform: scale(.98); }
@@ -1311,6 +1363,7 @@ function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecyc
   initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
+  initModActionNotificationsSession(context, lifecycle, panel);
   lifecycle.setInterval(() => {
     store.sweepExpiredPreserved();
     archive.sweepExpired();
@@ -1355,10 +1408,18 @@ function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecyc
       },
       onUserBanned: (payload) => {
         setStatus({ lastBanAt: Date.now() });
-        handleUserBanned(payload, { store, augmenter });
+        handleUserBanned(payload, {
+          store,
+          augmenter,
+          onModAction: (action) => pushModActionForSession(lifecycle, action),
+        });
       },
       onMessageDeleted: (payload) => {
-        handleMessageDeleted(payload, { store, augmenter });
+        handleMessageDeleted(payload, {
+          store,
+          augmenter,
+          onModAction: (action) => pushModActionForSession(lifecycle, action),
+        });
       },
     });
     lifecycle.add(() => {
@@ -1414,6 +1475,7 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
   initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
   new NavbarSettingsButton(lifecycle, panel);
+  initModActionNotificationsSession(context, lifecycle, panel);
 
   const mount = new ChatOverlayMount(lifecycle);
   mount.setProbing();
@@ -1647,10 +1709,18 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
       onChatroomUpdated: systemEventCallbacks.onChatroomUpdated,
       onUserBanned: (payload) => {
         setStatus({ lastBanAt: Date.now() });
-        handleUserBanned(payload, { store, registry });
+        handleUserBanned(payload, {
+          store,
+          registry,
+          onModAction: (action) => pushModActionForSession(lifecycle, action),
+        });
       },
       onMessageDeleted: (payload) => {
-        handleMessageDeleted(payload, { store, registry });
+        handleMessageDeleted(payload, {
+          store,
+          registry,
+          onModAction: (action) => pushModActionForSession(lifecycle, action),
+        });
       },
     });
     lifecycle.add(() => {
@@ -1739,6 +1809,99 @@ interface ActiveChattersBadgesContext {
   controller: ActiveChattersBadgesController | null;
 }
 let activeChattersBadgesContext: ActiveChattersBadgesContext | null = null;
+
+interface ModActionNotificationsContext {
+  sessionLifecycle: Lifecycle;
+  chatContext: ChatSessionContext;
+  panel: RemovedMessagesPanel;
+  featureLifecycle: Lifecycle | null;
+  feed: ModActionFeed | null;
+}
+
+let activeModActionNotificationsContext: ModActionNotificationsContext | null = null;
+
+function stopModActionNotifications(): void {
+  const context = activeModActionNotificationsContext;
+  if (!context) return;
+  const lifecycle = context.featureLifecycle;
+  context.featureLifecycle = null;
+  context.feed = null;
+  lifecycle?.dispose();
+}
+
+function jumpToChatMessage(messageId: string, missCueElement: HTMLElement): void {
+  if (jumpToMessage(messageId, missCueElement)) return;
+  const nativeRow = Array.from(document.querySelectorAll<HTMLElement>('#chatroom-messages [data-kickflow-mid]'))
+    .find((element) => element.dataset.kickflowMid === messageId);
+  nativeRow?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+}
+
+function pushModActionForSession(sessionLifecycle: Lifecycle, action: ModAction): void {
+  const context = activeModActionNotificationsContext;
+  if (
+    !context
+    || context.sessionLifecycle !== sessionLifecycle
+    || !context.feed
+    || !featureFlags.showModActions
+  ) return;
+  context.feed.push(action);
+}
+
+function syncModActionNotifications(): void {
+  const context = activeModActionNotificationsContext;
+  if (
+    !context
+    || context.sessionLifecycle.isDisposed
+    || context.chatContext.kind === 'vod'
+    || !featureFlags.showModActions
+  ) {
+    stopModActionNotifications();
+    return;
+  }
+  if (context.featureLifecycle && !context.featureLifecycle.isDisposed) return;
+
+  const lifecycle = new Lifecycle();
+  let strip: ModActionStrip | null = null;
+  strip = new ModActionStrip(lifecycle, {
+    onJump: (messageId) => {
+      if (strip) jumpToChatMessage(messageId, strip.element);
+    },
+    onOpenPanel: () => context.panel.showSettings('removed'),
+  });
+  const feed = new ModActionFeed({
+    onNotice: (notice) => strip?.addNotice(notice),
+    onNoticeUpdated: (notice) => strip?.updateNotice(notice),
+  });
+  context.featureLifecycle = lifecycle;
+  context.feed = feed;
+  lifecycle.add(() => feed.dispose());
+}
+
+/** Owns the live-only feed/strip pair and gives the flag path a real teardown boundary. */
+export function initModActionNotificationsSession(
+  chatContext: ChatSessionContext,
+  sessionLifecycle: Lifecycle,
+  panel: RemovedMessagesPanel,
+): void {
+  stopModActionNotifications();
+  activeModActionNotificationsContext = null;
+  if (chatContext.kind === 'vod') return;
+
+  const context: ModActionNotificationsContext = {
+    sessionLifecycle,
+    chatContext,
+    panel,
+    featureLifecycle: null,
+    feed: null,
+  };
+  activeModActionNotificationsContext = context;
+  sessionLifecycle.add(() => {
+    if (activeModActionNotificationsContext !== context) return;
+    stopModActionNotifications();
+    activeModActionNotificationsContext = null;
+  });
+  syncModActionNotifications();
+}
 
 function stopActiveChattersBadges(): void {
   const context = activeChattersBadgesContext;
@@ -1890,6 +2053,9 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     if (key === 'showChattersBadges') {
       syncActiveChattersBadges();
     }
+    if (key === 'showModActions') {
+      syncModActionNotifications();
+    }
     if (
       key === 'mentionHighlightEnabled'
       || key === 'modFrameEnabled'
@@ -1946,6 +2112,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showModeChanges: featureFlags.showModeChanges,
     showChattersBadges: featureFlags.showChattersBadges,
     showUserMessages: featureFlags.showUserMessages,
+    showModActions: featureFlags.showModActions,
     autoTheater: featureFlags.autoTheater,
     captionGuard: featureFlags.captionGuard,
     rewindControls: featureFlags.rewindControls,
@@ -2067,6 +2234,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showModeChanges',
     'kf_flag_showChattersBadges',
     'kf_flag_showUserMessages',
+    'kf_flag_showModActions',
     'kf_flag_autoTheater',
     'kf_flag_captionGuard',
     'kf_flag_rewindControls',
@@ -2096,6 +2264,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showChattersBadges === 'boolean') setFeatureFlag('showChattersBadges', saved.kf_flag_showChattersBadges);
   if (typeof saved.kf_flag_showUserMessages === 'boolean') setFeatureFlag('showUserMessages', saved.kf_flag_showUserMessages);
+  if (typeof saved.kf_flag_showModActions === 'boolean') setFeatureFlag('showModActions', saved.kf_flag_showModActions);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
   if (typeof saved.kf_flag_captionGuard === 'boolean') setFeatureFlag('captionGuard', saved.kf_flag_captionGuard);
   if (typeof saved.kf_flag_rewindControls === 'boolean') setFeatureFlag('rewindControls', saved.kf_flag_rewindControls);
