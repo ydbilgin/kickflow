@@ -113,6 +113,110 @@ describe('UserMessageArchive', () => {
     expect(archive.getByUserId(40).map(({ id }) => id)).toEqual(['newest']);
   });
 
+  it('keeps the slot array bounded during sustained global-cap churn', () => {
+    const createdAt = new Date(NOW).toISOString();
+    const archive = new UserMessageArchive({ maxMessages: 2_000, now: () => NOW });
+
+    for (let index = 0; index < 50_000; index += 1) {
+      archive.add(chatMessage(`churn-${index}`, { userId: index % 100, createdAt }));
+    }
+
+    expect(archive.size).toBe(2_000);
+    expect(archive.internalSlotCount).toBeLessThanOrEqual(2 * 2_000);
+  });
+
+  it('preserves per-user order through compaction', () => {
+    const archive = new UserMessageArchive({
+      maxMessages: 100,
+      perUserCap: 100,
+      now: () => NOW,
+    });
+
+    for (let index = 0; index < 5_000; index += 1) {
+      archive.add(chatMessage(`ordered-${index}`, {
+        userId: 1,
+        createdAt: new Date(NOW + index).toISOString(),
+      }));
+    }
+
+    expect(archive.getByUserId(1).map(({ id, at }) => ({ id, at }))).toEqual(
+      Array.from({ length: 100 }, (_, offset) => {
+        const index = 4_900 + offset;
+        return { id: `ordered-${index}`, at: NOW + index };
+      }),
+    );
+  });
+
+  it('drains expired records from the head when adding a message', () => {
+    let now = 0;
+    const archive = new UserMessageArchive({ maxAgeMs: 5, now: () => now });
+
+    for (let index = 0; index < 10; index += 1) {
+      archive.add(chatMessage(`age-${index}`, { createdAt: new Date(index).toISOString() }));
+    }
+
+    now = 10;
+    archive.add(chatMessage('age-next', { createdAt: new Date(now).toISOString() }));
+
+    expect(archive.getByUserId(1).map(({ id }) => id)).toEqual([
+      'age-5', 'age-6', 'age-7', 'age-8', 'age-9', 'age-next',
+    ]);
+    expect(archive.size).toBe(6);
+  });
+
+  it('leaves an out-of-order age straggler for the full sweep', () => {
+    let now = NOW;
+    const archive = new UserMessageArchive({ maxAgeMs: 1_000, now: () => now });
+
+    archive.add(chatMessage('new-1', { createdAt: new Date(NOW).toISOString() }));
+    archive.add(chatMessage('new-2', { createdAt: new Date(NOW).toISOString() }));
+    archive.add(chatMessage('straggler', { createdAt: new Date(NOW - 10_000).toISOString() }));
+
+    expect(archive.getByUserId(1).map(({ id }) => id)).toEqual(['new-1', 'new-2', 'straggler']);
+
+    archive.sweepExpired();
+
+    expect(archive.getByUserId(1).map(({ id }) => id)).toEqual(['new-1', 'new-2']);
+  });
+
+  it('leaves no index residue after heavy churn', () => {
+    const createdAt = new Date(NOW).toISOString();
+    const archive = new UserMessageArchive({
+      maxMessages: 3,
+      perUserCap: 2,
+      now: () => NOW,
+    });
+
+    for (let index = 0; index < 100; index += 1) {
+      archive.add(chatMessage(`indexed-${index}`, {
+        userId: (index % 5) + 1,
+        createdAt,
+      }));
+    }
+
+    const internal = archive as unknown as {
+      records: Array<{ id: string } | null>;
+      slotById: Map<string, number>;
+      recordsById: Map<string, unknown>;
+      recordsByUserId: Map<number, unknown[]>;
+    };
+    for (const userId of [1, 2, 3, 4, 5]) {
+      for (const record of archive.getByUserId(userId)) {
+        expect(archive.add(chatMessage(record.id, { userId, createdAt }))).toBe(false);
+        const slot = internal.slotById.get(record.id);
+        expect(slot).toBeDefined();
+        expect(internal.records[slot!]?.id).toBe(record.id);
+        expect(internal.recordsById.has(record.id)).toBe(true);
+      }
+    }
+
+    expect(archive.getByUserId(1)).toEqual([]);
+    expect(internal.recordsByUserId.has(1)).toBe(false);
+    expect(internal.recordsById.has('indexed-0')).toBe(false);
+    expect(internal.slotById.has('indexed-0')).toBe(false);
+    expect(archive.add(chatMessage('indexed-0', { userId: 1, createdAt }))).toBe(true);
+  });
+
   it('sweeps records older than the age cap while keeping a newer record', () => {
     let now = 1000;
     const archive = new UserMessageArchive({ maxAgeMs: 1000, now: () => now });
