@@ -33,5 +33,5 @@
 ## 5. Ship
 
 - Commit the formatter and regression-test update.
-- Add the evidence, test totals, and commit hashes to ignored local `CURRENT_STATUS.md`.
+- Add the evidence, test totals, and commit hashes to ignored local `STATUS.md`.
 - Confirm the tracked worktree is clean.

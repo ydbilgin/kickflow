@@ -42,4 +42,4 @@ Date: 2026-07-26
 - Load the unpacked extension in an isolated headed browser.
 - Compare KickFlow and native replay near 07:13 on the same Hype VOD and exercise paused seek.
 - Commit the implementation with a focused message.
-- Add the commit hash, gate results, and concise behavior summary to `CURRENT_STATUS.md`.
+- Add the commit hash, gate results, and concise behavior summary to `STATUS.md`.

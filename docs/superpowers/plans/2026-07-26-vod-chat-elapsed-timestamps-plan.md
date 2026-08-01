@@ -53,6 +53,6 @@
 ## 7. Ship and handoff
 
 - Commit the implementation and regression tests.
-- Update ignored local `CURRENT_STATUS.md` with the root cause, live proof, test totals, and commit
+- Update ignored local `STATUS.md` with the root cause, live proof, test totals, and commit
   hashes.
 - Confirm the tracked worktree is clean.
