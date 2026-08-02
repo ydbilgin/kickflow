@@ -34,6 +34,7 @@ const statusResponse = {
     qualityLock: true,
     screenshot: true,
     speedControls: true,
+    autoClaimDrops: true,
   },
   hotkeys: {
     rewind: { enabled: true, key: 'ArrowLeft' },
@@ -172,6 +173,7 @@ describe('popup event display toggles', () => {
       ['t-quality-lock', 'qualityLock'],
       ['t-screenshot', 'screenshot'],
       ['t-speed-controls', 'speedControls'],
+      ['t-auto-claim-drops', 'autoClaimDrops'],
     ] as const) {
       const checkbox = document.getElementById(id) as HTMLInputElement;
       expect(checkbox.checked).toBe(true);

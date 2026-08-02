@@ -205,6 +205,11 @@ export const messages = {
   'setting.screenshot_desc': { en: 'Adds a frame-capture button to the control bar.', tr: 'Kontrol çubuğuna kare yakalama düğmesi ekler.' },
   'setting.speed': { en: 'Speed controls', tr: 'Hız kontrolleri' },
   'setting.speed_desc': { en: 'Shows manual and automatic playback-speed tools.', tr: 'Manuel ve otomatik oynatma hızı araçlarını gösterir.' },
+  'setting.auto_claim_drops': { en: 'Auto-claim Drops', tr: 'Drops ödüllerini otomatik al' },
+  'setting.auto_claim_drops_desc': {
+    en: "On the channel you watch, automatically claims Kick Drops rewards when a reward reaches 100% by clicking Kick's own Claim button. Only while this Kick tab is open: it never calls a Kick API or runs as a background service. Never touches channel points; spending them is your choice.",
+    tr: 'İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi Claim düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick API’sini hiç çağırmaz ve arka plan servisi değildir. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.',
+  },
   'panel.shortcuts_intro': { en: 'Run player actions with one key. Shortcuts are disabled while typing.', tr: 'Oynatıcı eylemlerini tek tuşla çalıştır. Yazı alanındayken kısayollar devre dışıdır.' },
   'panel.changes_live': { en: 'Changes apply immediately.', tr: 'Değişiklikler anında uygulanır.' },
   'about.copy': { en: 'A personal browser extension that streamlines Kick chat and live viewing.', tr: 'Kick sohbetini ve canlı yayın deneyimini sadeleştiren kişisel bir tarayıcı eklentisi.' },

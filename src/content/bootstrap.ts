@@ -26,6 +26,7 @@ import {
 import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNativeChat } from './chat/native-augment';
 import { ActiveChattersBadgesController } from './chat/active-chatters-badges';
 import { RemovedMessagesPanel } from './chat/removed-panel';
+import { initAutoClaimDrops, syncAutoClaimDropsFlag } from './chat/drops-auto-claim';
 import { ModActionFeed, type ModAction, type ModActionNotice } from './chat/mod-action-feed';
 import { FooterToggleButton } from './chat/footer-toggle';
 import { NavbarSettingsButton } from './chat/navbar-settings';
@@ -2190,6 +2191,7 @@ function startSession(context: ChatSessionContext): void {
   currentLifecycle = lifecycle;
 
   // Player QoL and chat integrity are started concurrently and never gate each other.
+  initAutoClaimDrops(lifecycle);
   initPlayerQolSession(lifecycle);
 
   if (!document.querySelector(SELECTORS.chatMessagesContainer)) {
@@ -2276,6 +2278,7 @@ export function applyFlagChange(key: string, value: boolean | string): void {
       syncLayoutWatchdog();
     }
     if (key === 'autoTheater') syncAutoTheaterFlag();
+    if (key === 'autoClaimDrops') syncAutoClaimDropsFlag();
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
     if (key === 'showChattersBadges') {
       syncActiveChattersBadges();

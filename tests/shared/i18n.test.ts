@@ -13,7 +13,7 @@ describe('i18n', () => {
       storage: { local: { get: vi.fn(async () => ({})), set: storageSet } },
     });
 
-    const { getLang, setLang, subscribeLang, t } = await import('../../src/content/shared/i18n');
+    const { getLang, messages, setLang, subscribeLang, t } = await import('../../src/content/shared/i18n');
     expect(getLang()).toBe('en');
     expect(t('setting.caption_guard')).toBe('Keep captions off by default');
     expect(t('setting.caption_guard_desc')).toBe('Prevents Kick from silently restoring captions after a reload. You can still turn them on manually for the current session.');
@@ -31,6 +31,12 @@ describe('i18n', () => {
     expect(t('setting.mod_frame_desc')).toBe('Uses the shared role style and moderator color.');
     expect(t('setting.vip_frame')).toBe('Highlight VIP messages');
     expect(t('setting.vip_frame_desc')).toBe('Uses the shared role style and VIP color.');
+    for (const key of ['setting.auto_claim_drops', 'setting.auto_claim_drops_desc'] as const) {
+      expect(messages[key].en.trim()).not.toBe('');
+      expect(messages[key].tr.trim()).not.toBe('');
+    }
+    expect(t('setting.auto_claim_drops')).toBe('Auto-claim Drops');
+    expect(t('setting.auto_claim_drops_desc')).toBe("On the channel you watch, automatically claims Kick Drops rewards when a reward reaches 100% by clicking Kick's own Claim button. Only while this Kick tab is open: it never calls a Kick API or runs as a background service. Never touches channel points; spending them is your choice.");
 
     const listener = vi.fn();
     const unsubscribe = subscribeLang(listener);
@@ -51,6 +57,8 @@ describe('i18n', () => {
     expect(t('setting.mod_frame_desc')).toBe('Ortak rol stilini ve moderatör rengini kullanır.');
     expect(t('setting.vip_frame')).toBe('VIP mesajlarını vurgula');
     expect(t('setting.vip_frame_desc')).toBe('Ortak rol stilini ve VIP rengini kullanır.');
+    expect(t('setting.auto_claim_drops')).toBe('Drops ödüllerini otomatik al');
+    expect(t('setting.auto_claim_drops_desc')).toBe('İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi Claim düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick API’sini hiç çağırmaz ve arka plan servisi değildir. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.');
     expect(t('event.gift.single', { name: 'sarah_lee' })).toBe(', sarah_lee kullanıcısına abonelik hediye etti');
     expect(listener).toHaveBeenCalledWith('tr');
     expect(storageSet).toHaveBeenCalledWith({ kf_lang: 'tr' });

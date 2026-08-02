@@ -715,6 +715,27 @@ describe('RemovedMessagesPanel', () => {
       }
     });
 
+    it('renders Auto-claim Drops in Player and refreshes it after an external flag change', () => {
+      const originalAutoClaimDrops = featureFlags.autoClaimDrops;
+      featureFlags.autoClaimDrops = true;
+      const lifecycle = new Lifecycle();
+
+      try {
+        const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+        const player = openDashboardSection(panel, 'player').pane;
+        const checkbox = requiredSettingsControl<HTMLInputElement>(player, 'Drops ödüllerini otomatik al');
+        expect(checkbox.checked).toBe(true);
+
+        featureFlags.autoClaimDrops = false;
+        panel.render();
+
+        expect(checkbox.checked).toBe(false);
+      } finally {
+        lifecycle.dispose();
+        featureFlags.autoClaimDrops = originalAutoClaimDrops;
+      }
+    });
+
     it('a flag changed elsewhere (e.g. via the popup) is reflected in an already-open settings section on the next render tick', () => {
       const originalSubscriptions = featureFlags.showSubscriptions;
       featureFlags.showSubscriptions = true;
@@ -789,6 +810,18 @@ describe('RemovedMessagesPanel', () => {
       lifecycle.dispose();
     });
 
+    it('clears the Auto-claim Drops checkbox reference when disposed', () => {
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+      const player = openDashboardSection(panel, 'player').pane;
+      const checkbox = requiredSettingsControl<HTMLInputElement>(player, 'Drops ödüllerini otomatik al');
+      const refs = panel as unknown as { autoClaimDropsCheckbox: HTMLInputElement | null };
+
+      expect(refs.autoClaimDropsCheckbox).toBe(checkbox);
+      lifecycle.dispose();
+      expect(refs.autoClaimDropsCheckbox).toBeNull();
+    });
+
     it.each([
       ['Abonelikler', 'showSubscriptions'],
       ['Hediye abonelikler', 'showGiftedSubs'],
@@ -806,12 +839,13 @@ describe('RemovedMessagesPanel', () => {
       ['En yüksek kalite', 'qualityLock'],
       ['Ekran görüntüsü', 'screenshot'],
       ['Hız kontrolleri', 'speedControls'],
+      ['Drops ödüllerini otomatik al', 'autoClaimDrops'],
     ] as const)('toggling "%s" dispatches kickflow:setFlag with {key: %s, value}', (label, key) => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
       const playerKeys: readonly string[] = [
-        'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls',
+        'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls', 'autoClaimDrops',
       ];
       const pane = openDashboardSection(panel, playerKeys.includes(key) ? 'player' : 'chat').pane;
       const checkbox = requiredSettingsControl<HTMLInputElement>(pane, label);

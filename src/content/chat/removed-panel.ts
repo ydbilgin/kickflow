@@ -159,6 +159,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private qualityLockCheckbox: HTMLInputElement | null = null;
   private screenshotCheckbox: HTMLInputElement | null = null;
   private speedControlsCheckbox: HTMLInputElement | null = null;
+  private autoClaimDropsCheckbox: HTMLInputElement | null = null;
   private readonly hotkeyRows = new Map<HotkeyAction, HotkeyRowControls>();
   private hotkeyStatus: HTMLElement | null = null;
   private captureAction: HotkeyAction | null = null;
@@ -694,6 +695,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.speedControlsCheckbox = speedControlsCheckbox;
 
+    const { label: autoClaimDropsLabel, checkbox: autoClaimDropsCheckbox } = this.buildSettingsToggle(
+      t('setting.auto_claim_drops'), t('setting.auto_claim_drops_desc'), 'autoClaimDrops', featureFlags.autoClaimDrops,
+    );
+    this.autoClaimDropsCheckbox = autoClaimDropsCheckbox;
+
     playerGroup.append(
       autoTheaterLabel,
       captionGuardLabel,
@@ -702,6 +708,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       qualityLockLabel,
       screenshotLabel,
       speedControlsLabel,
+      autoClaimDropsLabel,
     );
     player.append(playerGroup);
 
@@ -1319,6 +1326,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.speedControlsCheckbox && this.speedControlsCheckbox.checked !== featureFlags.speedControls) {
       this.speedControlsCheckbox.checked = featureFlags.speedControls;
     }
+    if (this.autoClaimDropsCheckbox && this.autoClaimDropsCheckbox.checked !== featureFlags.autoClaimDrops) {
+      this.autoClaimDropsCheckbox.checked = featureFlags.autoClaimDrops;
+    }
     this.refreshHotkeyControls();
   }
 
@@ -1434,6 +1444,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.qualityLockCheckbox = null;
     this.screenshotCheckbox = null;
     this.speedControlsCheckbox = null;
+    this.autoClaimDropsCheckbox = null;
     this.hotkeyRows.clear();
     this.hotkeyStatus = null;
     this.filterChip = null;

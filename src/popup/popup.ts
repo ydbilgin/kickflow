@@ -34,6 +34,7 @@ interface StatusResponse extends KickFlowStatusSnapshot {
     qualityLock: boolean;
     screenshot: boolean;
     speedControls: boolean;
+    autoClaimDrops: boolean;
   };
   hotkeys: HotkeyBindings;
 }
@@ -76,6 +77,7 @@ function applyStaticTranslations(): void {
     ['t-rewind-controls', 'setting.seek'], ['t-live-catchup', 'setting.live_catchup'],
     ['t-quality-lock', 'setting.quality_lock'], ['t-screenshot', 'setting.screenshot'],
     ['t-speed-controls', 'setting.speed'],
+    ['t-auto-claim-drops', 'setting.auto_claim_drops'],
   ];
   for (const [id, key] of settingKeys) {
     const label = document.querySelector<HTMLElement>(`label[for="${id}"] > span`);
@@ -181,6 +183,7 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-quality-lock') as HTMLInputElement)).checked = res.flags.qualityLock;
   (($('t-screenshot') as HTMLInputElement)).checked = res.flags.screenshot;
   (($('t-speed-controls') as HTMLInputElement)).checked = res.flags.speedControls;
+  (($('t-auto-claim-drops') as HTMLInputElement)).checked = res.flags.autoClaimDrops;
   (($('t-chat-mode') as HTMLSelectElement)).value = res.flags.chatMode;
   renderHotkeys(res.hotkeys ?? createDefaultHotkeyBindings());
 }
@@ -198,12 +201,12 @@ async function refresh(): Promise<void> {
 }
 
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops',
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'chatMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'chatMode',
   value: boolean | 'native' | 'own'
 ): Promise<void> {
   const id = await activeTabId();
@@ -254,6 +257,7 @@ $('t-live-catchup').addEventListener('change', (e) => setFlag('liveCatchup', (e.
 $('t-quality-lock').addEventListener('change', (e) => setFlag('qualityLock', (e.target as HTMLInputElement).checked));
 $('t-screenshot').addEventListener('change', (e) => setFlag('screenshot', (e.target as HTMLInputElement).checked));
 $('t-speed-controls').addEventListener('change', (e) => setFlag('speedControls', (e.target as HTMLInputElement).checked));
+$('t-auto-claim-drops').addEventListener('change', (e) => setFlag('autoClaimDrops', (e.target as HTMLInputElement).checked));
 $('t-chat-mode').addEventListener('change', (e) => setFlag('chatMode', (e.target as HTMLSelectElement).value as 'native' | 'own'));
 
 for (const action of HOTKEY_ACTIONS) {
