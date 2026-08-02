@@ -4,7 +4,7 @@ import { isSafeKickSlug, openUserCard } from './user-card';
 import { jumpToMessage } from './message-jump';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
-import { formatNumber, t, type MessageKey } from '../shared/i18n';
+import { formatDurationMinutes, formatNumber, getLang, t, type MessageKey } from '../shared/i18n';
 import { CONTENT_TOKEN_RE } from './content-tokens';
 import { applyOwnListHighlights } from './message-highlight-apply';
 
@@ -466,14 +466,7 @@ export function appendStatusLabel(row: HTMLElement, text: string, modifier: stri
 
 /** Compact localized duration from minutes. Empty when unknown. */
 export function formatTimeoutDuration(min: number | null | undefined): string {
-  if (min == null || !Number.isFinite(min) || min <= 0) return '';
-  if (min < 60) return t('duration.minutes_short', { n: Math.round(min) });
-  if (min < 60 * 24) {
-    const h = Math.floor(min / 60);
-    const m = Math.round(min % 60);
-    return m ? t('duration.hours_minutes_short', { h, m }) : t('duration.hours_short', { n: h });
-  }
-  return t('duration.days_short', { n: Math.round(min / (60 * 24)) });
+  return formatDurationMinutes(min, getLang());
 }
 
 /** The moderator who issued the action, as a subtle non-uppercase suffix (e.g. "· Chhatto"). */
@@ -704,6 +697,7 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       name.className = `${EVENT_ROW_CLASS}__username ${EVENT_ROW_CLASS}__moderator`;
       name.dataset.kickflowRole = 'moderator-name';
       name.textContent = moderator;
+      name.title = t('modaction.moderator_profile_title', { name: moderator });
       wireEventModeratorIdentity(name, moderator);
       actor.append(shield, name);
       return actor;
@@ -716,9 +710,11 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       element.dataset.kickflowRole = 'target';
       element.textContent = name;
       if (victim.messageId === null) {
-        element.style.color = identityColor(name);
+        styleAndWireEventIdentity(element, name);
+        element.title = t('modaction.target_profile_title', { name });
       } else {
         styleAndWireEventIdentity(element, name, () => jump(victim.messageId!, element));
+        element.title = t('modaction.target_jump_title', { name });
       }
       return element;
     };
@@ -773,7 +769,12 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
         return knownModerator ? 'modaction.ban.single' : 'modaction.ban.single.unknown';
       }
       if (kind === 'timeout') {
-        if (bulk) return knownModerator ? 'modaction.timeout.bulk' : 'modaction.timeout.bulk.unknown';
+        if (bulk) {
+          if (hasDuration) return knownModerator
+            ? 'modaction.timeout.bulk.duration'
+            : 'modaction.timeout.bulk.duration.unknown';
+          return knownModerator ? 'modaction.timeout.bulk' : 'modaction.timeout.bulk.unknown';
+        }
         if (!hasDuration) return knownModerator
           ? 'modaction.timeout.single.no_duration'
           : 'modaction.timeout.single.no_duration.unknown';
@@ -783,12 +784,23 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       return knownModerator ? 'modaction.delete.single' : 'modaction.delete.single.unknown';
     };
 
-    const key = actionKey(event.actionKind, !single, hasModerator, event.durationMin !== null);
-    const countValue = single ? event.durationMin : event.count;
+    const duration = event.actionKind === 'timeout'
+      ? formatDurationMinutes(event.durationMin, getLang())
+      : '';
+    const hasDuration = duration.length > 0;
+    const key = actionKey(event.actionKind, !single, hasModerator, hasDuration);
+    const durationToken = '__kickflow_duration__';
     const templateParams: Record<string, string | number> = {
       mod: moderatorToken,
       name: victimToken,
-      n: countValue ?? event.count,
+      duration: durationToken,
+      n: event.count,
+    };
+    const createDuration = (): HTMLSpanElement => {
+      const element = document.createElement('span');
+      element.className = `${EVENT_ROW_CLASS}__duration`;
+      element.textContent = duration;
+      return element;
     };
     const parts: Array<{ token: string; node: HTMLElement } | { count: number; formatted?: string }> = [];
     if (hasModerator) {
@@ -797,11 +809,14 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
     }
     if (single) {
       parts.push({ token: victimToken, node: createVictim(firstVictim) });
-      if (event.actionKind === 'timeout' && event.durationMin !== null) {
-        parts.push({ count: event.durationMin });
+      if (hasDuration) {
+        parts.push({ token: durationToken, node: createDuration() });
       }
     } else {
       parts.push({ count: event.count });
+      if (hasDuration) {
+        parts.push({ token: durationToken, node: createDuration() });
+      }
     }
     appendTemplate(key, templateParams, parts);
 

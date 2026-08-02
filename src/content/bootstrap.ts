@@ -935,6 +935,7 @@ function ensureStyles(): void {
       text-underline-offset: 2px;
     }
     .kickflow-event-row--mod-action .kickflow-event-row__count,
+    .kickflow-event-row--mod-action .kickflow-event-row__duration,
     .kickflow-event-row--mod-action .kickflow-event-row__more,
     .kickflow-event-row--mod-action .kickflow-event-row__remainder {
       color: var(--kickflow-modaction-meta-color);
@@ -959,6 +960,7 @@ function ensureStyles(): void {
       color: var(--kickflow-modaction-moderator-color);
     }
     #${OWN_LIST_ID} .kickflow-event-row--mod-action .kickflow-event-row__count,
+    #${OWN_LIST_ID} .kickflow-event-row--mod-action .kickflow-event-row__duration,
     #${OWN_LIST_ID} .kickflow-event-row--mod-action .kickflow-event-row__more,
     #${OWN_LIST_ID} .kickflow-event-row--mod-action .kickflow-event-row__remainder {
       color: var(--kickflow-modaction-meta-color);

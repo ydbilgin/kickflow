@@ -142,6 +142,7 @@ export class ModActionFeed {
   private canJoin(open: MutableNotice, action: ModAction, at: number): boolean {
     return open.kind === action.kind
       && sameModerator(open.moderator, action.moderator)
+      && (open.kind !== 'timeout' || open.durationMin === action.durationMin)
       && at - open.lastAt <= this.burstWindowMs
       && at - open.firstAt <= this.burstMaxMs;
   }

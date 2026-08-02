@@ -104,6 +104,17 @@ describe('ModActionFeed', () => {
     expect(notices).toHaveLength(3);
   });
 
+  it('does not collapse timeouts with different durations', () => {
+    const notices: ModActionNotice[] = [];
+    const feed = createFeed(() => 0, notices, []);
+
+    feed.push(action(0, { kind: 'timeout', durationMin: 5 }));
+    feed.push(action(1_000, { kind: 'timeout', durationMin: 10 }));
+
+    expect(notices).toHaveLength(2);
+    expect(notices.map((notice) => notice.durationMin)).toEqual([5, 10]);
+  });
+
   it('drops the single jump target as soon as a notice collapses', () => {
     const notices: ModActionNotice[] = [];
     const updated: ModActionNotice[] = [];

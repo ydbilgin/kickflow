@@ -41,25 +41,29 @@ export const messages = {
     tr: { one: '{n} izleyiciyle host etti', other: '{n} izleyiciyle host etti' },
   },
   'event.host': { en: 'hosted', tr: 'host etti' },
-  'modaction.ban.single': { en: '{mod} banned {name}', tr: '{mod}, {name} kullanıcısını banladı' },
-  'modaction.ban.single.unknown': { en: '{name} was banned', tr: '{name} banlandı' },
-  'modaction.ban.bulk': { en: '{mod} banned {n} users:', tr: '{mod}, {n} kullanıcıyı banladı:' },
-  'modaction.ban.bulk.unknown': { en: '{n} users were banned:', tr: '{n} kullanıcı banlandı:' },
-  'modaction.timeout.single': { en: '{mod} timed out {name} ({n}m)', tr: '{mod}, {name} kullanıcısına {n} dakika zaman aşımı verdi' },
-  'modaction.timeout.single.unknown': { en: '{name} was timed out ({n}m)', tr: '{name} kullanıcısına {n} dakika zaman aşımı uygulandı' },
-  'modaction.timeout.single.no_duration': { en: '{mod} timed out {name}', tr: '{mod}, {name} kullanıcısına zaman aşımı verdi' },
-  'modaction.timeout.single.no_duration.unknown': { en: '{name} was timed out', tr: '{name} kullanıcısına zaman aşımı uygulandı' },
-  'modaction.timeout.bulk': { en: '{mod} timed out {n} users:', tr: '{mod}, {n} kullanıcıya zaman aşımı verdi:' },
-  'modaction.timeout.bulk.unknown': { en: '{n} users were timed out:', tr: '{n} kullanıcıya zaman aşımı uygulandı:' },
-  'modaction.delete.single': { en: '{mod} deleted a message from {name}', tr: '{mod}, {name} kullanıcısının mesajını sildi' },
-  'modaction.delete.single.unknown': { en: "A message from {name} was deleted", tr: '{name} kullanıcısının mesajı silindi' },
-  'modaction.delete.bulk': { en: '{mod} deleted messages from {n} users:', tr: '{mod}, {n} kullanıcının mesajlarını sildi:' },
-  'modaction.delete.bulk.unknown': { en: '{n} users had messages deleted:', tr: '{n} kullanıcının mesajları silindi:' },
+  'modaction.ban.single': { en: 'Moderator: {mod} | Target: {name} | Banned', tr: 'Moderatör: {mod} | Hedef: {name} | Banlandı' },
+  'modaction.ban.single.unknown': { en: 'Moderator: unknown | Target: {name} | Banned', tr: 'Moderatör: bilinmiyor | Hedef: {name} | Banlandı' },
+  'modaction.ban.bulk': { en: 'Moderator: {mod} | Targets ({n}) | Banned:', tr: 'Moderatör: {mod} | Hedefler ({n}) | Banlandı:' },
+  'modaction.ban.bulk.unknown': { en: 'Moderator: unknown | Targets ({n}) | Banned:', tr: 'Moderatör: bilinmiyor | Hedefler ({n}) | Banlandı:' },
+  'modaction.timeout.single': { en: 'Moderator: {mod} | Target: {name} | Timed out for {duration}', tr: 'Moderatör: {mod} | Hedef: {name} | {duration} zaman aşımı uygulandı' },
+  'modaction.timeout.single.unknown': { en: 'Moderator: unknown | Target: {name} | Timed out for {duration}', tr: 'Moderatör: bilinmiyor | Hedef: {name} | {duration} zaman aşımı uygulandı' },
+  'modaction.timeout.single.no_duration': { en: 'Moderator: {mod} | Target: {name} | Timed out', tr: 'Moderatör: {mod} | Hedef: {name} | Zaman aşımı uygulandı' },
+  'modaction.timeout.single.no_duration.unknown': { en: 'Moderator: unknown | Target: {name} | Timed out', tr: 'Moderatör: bilinmiyor | Hedef: {name} | Zaman aşımı uygulandı' },
+  'modaction.timeout.bulk': { en: 'Moderator: {mod} | Targets ({n}) | Timed out:', tr: 'Moderatör: {mod} | Hedefler ({n}) | Zaman aşımı uygulandı:' },
+  'modaction.timeout.bulk.unknown': { en: 'Moderator: unknown | Targets ({n}) | Timed out:', tr: 'Moderatör: bilinmiyor | Hedefler ({n}) | Zaman aşımı uygulandı:' },
+  'modaction.timeout.bulk.duration': { en: 'Moderator: {mod} | Targets ({n}) | Timed out for {duration}:', tr: 'Moderatör: {mod} | Hedefler ({n}) | {duration} zaman aşımı uygulandı:' },
+  'modaction.timeout.bulk.duration.unknown': { en: 'Moderator: unknown | Targets ({n}) | Timed out for {duration}:', tr: 'Moderatör: bilinmiyor | Hedefler ({n}) | {duration} zaman aşımı uygulandı:' },
+  'modaction.delete.single': { en: 'Moderator: {mod} | Target: {name} | Message deleted', tr: 'Moderatör: {mod} | Hedef: {name} | Mesaj silindi' },
+  'modaction.delete.single.unknown': { en: 'Moderator: unknown | Target: {name} | Message deleted', tr: 'Moderatör: bilinmiyor | Hedef: {name} | Mesaj silindi' },
+  'modaction.delete.bulk': { en: 'Moderator: {mod} | Targets ({n}) | Messages deleted:', tr: 'Moderatör: {mod} | Hedefler ({n}) | Mesajlar silindi:' },
+  'modaction.delete.bulk.unknown': { en: 'Moderator: unknown | Targets ({n}) | Messages deleted:', tr: 'Moderatör: bilinmiyor | Hedefler ({n}) | Mesajlar silindi:' },
   'modaction.tag.ban': { en: 'BAN', tr: 'BAN' },
   'modaction.tag.timeout': { en: 'TIMEOUT', tr: 'SUSTURMA' },
   'modaction.tag.delete': { en: 'DELETED', tr: 'SİLİNDİ' },
   'modaction.more': { en: { one: 'and {n} more', other: 'and {n} more' }, tr: { one: 've {n} kişi daha', other: 've {n} kişi daha' } },
-  'modaction.by': { en: ' by {name}', tr: ' · {name} tarafından' },
+  'modaction.moderator_profile_title': { en: "Open moderator {name}'s profile", tr: '{name} moderatör profilini aç' },
+  'modaction.target_profile_title': { en: "Open {name}'s profile", tr: '{name} profilini aç' },
+  'modaction.target_jump_title': { en: "Jump to {name}'s retained message", tr: '{name} kullanıcısının korunmuş mesajına git' },
   'modaction.dismiss': { en: 'Dismiss moderator action notice', tr: 'Moderatör işlem bildirimini kapat' },
   'event.mode.slow_on': { en: 'Slow mode on ({n}s)', tr: 'Yavaş mod açıldı ({n}sn)' },
   'event.mode.slow_off': { en: 'Slow mode off', tr: 'Yavaş mod kapandı' },
@@ -312,6 +316,59 @@ export const messages = {
 
 export type MessageKey = keyof typeof messages;
 
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+const MINUTES_PER_DAY = MINUTES_PER_HOUR * HOURS_PER_DAY;
+const MINIMUM_DURATION_MINUTES = 0;
+
+type DurationMessageKey =
+  | 'duration.minutes_short'
+  | 'duration.hours_short'
+  | 'duration.hours_minutes_short'
+  | 'duration.days_short';
+
+function interpolateTemplate(template: string, params: Params): string {
+  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (placeholder, name: string) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : placeholder);
+}
+
+function interpolateDuration(
+  key: DurationMessageKey,
+  language: Lang,
+  params: Record<string, number>,
+): string {
+  return interpolateTemplate(messages[key][language], params);
+}
+
+/** Pure, language-explicit duration formatting for minute-based moderation values. */
+export function formatDurationMinutes(
+  minutes: number | null | undefined,
+  language: Lang,
+): string {
+  if (minutes == null || !Number.isFinite(minutes) || minutes <= MINIMUM_DURATION_MINUTES) return '';
+
+  const roundedMinutes = Math.round(minutes);
+  if (roundedMinutes < MINUTES_PER_HOUR) {
+    return interpolateDuration('duration.minutes_short', language, { n: roundedMinutes });
+  }
+
+  if (roundedMinutes < MINUTES_PER_DAY) {
+    const hours = Math.floor(roundedMinutes / MINUTES_PER_HOUR);
+    const remainingMinutes = roundedMinutes % MINUTES_PER_HOUR;
+    if (remainingMinutes > MINIMUM_DURATION_MINUTES) {
+      return interpolateDuration('duration.hours_minutes_short', language, {
+        h: hours,
+        m: remainingMinutes,
+      });
+    }
+    return interpolateDuration('duration.hours_short', language, { n: hours });
+  }
+
+  return interpolateDuration('duration.days_short', language, {
+    n: Math.round(roundedMinutes / MINUTES_PER_DAY),
+  });
+}
+
 let lang: Lang = 'en';
 const listeners = new Set<(next: Lang) => void>();
 
@@ -347,8 +404,7 @@ function selectTemplate(template: LocalizedTemplate, params: Params): string {
 
 export function t(key: MessageKey, params: Params = {}): string {
   const template = selectTemplate(messages[key][lang], params);
-  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (placeholder, name: string) =>
-    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : placeholder);
+  return interpolateTemplate(template, params);
 }
 
 export function formatNumber(value: number): string {

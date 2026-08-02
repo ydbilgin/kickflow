@@ -146,7 +146,7 @@ describe('message-view safe rendering', () => {
     expect(first.querySelector('a[href*="kick.com"]')).toBeNull();
   });
 
-  it('renders moderator-first mod-action rows with safe identity text', () => {
+  it('renders role-labeled mod-action rows with safe identity text', () => {
     setLang('en');
     const unsafeName = '<img src=x onerror=alert(1)>';
     const row = buildMessageElement(message('', undefined, {
@@ -164,17 +164,21 @@ describe('message-view safe rendering', () => {
 
     expect(row.querySelector('.kickflow-event-row__icon')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__kind-tag')?.textContent).toBe('BAN');
-    expect(row.textContent).toBe(`BAN 🛡moderator_one banned ${unsafeName}`);
+    expect(row.textContent).toBe(`BAN Moderator: 🛡moderator_one | Target: ${unsafeName} | Banned`);
     expect(row.querySelector('.kickflow-event-row__moderator')?.textContent).toBe('moderator_one');
+    expect(row.querySelector('.kickflow-event-row__moderator')?.getAttribute('title'))
+      .toBe("Open moderator moderator_one's profile");
     expect(row.querySelector('.kickflow-event-row__victim')?.textContent).toBe(unsafeName);
     expect(row.querySelector('[data-kickflow-role="moderator"]')).not.toBeNull();
     expect(row.querySelector('[data-kickflow-role="target"]')).not.toBeNull();
+    expect(row.textContent).toContain('Moderator:');
+    expect(row.textContent).toContain('Target:');
     expect(row.querySelector('img')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('role')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('tabindex')).toBeNull();
   });
 
-  it('renders an unknown-moderator action with only its tag and target', () => {
+  it('renders an unknown-moderator action with an explicit unknown actor and a target profile link', () => {
     setLang('tr');
     const row = buildMessageElement(message('', undefined, {
       id: 'mod-action:unknown-1',
@@ -193,6 +197,81 @@ describe('message-view safe rendering', () => {
     expect(row.querySelector('[data-kickflow-role="moderator"]')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__moderator-shield')).toBeNull();
     expect(row.querySelector('[data-kickflow-role="target"]')?.textContent).toBe('target-user');
+    expect(row.textContent).toContain('Moderatör: bilinmiyor');
+    expect(row.textContent).toContain('Hedef:');
+    expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('role')).toBe('link');
+    expect(row.querySelector('.kickflow-event-row__victim')?.tabIndex).toBe(0);
+    expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('title'))
+      .toBe('target-user profilini aç');
+  });
+
+  it('covers every moderator-action matrix cell with explicit role markers in both languages', () => {
+    const kinds = ['ban', 'timeout', 'delete'] as const;
+    const forms = [
+      { name: 'single', count: 1, victims: [{ name: 'target-one', messageId: null }] },
+      {
+        name: 'bulk',
+        count: 2,
+        victims: [
+          { name: 'target-one', messageId: null },
+          { name: 'target-two', messageId: null },
+        ],
+      },
+    ] as const;
+    const actors = [null, 'moderator-one'] as const;
+    const durations = [null, 5] as const;
+
+    for (const language of ['en', 'tr'] as const) {
+      setLang(language);
+      const moderatorLabel = language === 'en' ? 'Moderator:' : 'Moderatör:';
+      const targetLabel = language === 'en' ? 'Target' : 'Hedef';
+      const bulkTargetLabel = language === 'en' ? 'Targets' : 'Hedefler';
+      const durationLabel = language === 'en' ? '5M' : '5DK';
+
+      for (const kind of kinds) {
+        for (const form of forms) {
+          for (const moderator of actors) {
+            for (const durationMin of durations) {
+              const row = buildMessageElement(message('', undefined, {
+                id: `mod-action:matrix:${language}:${kind}:${form.name}:${moderator ?? 'unknown'}:${durationMin ?? 'none'}`,
+                type: 'mod-action',
+                systemEvent: {
+                  kind: 'mod-action',
+                  actionKind: kind,
+                  moderator,
+                  durationMin,
+                  victims: [...form.victims],
+                  count: form.count,
+                },
+              }));
+              const text = row.textContent ?? '';
+
+              expect(text).toContain(moderatorLabel);
+              expect(text).toContain(form.name === 'single' ? `${targetLabel}:` : `${bulkTargetLabel} (`);
+              expect(text).not.toContain('__kickflow_');
+              if (kind === 'timeout' && durationMin !== null) expect(text).toContain(durationLabel);
+
+              const targetElements = row.querySelectorAll<HTMLElement>('.kickflow-event-row__victim');
+              expect(targetElements).toHaveLength(form.victims.length);
+              for (const target of targetElements) {
+                expect(target.tabIndex).toBe(0);
+                expect(target.getAttribute('role')).toBe('link');
+                expect(target.title).toContain(language === 'en' ? 'profile' : 'profil');
+              }
+
+              const moderatorElement = row.querySelector<HTMLElement>('.kickflow-event-row__moderator');
+              if (moderator) {
+                expect(moderatorElement?.getAttribute('role')).toBe('link');
+                expect(moderatorElement?.tabIndex).toBe(0);
+                expect(moderatorElement?.title).toContain(language === 'en' ? 'profile' : 'profil');
+              } else {
+                expect(moderatorElement).toBeNull();
+              }
+            }
+          }
+        }
+      }
+    }
   });
 
   it('takes the moderator color from the fixed role system and the target color from identity', () => {
@@ -235,7 +314,7 @@ describe('message-view safe rendering', () => {
     expect(target?.style.color).toBe('rgb(18, 171, 239)');
   });
 
-  it('jumps to the clicked victim message and keeps a null target plain', () => {
+  it('jumps to retained victim messages and opens profiles for unretained victims', () => {
     setLang('en');
     const jumpSpy = vi.spyOn(messageJump, 'jumpToMessage').mockReturnValue(true);
     const openPanel = vi.fn();
@@ -258,6 +337,9 @@ describe('message-view safe rendering', () => {
     }), { onOpenRemovedPanel: openPanel });
 
     const first = row.querySelector<HTMLElement>('.kickflow-event-row__victim')!;
+    expect(first.getAttribute('role')).toBe('button');
+    expect(first.tabIndex).toBe(0);
+    expect(first.title).toBe("Jump to first's retained message");
     first.click();
     expect(jumpSpy).toHaveBeenCalledWith('first-message', first);
     expect(openPanel).not.toHaveBeenCalled();
@@ -267,13 +349,17 @@ describe('message-view safe rendering', () => {
     const fourth = [...row.querySelectorAll<HTMLElement>('.kickflow-event-row__victim')]
       .find((element) => element.textContent === 'fourth');
     expect(fourth).not.toBeUndefined();
+    expect(fourth?.getAttribute('role')).toBe('button');
+    expect(fourth?.tabIndex).toBe(0);
+    expect(fourth?.title).toBe("Jump to fourth's retained message");
     fourth!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
     expect(jumpSpy).toHaveBeenCalledWith('fourth-message', fourth);
 
     const noTarget = [...row.querySelectorAll<HTMLElement>('.kickflow-event-row__victim')]
       .find((element) => element.textContent === 'no-target')!;
-    expect(noTarget.getAttribute('role')).toBeNull();
-    expect(noTarget.getAttribute('tabindex')).toBeNull();
+    expect(noTarget.getAttribute('role')).toBe('link');
+    expect(noTarget.tabIndex).toBe(0);
+    expect(noTarget.title).toBe("Open no-target's profile");
     expect(openPanel).not.toHaveBeenCalled();
   });
 
