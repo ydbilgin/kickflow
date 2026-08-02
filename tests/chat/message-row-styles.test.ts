@@ -82,7 +82,7 @@ describe('own-mode message row geometry styles', () => {
     const surface = declarations('.kickflow-modaction-surface');
 
     expect(actionCss).toContain('.kickflow-modaction-surface {');
-    expect(surface).toContain('--kickflow-modaction-accent: oklch(0.72 0.03 265)');
+    expect(surface).toContain('--kickflow-modaction-accent: oklch(0.80 0.06 265)');
     expect(surface).toContain('background: var(--kickflow-modaction-band)');
     expect(surface).toContain('border: 0');
     expect(surface).toContain('border-radius: 4px');
@@ -102,7 +102,7 @@ describe('own-mode message row geometry styles', () => {
     expect(declarations('.kickflow-modaction-kind--timeout'))
       .toContain('--kickflow-modaction-accent: oklch(0.75 0.14 72)');
     expect(declarations('.kickflow-modaction-kind--delete'))
-      .toContain('--kickflow-modaction-accent: oklch(0.72 0.03 265)');
+      .toContain('--kickflow-modaction-accent: oklch(0.80 0.06 265)');
   });
 
   it('measures action roles and the band from the production stylesheet', () => {

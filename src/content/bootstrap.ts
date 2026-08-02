@@ -881,7 +881,7 @@ function ensureStyles(): void {
     .kickflow-event-row__victims { min-width: 0; }
     .kickflow-event-row__remainder { color: inherit; }
     .kickflow-modaction-surface {
-      --kickflow-modaction-accent: oklch(0.72 0.03 265);
+      --kickflow-modaction-accent: oklch(0.80 0.06 265);
       --kickflow-modaction-band: color-mix(in oklch, var(--kickflow-modaction-accent) 8%, transparent);
       --kickflow-modaction-moderator-color: oklch(0.78 0.13 155);
       --kickflow-modaction-body-color: oklch(0.9 0.02 265);
@@ -899,7 +899,7 @@ function ensureStyles(): void {
       --kickflow-modaction-accent: oklch(0.75 0.14 72);
     }
     .kickflow-modaction-kind--delete {
-      --kickflow-modaction-accent: oklch(0.72 0.03 265);
+      --kickflow-modaction-accent: oklch(0.80 0.06 265);
     }
     .kickflow-event-row--mod-action {
       cursor: pointer;
