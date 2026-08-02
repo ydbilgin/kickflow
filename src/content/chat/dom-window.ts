@@ -26,6 +26,7 @@ interface RowResizeObserver {
 
 export interface ScrollFollowControllerOptions {
   onPinnedChange?: (pinned: boolean) => void;
+  getScrollFollowBehavior?: () => ScrollFollowBehavior;
   /** Injectable because ResizeObserver is not available in jsdom. Returning null disables
    * row-size observation while retaining the scroll-intent state machine. */
   createResizeObserver?: (callback: () => void) => RowResizeObserver | null;
@@ -128,7 +129,9 @@ export class ScrollFollowController {
   private readonly handleRowsResized = (): void => {
     if (this.disposed) return;
     this.pruneObservedRows();
-    if (this.pinned) this.scrollToBottom();
+    if (this.pinned) {
+      this.scrollToBottom(this.options.getScrollFollowBehavior?.() ?? 'auto');
+    }
   };
 
   private setPinned(pinned: boolean): void {

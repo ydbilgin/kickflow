@@ -29,6 +29,8 @@ export interface RenderQueueOptions {
   formatTimestamp?: (message: ChatMessage) => string;
   /** Opens the removed-message panel from a multi-victim moderator-action event row. */
   onOpenRemovedPanel?: () => void;
+  /** Reports the exact number of rows still waiting behind the release policy. */
+  onPendingChange?: (pendingCount: number) => void;
   onFlush?: (appended: HTMLElement[], wasAtBottom: boolean) => void;
 }
 
@@ -52,9 +54,14 @@ export class RenderQueue {
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
   }
 
+  get pendingCount(): number {
+    return this.pending.length;
+  }
+
   enqueue(message: ChatMessage): void {
     if (this.disposed) return;
     this.pending.push(message);
+    this.notifyPendingChange();
     if (this.pending.length >= MAX_BATCH_SIZE) {
       this.flush();
       return;
@@ -82,7 +89,9 @@ export class RenderQueue {
    * still waiting for the 250ms batch. Cancel scheduled work as well as clearing the array so an
    * old animation-frame callback cannot race the reset. */
   clearPending(): void {
+    const hadPending = this.pending.length > 0;
     this.pending = [];
+    if (hadPending) this.notifyPendingChange();
     this.cancelScheduledTimer();
     if (this.frameId !== null) {
       if (this.frameUsesTimeout) this.cancelTimer(this.frameId);
@@ -156,6 +165,7 @@ export class RenderQueue {
 
     const batchSize = Math.min(this.pending.length, decision.maxRows, MAX_BATCH_SIZE);
     const batch = this.pending.splice(0, batchSize);
+    this.notifyPendingChange();
     const wasAtBottom = isNearBottom(container);
     const fragment = document.createDocumentFragment();
     const appended: HTMLElement[] = [];
@@ -208,6 +218,14 @@ export class RenderQueue {
     if (this.timerId === null) return;
     this.cancelTimer(this.timerId);
     this.timerId = null;
+  }
+
+  private notifyPendingChange(): void {
+    try {
+      this.options.onPendingChange?.(this.pending.length);
+    } catch (error) {
+      logger.error('render-queue: pending-count callback failed', error);
+    }
   }
 
   dispose(): void {

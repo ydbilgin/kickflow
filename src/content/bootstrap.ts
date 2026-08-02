@@ -4,7 +4,7 @@ import { LayoutWatchdog } from './shared/layout-watchdog';
 import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
 import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
-import { loadLang, t } from './shared/i18n';
+import { formatNumber, loadLang, t } from './shared/i18n';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
 import { getStatus, setStatus, resetStatus, type KickFlowStatusSnapshot } from './status';
 import {
@@ -1638,12 +1638,35 @@ function initOwnChatIntegrity(
   const hoverMeter = context.kind === 'live' ? new HoverReleaseMeter() : null;
   let hovered = false;
   let renderQueue: RenderQueue | null = null;
-  const scrollFollow = new ScrollFollowController(ownList, {
+  let pendingCount = 0;
+  let scrollFollow: ScrollFollowController;
+  function updatePendingPill(nextCount: number): void {
+    pendingCount = nextCount;
+    if (!hoverMeter) return;
+    if (hovered && scrollFollow.isPinned && nextCount > 0) {
+      scrollPill.textContent = t('chat.new_messages_count', {
+        n: nextCount,
+        count: formatNumber(nextCount),
+      });
+      scrollPill.style.display = '';
+      return;
+    }
+    // Deliberately NOT gated on `hovered`: the pointer leaving is exactly when the backlog drains
+    // to zero, and requiring hover here would leave the pill on screen showing the last count it
+    // had. Still gated on `isPinned`, because a reader who scrolled up owns the pill.
+    if (nextCount === 0 && scrollFollow.isPinned) {
+      scrollPill.textContent = t('chat.new_messages');
+      scrollPill.style.display = 'none';
+    }
+  }
+  scrollFollow = new ScrollFollowController(ownList, {
     onPinnedChange: (pinned) => {
       if (pinned) scrollPill.style.display = 'none';
       hoverMeter?.setMetered(hovered && pinned);
       renderQueue?.wake();
+      if (pinned) updatePendingPill(renderQueue?.pendingCount ?? pendingCount);
     },
+    getScrollFollowBehavior: () => hovered ? 'smooth' : 'auto',
   });
   lifecycle.add(() => scrollFollow.dispose());
   const hoverFollow = attachScrollFollowHover(ownList, scrollFollow, {
@@ -1651,11 +1674,13 @@ function initOwnChatIntegrity(
       hovered = nextHovered;
       hoverMeter?.setMetered(nextHovered && scrollFollow.isPinned);
       renderQueue?.wake();
+      updatePendingPill(renderQueue?.pendingCount ?? pendingCount);
     },
     onPointerLeave: hoverMeter ? () => renderQueue?.flushPending() : undefined,
   });
   lifecycle.add(() => hoverFollow.dispose());
   scrollPill.addEventListener('click', () => {
+    renderQueue?.flushPending();
     scrollFollow.scrollToBottom();
     scrollPill.style.display = 'none';
   });
@@ -1672,6 +1697,7 @@ function initOwnChatIntegrity(
     // flush rows and also prevents a replayed Pusher/history id from creating a duplicate row.
     shouldRender: (message) => store.getMessageById(message.id) === message,
     onOpenRemovedPanel: () => panel.showSettings('removed'),
+    onPendingChange: updatePendingPill,
     formatTimestamp: context.kind === 'vod'
       ? (message) => vodStartTimeMs === null
         ? ''
@@ -1694,8 +1720,9 @@ function initOwnChatIntegrity(
       scrollFollow.observeRows(appended);
       hoverFollow.apply(decision);
       if (decision.showPill) {
+        scrollPill.textContent = t('chat.new_messages');
         scrollPill.style.display = '';
-      } else if (decision.scrollToBottom) {
+      } else if (decision.scrollToBottom && (hoverMeter === null || !hovered || renderQueue?.pendingCount === 0)) {
         scrollPill.style.display = 'none';
       }
     },

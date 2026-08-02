@@ -13,12 +13,14 @@ describe('i18n', () => {
       storage: { local: { get: vi.fn(async () => ({})), set: storageSet } },
     });
 
-    const { getLang, messages, setLang, subscribeLang, t } = await import('../../src/content/shared/i18n');
+    const { formatNumber, getLang, messages, setLang, subscribeLang, t } = await import('../../src/content/shared/i18n');
     expect(getLang()).toBe('en');
     expect(t('setting.caption_guard')).toBe('Keep captions off by default');
     expect(t('setting.caption_guard_desc')).toBe('Prevents Kick from silently restoring captions after a reload. You can still turn them on manually for the current session.');
     expect(t('event.subscription.months', { n: 1 })).toBe('subscribed for 1 month');
     expect(t('event.subscription.months', { n: 3 })).toBe('subscribed for 3 months');
+    expect(t('chat.new_messages_count', { n: 1, count: formatNumber(1) })).toBe('↓ 1 new message');
+    expect(t('chat.new_messages_count', { n: 3, count: formatNumber(3) })).toBe('↓ 3 new messages');
     expect(t('setting.mod_frame_color')).toBe('Moderator color');
     expect(t('setting.vip_frame_color')).toBe('VIP color');
     expect(t('setting.role_style')).toBe('Moderator / VIP style');
@@ -54,6 +56,8 @@ describe('i18n', () => {
     setLang('tr');
 
     expect(getLang()).toBe('tr');
+    expect(t('chat.new_messages_count', { n: 1, count: formatNumber(1) })).toBe('↓ 1 yeni mesaj');
+    expect(t('chat.new_messages_count', { n: 1234, count: formatNumber(1234) })).toBe('↓ 1.234 yeni mesaj');
     expect(t('setting.caption_guard')).toBe('Altyazıyı varsayılan olarak kapalı tut');
     expect(t('setting.caption_guard_desc')).toBe('Kick’in altyazıyı yenilemeden sonra sessizce geri açmasını önler. Geçerli oturumda yine elle açabilirsin.');
     expect(t('setting.mod_frame_color')).toBe('Moderatör rengi');

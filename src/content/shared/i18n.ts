@@ -268,6 +268,10 @@ export const messages = {
   'overlay.replay_loading': { en: 'Loading replay chat…', tr: 'Yayın sohbeti yükleniyor…' },
   'overlay.replay_ready': { en: 'Replay chat ready — waiting for messages…', tr: 'Yayın sohbeti hazır — mesajlar bekleniyor…' },
   'chat.new_messages': { en: '↓ New messages', tr: '↓ Yeni mesajlar' },
+  'chat.new_messages_count': {
+    en: { one: '↓ {count} new message', other: '↓ {count} new messages' },
+    tr: { one: '↓ {count} yeni mesaj', other: '↓ {count} yeni mesaj' },
+  },
 
   'status.starting': { en: 'starting', tr: 'başlatılıyor' },
   'status.resolving_channel': { en: 'resolving channel…', tr: 'kanal çözülüyor…' },

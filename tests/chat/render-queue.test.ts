@@ -69,6 +69,36 @@ describe('RenderQueue', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('reports the pending count as metered rows enter and leave the queue', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const meter = new HoverReleaseMeter();
+    meter.setMetered(true);
+    const pendingCounts: number[] = [];
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry: new ChatDomRegistry(),
+      releasePolicy: meter,
+      now: () => Date.now(),
+      onPendingChange: (pendingCount) => pendingCounts.push(pendingCount),
+    });
+
+    queue.enqueue(message('pending-1'));
+    queue.enqueue(message('pending-2'));
+    queue.enqueue(message('pending-3'));
+    vi.advanceTimersByTime(250 * 3);
+
+    expect(pendingCounts).toEqual([1, 2, 3, 2, 1, 0]);
+    expect(queue.pendingCount).toBe(0);
+    queue.dispose();
+  });
+
   it('does not let MAX_BATCH_SIZE eager flush bypass the metered policy', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
