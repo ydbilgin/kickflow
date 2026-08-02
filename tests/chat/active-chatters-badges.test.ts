@@ -5,6 +5,8 @@ import {
 } from '../../src/content/chat/active-chatters-badges';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
+import { configureUserCardSession, configureUserMessageArchive } from '../../src/content/chat/user-card';
+import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { setLang } from '../../src/content/shared/i18n';
 import type { StatusSnapshotProvider } from '../../src/content/status';
@@ -79,11 +81,61 @@ async function flushMutations(): Promise<void> {
 describe('ActiveChattersBadgesController', () => {
   beforeAll(() => setLang('en'));
   afterEach(() => {
+    configureUserMessageArchive(null);
+    configureUserCardSession(null);
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.replaceChildren();
   });
 
-  it('adds a literal evidence badge without taking over the native row click', () => {
+  it('opens KickFlow card activation from a row click and suppresses the native handler', () => {
+    document.body.innerHTML = activeChattersFixture(chatterRow('Active_User'));
+    configureUserCardSession('channel');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    const store = new ChatIntegrityStore();
+    const lifecycle = new Lifecycle();
+    const removedPanel = new RemovedMessagesPanel(lifecycle, store, statusSnapshot);
+    const nativeClick = vi.fn();
+    const nativeRow = document.querySelector<HTMLButtonElement>(ACTIVE_CHATTERS_ROW_SELECTOR)!;
+    nativeRow.addEventListener('click', nativeClick);
+
+    new ActiveChattersBadgesController(lifecycle, store, removedPanel);
+
+    const click = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 120,
+      clientY: 240,
+    });
+    nativeRow.dispatchEvent(click);
+
+    expect(click.defaultPrevented).toBe(true);
+    expect(nativeClick).not.toHaveBeenCalled();
+    expect(document.querySelector('.kickflow-user-card')).not.toBeNull();
+    lifecycle.dispose();
+  });
+
+  it('passes the clicked name to the card so archived messages are rendered', () => {
+    document.body.innerHTML = activeChattersFixture(chatterRow('Archive_User'));
+    configureUserCardSession('channel');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    const archive = new UserMessageArchive({
+      now: () => Date.parse('2026-07-19T12:30:00Z'),
+    });
+    archive.add(message('archived', 7, 'Archive_User', 'archive_user'));
+    configureUserMessageArchive(archive);
+    const store = new ChatIntegrityStore();
+    const lifecycle = new Lifecycle();
+    const removedPanel = new RemovedMessagesPanel(lifecycle, store, statusSnapshot);
+
+    new ActiveChattersBadgesController(lifecycle, store, removedPanel);
+    document.querySelector<HTMLButtonElement>(ACTIVE_CHATTERS_ROW_SELECTOR)?.click();
+
+    expect(document.querySelector('.kickflow-user-card')?.textContent).toContain('archived removed text');
+    lifecycle.dispose();
+  });
+
+  it('keeps the removed-count badge action separate from card activation', () => {
     document.body.innerHTML = activeChattersFixture(chatterRow('DevletSah_Ozcan'));
     const store = new ChatIntegrityStore();
     store.addMessage(message('one', 7, 'DevletSah_Ozcan', 'devletsah-ozcan'));
@@ -102,13 +154,74 @@ describe('ActiveChattersBadgesController', () => {
     expect(badge?.dataset.kickflowSlug).toBe('devletsah-ozcan');
     badge?.click();
     expect(nativeClick).not.toHaveBeenCalled();
+    expect(document.querySelector('.kickflow-user-card')).toBeNull();
     expect(removedPanel.isOpen()).toBe(true);
     expect(document.querySelector('.kickflow-panel__filter-chip')?.textContent).toBe('Filtered: DevletSah_Ozcan ×');
     expect(document.querySelectorAll('.kickflow-removed-row')).toHaveLength(2);
 
-    nativeRow.click();
-    expect(nativeClick).toHaveBeenCalledTimes(1);
     lifecycle.dispose();
+  });
+
+  it('opens the card from Enter on a focused row', () => {
+    document.body.innerHTML = activeChattersFixture(chatterRow('Keyboard_User'));
+    configureUserCardSession('channel');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    const store = new ChatIntegrityStore();
+    const lifecycle = new Lifecycle();
+    const removedPanel = new RemovedMessagesPanel(lifecycle, store, statusSnapshot);
+    const nativeKeydown = vi.fn();
+    const row = document.querySelector<HTMLButtonElement>(ACTIVE_CHATTERS_ROW_SELECTOR)!;
+    row.addEventListener('keydown', nativeKeydown);
+
+    new ActiveChattersBadgesController(lifecycle, store, removedPanel);
+    row.focus();
+    const keydown = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter',
+    });
+    row.dispatchEvent(keydown);
+
+    expect(keydown.defaultPrevented).toBe(true);
+    expect(nativeKeydown).not.toHaveBeenCalled();
+    expect(document.querySelector('.kickflow-user-card')).not.toBeNull();
+    lifecycle.dispose();
+  });
+
+  it('leaves a row click untouched when the row has no usable username', () => {
+    document.body.innerHTML = activeChattersFixture(chatterRow(''));
+    const store = new ChatIntegrityStore();
+    const lifecycle = new Lifecycle();
+    const removedPanel = new RemovedMessagesPanel(lifecycle, store, statusSnapshot);
+    const nativeClick = vi.fn();
+    const row = document.querySelector<HTMLButtonElement>(ACTIVE_CHATTERS_ROW_SELECTOR)!;
+    row.addEventListener('click', nativeClick);
+
+    new ActiveChattersBadgesController(lifecycle, store, removedPanel);
+    row.click();
+
+    expect(nativeClick).toHaveBeenCalledOnce();
+    expect(document.querySelector('.kickflow-user-card')).toBeNull();
+    lifecycle.dispose();
+  });
+
+  it('removes row activation after dispose', () => {
+    document.body.innerHTML = activeChattersFixture(chatterRow('Disposed_User'));
+    configureUserCardSession('channel');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    const store = new ChatIntegrityStore();
+    const lifecycle = new Lifecycle();
+    const removedPanel = new RemovedMessagesPanel(lifecycle, store, statusSnapshot);
+    const nativeClick = vi.fn();
+    const row = document.querySelector<HTMLButtonElement>(ACTIVE_CHATTERS_ROW_SELECTOR)!;
+    row.addEventListener('click', nativeClick);
+    new ActiveChattersBadgesController(lifecycle, store, removedPanel);
+
+    lifecycle.dispose();
+    row.click();
+
+    expect(nativeClick).toHaveBeenCalledOnce();
+    expect(document.querySelector('.kickflow-user-card')).toBeNull();
   });
 
   it('reconciles realistic React-style row replacement and sweeps only owned badges', async () => {

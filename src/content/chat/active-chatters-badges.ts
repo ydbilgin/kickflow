@@ -2,6 +2,7 @@ import type { Lifecycle } from '../shared/lifecycle';
 import { t } from '../shared/i18n';
 import type { ChatIntegrityStore } from './message-store';
 import type { RemovedMessagesPanel } from './removed-panel';
+import { isSafeKickSlug, openUserCard } from './user-card';
 
 /** Confirmed from Kick's 2026-07-19 production bundle. The input anchors discovery without
  * depending on localized heading/placeholder text; the surrounding class-bearing section and
@@ -16,6 +17,7 @@ export const ACTIVE_CHATTERS_USERNAME_SELECTOR =
 
 const BADGE_CLASS = 'kickflow-active-chatters-badge';
 const INJECTED_SELECTOR = `.${BADGE_CLASS}`;
+const USER_CARD_ACTIVATION_KEYS = new Set(['Enter', ' ']);
 
 export class ActiveChattersBadgesController {
   private observer: MutationObserver | null = null;
@@ -94,6 +96,7 @@ export class ActiveChattersBadgesController {
 
     this.disconnectObserver(true);
     this.observedRoot = root;
+    this.attachPanelActivationListeners(root);
     this.observer = new MutationObserver((mutations) => {
       if (mutations.every((mutation) => this.isOwnedMutation(mutation))) return;
       this.reconcileAll();
@@ -110,8 +113,48 @@ export class ActiveChattersBadgesController {
     );
   }
 
+  private handlePanelActivation = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(INJECTED_SELECTOR)) return;
+
+    const row = target.closest<HTMLElement>(ACTIVE_CHATTERS_ROW_SELECTOR);
+    if (!row || !this.observedRoot?.contains(row)) return;
+
+    const username = row.querySelector<HTMLElement>(ACTIVE_CHATTERS_USERNAME_SELECTOR)
+      ?.textContent?.trim() ?? '';
+    const slug = username.toLowerCase();
+    if (!username || !isSafeKickSlug(slug)) return;
+
+    if (event.type === 'keydown') {
+      const keyboardEvent = event as KeyboardEvent;
+      if (!USER_CARD_ACTIVATION_KEYS.has(keyboardEvent.key)) return;
+
+      keyboardEvent.preventDefault();
+      keyboardEvent.stopImmediatePropagation();
+      const rect = row.getBoundingClientRect();
+      void openUserCard(slug, username, rect.left, rect.bottom, null);
+      return;
+    }
+
+    if (event.type !== 'click') return;
+    const mouseEvent = event as MouseEvent;
+    mouseEvent.preventDefault();
+    mouseEvent.stopImmediatePropagation();
+    void openUserCard(slug, username, mouseEvent.clientX, mouseEvent.clientY, null);
+  };
+
+  private attachPanelActivationListeners(root: HTMLElement): void {
+    root.addEventListener('click', this.handlePanelActivation, true);
+    root.addEventListener('keydown', this.handlePanelActivation, true);
+  }
+
   private disconnectObserver(clearBadges: boolean): void {
-    if (clearBadges) this.observedRoot?.querySelectorAll(INJECTED_SELECTOR).forEach((node) => node.remove());
+    const root = this.observedRoot;
+    if (root) {
+      root.removeEventListener('click', this.handlePanelActivation, true);
+      root.removeEventListener('keydown', this.handlePanelActivation, true);
+    }
+    if (clearBadges) root?.querySelectorAll(INJECTED_SELECTOR).forEach((node) => node.remove());
     this.observer?.disconnect();
     this.observer = null;
     this.observedRoot = null;
