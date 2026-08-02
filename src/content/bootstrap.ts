@@ -1,5 +1,6 @@
 import { logger, setDebugLogging } from './shared/logger';
 import { Lifecycle } from './shared/lifecycle';
+import { LayoutWatchdog } from './shared/layout-watchdog';
 import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
 import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
@@ -1452,7 +1453,11 @@ function ensureStyles(): void {
   document.head.appendChild(style);
 }
 
-function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle): void {
+function initNativeChatIntegrity(
+  context: ChatSessionContext,
+  lifecycle: Lifecycle,
+  panel: RemovedMessagesPanel,
+): void {
   const { slug } = context;
   setSubscriberBadges([]);
   configureUserCardSession(slug);
@@ -1480,10 +1485,10 @@ function initNativeChatIntegrity(context: ChatSessionContext, lifecycle: Lifecyc
   setHighlightStore(store);
   lifecycle.add(() => setHighlightStore(null));
   syncHighlightCssVars();
-  const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
+  panel.setStore(store);
+  lifecycle.add(() => panel.setStore(null));
   initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
-  new NavbarSettingsButton(lifecycle, panel);
   const renderNativeModAction = (notice: ModActionNotice): void => {
     augmenter?.showModActionNotice(notice, {
       onJump: jumpToChatMessage,
@@ -1579,7 +1584,11 @@ export function reconcileOwnPreservedEviction(
   element.remove();
 }
 
-function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle): void {
+function initOwnChatIntegrity(
+  context: ChatSessionContext,
+  lifecycle: Lifecycle,
+  panel: RemovedMessagesPanel,
+): void {
   const { slug } = context;
   setSubscriberBadges([]);
   configureUserCardSession(slug);
@@ -1602,10 +1611,10 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
   setHighlightStore(store);
   lifecycle.add(() => setHighlightStore(null));
   syncHighlightCssVars();
-  const panel = new RemovedMessagesPanel(lifecycle, store, getLiveStatusSnapshot);
+  panel.setStore(store);
+  lifecycle.add(() => panel.setStore(null));
   initActiveChattersBadgesSession(lifecycle, store, panel);
   new FooterToggleButton(lifecycle, panel);
-  new NavbarSettingsButton(lifecycle, panel);
 
   const mount = new ChatOverlayMount(lifecycle);
   mount.setProbing();
@@ -1891,11 +1900,15 @@ function initOwnChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle)
   });
 }
 
-export function initChatIntegrity(context: ChatSessionContext, lifecycle: Lifecycle): void {
+export function initChatIntegrity(
+  context: ChatSessionContext,
+  lifecycle: Lifecycle,
+  panel: RemovedMessagesPanel = getSiteSettingsPanel(),
+): void {
   if (featureFlags.chatMode === 'own') {
-    initOwnChatIntegrity(context, lifecycle);
+    initOwnChatIntegrity(context, lifecycle, panel);
   } else {
-    initNativeChatIntegrity(context, lifecycle);
+    initNativeChatIntegrity(context, lifecycle, panel);
   }
 }
 
@@ -1961,6 +1974,55 @@ let currentLifecycle: Lifecycle | null = null;
 let currentSessionContext: ChatSessionContext | null = null;
 let sessionToken = 0;
 let navPollId: number | null = null;
+let navigationInitialized = false;
+
+export interface SiteLifecycleServices {
+  lifecycle: Lifecycle;
+  panel: RemovedMessagesPanel;
+  layoutWatchdog: LayoutWatchdog | null;
+}
+
+let siteLifecycleServices: SiteLifecycleServices | null = null;
+
+/** Creates the SPA-wide composition root once. Session navigation only swaps the store bound to
+ * this panel; the navbar entry point and dashboard therefore survive channel route changes. */
+export function initSiteLifecycle(): SiteLifecycleServices {
+  if (siteLifecycleServices && !siteLifecycleServices.lifecycle.isDisposed) return siteLifecycleServices;
+
+  const lifecycle = new Lifecycle();
+  ensureStyles();
+  const panel = new RemovedMessagesPanel(lifecycle, null, getLiveStatusSnapshot);
+  new NavbarSettingsButton(lifecycle, panel);
+  siteLifecycleServices = { lifecycle, panel, layoutWatchdog: null };
+  return siteLifecycleServices;
+}
+
+function getSiteSettingsPanel(): RemovedMessagesPanel {
+  return initSiteLifecycle().panel;
+}
+
+function disposeSiteLifecycle(): void {
+  const services = siteLifecycleServices;
+  siteLifecycleServices = null;
+  services?.lifecycle.dispose();
+}
+
+/** Starts or stops the site-owned layout watchdog without creating it while debug logging is off. */
+export function syncLayoutWatchdog(): void {
+  if (!featureFlags.debugLogging) {
+    siteLifecycleServices?.layoutWatchdog?.stop();
+    return;
+  }
+
+  const services = siteLifecycleServices ?? initSiteLifecycle();
+  if (!services.layoutWatchdog) {
+    const watchdog = new LayoutWatchdog();
+    services.layoutWatchdog = watchdog;
+    services.lifecycle.add(() => watchdog.stop());
+  }
+  services.layoutWatchdog.start();
+}
+
 interface ActiveChattersBadgesContext {
   sessionLifecycle: Lifecycle;
   store: ChatIntegrityStore;
@@ -2118,14 +2180,13 @@ function onPopstate(): void {
 function startSession(context: ChatSessionContext): void {
   const { slug } = context;
   const token = ++sessionToken;
+  const panel = getSiteSettingsPanel();
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
   configureUserCardSession(null);
 
   const lifecycle = new Lifecycle();
   currentLifecycle = lifecycle;
-
-  ensureStyles();
 
   // Player QoL and chat integrity are started concurrently and never gate each other.
   initPlayerQolSession(lifecycle);
@@ -2138,7 +2199,7 @@ function startSession(context: ChatSessionContext): void {
     if (token !== sessionToken || lifecycle.isDisposed) return;
     // chatContainer is the gate that the chat panel exists; the native augmenter then
     // observes #chatroom-messages and survives Kick replacing the inner list.
-    initChatIntegrity(context, lifecycle);
+    initChatIntegrity(context, lifecycle, panel);
   });
 }
 
@@ -2163,6 +2224,7 @@ function teardownZombie(): void {
     navPollId = null;
   }
   stopSession();
+  disposeSiteLifecycle();
   configureUserCardSession(null);
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.querySelector('.kickflow-panel')?.remove();
@@ -2188,7 +2250,8 @@ function handlePotentialNavigation(): void {
   const context = parseChatSessionContext(window.location.pathname);
   const previousSessionKey = currentSessionContext?.sessionKey ?? null;
   const nextSessionKey = context?.sessionKey ?? null;
-  if (nextSessionKey === previousSessionKey) return;
+  if (navigationInitialized && nextSessionKey === previousSessionKey) return;
+  navigationInitialized = true;
 
   logger.debug('bootstrap: chat session changed', previousSessionKey, '->', nextSessionKey);
   stopSession();
@@ -2207,7 +2270,10 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     setFeatureFlag(key, value);
     if (key === 'speedControls' && !value) deactivateSpeedControls();
     if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
-    if (key === 'debugLogging') setDebugLogging(value);
+    if (key === 'debugLogging') {
+      setDebugLogging(value);
+      syncLayoutWatchdog();
+    }
     if (key === 'autoTheater') syncAutoTheaterFlag();
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
     if (key === 'showChattersBadges') {
@@ -2476,6 +2542,8 @@ function installNavigationHooks(): void {
 async function main(): Promise<void> {
   await Promise.all([applySavedFlags(), loadHotkeyBindings(), loadLang()]);
   setDebugLogging(featureFlags.debugLogging);
+  initSiteLifecycle();
+  syncLayoutWatchdog();
   installStatusBridge();
   installNavigationHooks();
   handlePotentialNavigation();

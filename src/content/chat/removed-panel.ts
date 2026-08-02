@@ -110,13 +110,13 @@ function dispatchFlag(key: string, value: boolean | string): void {
  * and Mode B native-augment both instantiate one against the same store) so neither mode
  * duplicates settings or removed-message rendering.
  *
- * Hidden by default: it still instantiates immediately (subscribes to the store, builds its DOM)
+ * Hidden by default: it still instantiates immediately (builds its DOM)
  * so the footer button's `isOpen()`/`removedCount()` reads are correct from the first tick, but
    * the section stays `display:none` until opened by the footer or navbar entry point.
  *
  * Session/channel isolation: data comes only from the in-memory store — never any persisted,
- * cross-tab-shared storage — and the panel is torn down via the session `Lifecycle` — a channel
- * switch or tab close disposes it, so two tabs / two channels never share a panel or its data. */
+ * cross-tab-shared storage. The site panel stays mounted across SPA navigation; the session
+ * lifecycle clears its injected store whenever a channel ends. */
 export class RemovedMessagesPanel implements FooterTogglePanel {
   private section: HTMLElement | null = null;
   private shell: HTMLElement | null = null;
@@ -165,17 +165,29 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private userFilter: { slug: string; label: string } | null = null;
   private filterChip: HTMLButtonElement | null = null;
 
+  private store: ChatIntegrityStore | null;
+
   constructor(
     lifecycle: Lifecycle,
-    private readonly store: ChatIntegrityStore,
+    store: ChatIntegrityStore | null,
     private readonly getStatusSnapshot: StatusSnapshotProvider,
   ) {
+    this.store = store;
     this.render();
     lifecycle.add(subscribeLang(() => this.rebuildForLanguage()));
     lifecycle.setInterval(() => this.render(), 1000);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onHotkeyCapture(event as KeyboardEvent), true);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onDashboardKeydown(event as KeyboardEvent), true);
     lifecycle.add(() => this.dispose());
+  }
+
+  /** Binds the currently active channel store without replacing the site-wide dashboard. */
+  setStore(store: ChatIntegrityStore | null): void {
+    if (this.store === store) return;
+    this.store = store;
+    this.userFilter = null;
+    this.lastSig = '';
+    this.render();
   }
 
   /** Toggles the shared dashboard. A different requested section is selected without closing. */
@@ -213,19 +225,20 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   }
 
   removedCount(): number {
-    return this.store.getPreserved().filter((message) => message.preserved === true).length;
+    return this.store?.getPreserved().filter((message) => message.preserved === true).length ?? 0;
   }
 
   /** Keeps content current every tick regardless of open state — so the moment the footer
    * button opens the panel, it's instant AND already up to date, never a stale snapshot from
    * whenever it was last visible. The section itself is just `display:none` while closed. */
   render(): void {
-    const allRemoved = this.store.getPreserved()
+    const store = this.store;
+    const allRemoved = store?.getPreserved()
       .filter((message) => message.preserved === true)
-      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
-    const removed = (this.userFilter
-      ? this.store.getPreservedForSlug(this.userFilter.slug)
-      : allRemoved)
+      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0)) ?? [];
+    const removed = (store && this.userFilter
+      ? store.getPreservedForSlug(this.userFilter.slug)
+      : allRemoved ?? [])
       .filter((message) => message.preserved === true)
       .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
 
@@ -270,7 +283,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (shown.length === 0) {
       const empty = document.createElement('div');
       empty.className = REMOVED_EMPTY_CLASS;
-      empty.textContent = t('panel.removed_empty');
+      empty.textContent = store ? t('panel.removed_empty') : t('panel.removed_no_session');
       body.replaceChildren(empty);
     } else {
       body.replaceChildren(...shown.map((message) => this.buildRow(message)));
@@ -1167,9 +1180,14 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     const snapshot = this.getStatusSnapshot();
     const connected = snapshot.pusherConnected;
     const missingConnection = !connected && !snapshot.slug;
+    const connectionLabel = snapshot.slug === null
+      ? t('status.not_channel')
+      : connected
+        ? t('common.connected')
+        : t('common.waiting');
     stats.connection.replaceChildren(
       stats.connectionDot,
-      document.createTextNode(connected ? t('common.connected') : (snapshot.slug ? t('common.waiting') : '—')),
+      document.createTextNode(connectionLabel),
     );
     stats.connection.classList.toggle('kickflow-panel__stat-value--missing', missingConnection);
     stats.connectionDot.classList.toggle('kickflow-panel__live-dot--connected', connected);

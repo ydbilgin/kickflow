@@ -7,6 +7,8 @@ import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { setLang } from '../../src/content/shared/i18n';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 import { hexToRgb, rgbToHsl } from '../../src/content/chat/message-highlight';
+import { LAYOUT_WATCHDOG_STORAGE_KEY } from '../../src/content/shared/layout-watchdog';
+import { parseChatSessionContext } from '../../src/content/chat/session-context';
 
 type BootstrapModule = typeof import('../../src/content/bootstrap');
 
@@ -686,6 +688,21 @@ describe('bootstrap event display flags', () => {
     document.body.replaceChildren();
   });
 
+  it('keeps the site-owned layout watchdog stopped and storage untouched while debug logging is off', () => {
+    const services = bootstrap.initSiteLifecycle();
+    bootstrap.applyFlagChange('debugLogging', false);
+    const before = localStorage.getItem(LAYOUT_WATCHDOG_STORAGE_KEY);
+
+    expect(services.layoutWatchdog?.isRunning ?? false).toBe(false);
+
+    bootstrap.applyFlagChange('debugLogging', true);
+    expect(services.layoutWatchdog?.isRunning).toBe(true);
+    bootstrap.applyFlagChange('debugLogging', false);
+
+    expect(services.layoutWatchdog?.isRunning).toBe(false);
+    expect(localStorage.getItem(LAYOUT_WATCHDOG_STORAGE_KEY)).toBe(before);
+  });
+
   it('keeps a normally retained Mode-A row when its preservation expires', () => {
     const registry = new ChatDomRegistry();
     let store!: ChatIntegrityStore;
@@ -917,6 +934,44 @@ describe('bootstrap event display flags', () => {
     } finally {
       fetchMock.mockRestore();
       vi.useRealTimers();
+    }
+  });
+
+  it('keeps one site panel and one navbar button across channel and non-channel navigation', () => {
+    const previousBody = document.body.innerHTML;
+    const previousHref = window.location.href;
+    const navbarMarkup = `
+      <nav>
+        <div></div>
+        <div></div>
+        <div class="flex items-center gap-2"><button>avatar</button></div>
+      </nav>
+    `;
+
+    try {
+      bootstrap.initSiteLifecycle().lifecycle.dispose();
+      document.body.innerHTML = navbarMarkup;
+      const services = bootstrap.initSiteLifecycle();
+      expect(document.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
+      expect(document.querySelectorAll('.kickflow-panel')).toHaveLength(1);
+
+      window.history.replaceState({}, '', '/channel-a');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+      window.history.replaceState({}, '', '/following');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+      expect(parseChatSessionContext('/following')).toBeNull();
+      window.history.replaceState({}, '', '/channel-b');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+
+      expect(document.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
+      expect(document.querySelectorAll('.kickflow-panel')).toHaveLength(1);
+
+      window.history.replaceState({}, '', '/following');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+      services.lifecycle.dispose();
+    } finally {
+      document.body.innerHTML = previousBody;
+      window.history.replaceState({}, '', previousHref);
     }
   });
 });

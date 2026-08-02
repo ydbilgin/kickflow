@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { NavbarSettingsButton, findNavbarRightCluster, type NavbarSettingsPanel } from '../../src/content/chat/navbar-settings';
 import type { Lifecycle } from '../../src/content/shared/lifecycle';
+import { parseChatSessionContext } from '../../src/content/chat/session-context';
 
 class FakeLifecycle implements Pick<Lifecycle, 'add' | 'setInterval'> {
   readonly disposers: Array<() => void> = [];
@@ -76,5 +77,19 @@ describe('navbar settings button', () => {
 
     lifecycle.dispose();
     expect(document.getElementById('kickflow-navbar-settings')).toBeNull();
+  });
+
+  it('mounts on a non-channel route and keeps exactly one button across repeated ticks', () => {
+    window.history.replaceState({}, '', '/following');
+    expect(parseChatSessionContext(window.location.pathname)).toBeNull();
+    const cluster = installNavbar();
+    const lifecycle = new FakeLifecycle();
+    new NavbarSettingsButton(lifecycle as unknown as Lifecycle, new FakePanel());
+
+    lifecycle.tick();
+    lifecycle.tick();
+    lifecycle.tick();
+
+    expect(cluster.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
   });
 });

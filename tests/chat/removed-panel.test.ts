@@ -103,6 +103,7 @@ describe('RemovedMessagesPanel', () => {
   afterEach(() => {
     Object.assign(featureFlags, originalFlags);
     vi.restoreAllMocks();
+    setLang('tr');
     document.body.innerHTML = '';
   });
 
@@ -134,6 +135,51 @@ describe('RemovedMessagesPanel', () => {
     expect(section).not.toBeNull();
     expect(section?.style.display).toBe('none');
     expect(panel.isOpen()).toBe(false);
+    lifecycle.dispose();
+  });
+
+  it('renders an explicit off-channel empty state and status with a null store', () => {
+    setLang('en');
+    const lifecycle = new Lifecycle();
+    const panel = new RemovedMessagesPanel(lifecycle, null, getTestStatusSnapshot);
+
+    panel.showSettings('removed');
+
+    const modal = requiredElement<HTMLElement>(document, '.kickflow-panel');
+    const removed = requiredElement<HTMLElement>(modal, '.kickflow-panel__section[data-section="removed"]');
+    expect(removed.querySelector('.kickflow-removed-empty')?.textContent).toBe('No channel session is active.');
+    const general = modal.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')!;
+    const connection = general.querySelector<HTMLElement>('.kickflow-panel__stat:nth-child(1) dd');
+    expect(connection?.textContent).toBe('not a channel page');
+
+    lifecycle.dispose();
+  });
+
+  it('clears the previous channel rows when the store is unbound or replaced', () => {
+    setLang('en');
+    const lifecycle = new Lifecycle();
+    const firstStore = new ChatIntegrityStore();
+    const first = message('channel-a-row', 1, 'channel A only');
+    firstStore.addMessage(first);
+    firstStore.markMessageDeleted(first.id);
+    const secondStore = new ChatIntegrityStore();
+    const second = message('channel-b-row', 2, 'channel B only');
+    secondStore.addMessage(second);
+    secondStore.markMessageDeleted(second.id);
+    const panel = new RemovedMessagesPanel(lifecycle, null, getTestStatusSnapshot);
+
+    panel.setStore(firstStore);
+    panel.showSettings('removed');
+    expect(document.querySelector('[data-kickflow-removed-mid="channel-a-row"]')).not.toBeNull();
+
+    panel.setStore(null);
+    expect(document.querySelector('[data-kickflow-removed-mid="channel-a-row"]')).toBeNull();
+    expect(document.querySelector('.kickflow-removed-empty')?.textContent).toBe('No channel session is active.');
+
+    panel.setStore(secondStore);
+    expect(document.querySelector('[data-kickflow-removed-mid="channel-a-row"]')).toBeNull();
+    expect(document.querySelector('[data-kickflow-removed-mid="channel-b-row"]')).not.toBeNull();
+
     lifecycle.dispose();
   });
 

@@ -110,6 +110,7 @@ export const messages = {
   'tab.about': { en: 'About', tr: 'Hakkında' },
   'panel.removed_count': { en: 'Removed, {n} messages', tr: 'Kaldırılanlar, {n} mesaj' },
   'panel.removed_empty': { en: 'No removed messages yet', tr: 'Henüz kaldırılan mesaj yok' },
+  'panel.removed_no_session': { en: 'No channel session is active.', tr: 'Etkin bir kanal oturumu yok.' },
   'panel.general_intro': { en: 'Monitor this session and choose the primary chat view.', tr: 'Oturum durumunu izle ve temel sohbet görünümünü seç.' },
   'panel.live_status': { en: 'Live status', tr: 'Canlı durum' },
   'stat.connection': { en: 'Connection', tr: 'Bağlantı' },
