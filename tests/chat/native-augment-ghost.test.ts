@@ -230,7 +230,8 @@ describe('NativeChatAugmenter ghost blocks', () => {
     expect(block?.previousElementSibling?.classList.contains('flex')).toBe(true);
     const emote = ghost?.querySelector<HTMLImageElement>('img.kickflow-emote');
     expect(emote?.alt).toBe('kek');
-    expect(emote?.title).toBe('kek');
+    expect(emote?.getAttribute('title')).toBeNull();
+    expect(emote?.getAttribute('data-kickflow-tooltip')).toBe('kek');
     expect(ghost?.querySelector('a.kickflow-link')?.textContent).toBe('https://example.com/ghost');
     expect(ghost?.querySelector('[class*="line-clamp"], .truncate, [class*="max-h-"]')).toBeNull();
   });

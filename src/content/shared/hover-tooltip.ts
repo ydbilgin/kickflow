@@ -1,8 +1,16 @@
 export const HOVER_TOOLTIP_CLASS = 'kickflow-hover-tooltip';
+export const HOVER_TOOLTIP_ATTRIBUTE = 'data-kickflow-tooltip';
 const HOVER_TOOLTIP_VISIBLE_CLASS = `${HOVER_TOOLTIP_CLASS}--visible`;
+const HOVER_TOOLTIP_ANCHOR_SELECTOR = `[${HOVER_TOOLTIP_ATTRIBUTE}]`;
 
 /** Keeps the floating label visually separate from the badge without changing badge geometry. */
 export const HOVER_TOOLTIP_ANCHOR_GAP_PX = 6;
+
+/** Caps arbitrary reply text at a readable desktop width while preserving the full label by wrapping. */
+export const HOVER_TOOLTIP_MAX_WIDTH_PX = 420;
+export const HOVER_TOOLTIP_MAX_WIDTH_CSS_VARIABLE = '--kickflow-hover-tooltip-max-width';
+export const HOVER_TOOLTIP_VIEWPORT_INSET_PX = 8;
+export const HOVER_TOOLTIP_VIEWPORT_INSET_CSS_VARIABLE = '--kickflow-hover-tooltip-viewport-inset';
 
 export interface HoverTooltipAnchorRect {
   left: number;
@@ -91,21 +99,12 @@ export function resolveHoverTooltipPlacement(input: HoverTooltipPlacementInput):
   return { left, top: clamp(fallbackTop, 0, maxTop) };
 }
 
-interface TooltipRegistration {
-  anchor: HTMLElement;
-  label: string;
-  disposed: boolean;
-  onMouseEnter: () => void;
-  onMouseLeave: () => void;
-  onFocus: () => void;
-  onBlur: () => void;
-}
-
 let sharedTooltip: HTMLDivElement | null = null;
-let activeRegistration: TooltipRegistration | null = null;
+let activeAnchor: Element | null = null;
 let activeKeyHandler: ((event: KeyboardEvent) => void) | null = null;
 let activeRepositionHandler: (() => void) | null = null;
 let activeMutationObserver: MutationObserver | null = null;
+let delegatedListenersInstalled = false;
 
 function ensureSharedTooltip(): HTMLDivElement | null {
   if (!document.body) return null;
@@ -113,12 +112,20 @@ function ensureSharedTooltip(): HTMLDivElement | null {
     sharedTooltip = document.createElement('div');
     sharedTooltip.className = HOVER_TOOLTIP_CLASS;
     sharedTooltip.setAttribute('aria-hidden', 'true');
+    sharedTooltip.style.setProperty(
+      HOVER_TOOLTIP_MAX_WIDTH_CSS_VARIABLE,
+      `${HOVER_TOOLTIP_MAX_WIDTH_PX}px`,
+    );
+    sharedTooltip.style.setProperty(
+      HOVER_TOOLTIP_VIEWPORT_INSET_CSS_VARIABLE,
+      `${HOVER_TOOLTIP_VIEWPORT_INSET_PX}px`,
+    );
   }
   if (!sharedTooltip.isConnected) document.body.appendChild(sharedTooltip);
   return sharedTooltip;
 }
 
-function readAnchorRect(anchor: HTMLElement): HoverTooltipAnchorRect {
+function readAnchorRect(anchor: Element): HoverTooltipAnchorRect {
   const rect = anchor.getBoundingClientRect();
   const right = Number.isFinite(rect.right) && (rect.right !== 0 || (rect.left === 0 && rect.width === 0))
     ? rect.right
@@ -134,9 +141,9 @@ function readAnchorRect(anchor: HTMLElement): HoverTooltipAnchorRect {
   };
 }
 
-function hideTooltip(registration: TooltipRegistration): void {
-  if (activeRegistration !== registration) return;
-  activeRegistration = null;
+function hideTooltip(removeSharedElement = false): void {
+  if (!activeAnchor) return;
+  activeAnchor = null;
   if (activeKeyHandler) {
     document.removeEventListener('keydown', activeKeyHandler);
     activeKeyHandler = null;
@@ -149,9 +156,13 @@ function hideTooltip(registration: TooltipRegistration): void {
   activeMutationObserver?.disconnect();
   activeMutationObserver = null;
   sharedTooltip?.classList.remove(HOVER_TOOLTIP_VISIBLE_CLASS);
+  if (removeSharedElement) {
+    sharedTooltip?.remove();
+    sharedTooltip = null;
+  }
 }
 
-function positionTooltip(registration: TooltipRegistration): void {
+function positionTooltip(anchor: Element): void {
   const tooltip = ensureSharedTooltip();
   if (!tooltip) return;
   // The card and the settings panel already sit at the maximum z-index, so paint order decides:
@@ -160,7 +171,7 @@ function positionTooltip(registration: TooltipRegistration): void {
   // anchor-liveness observer below then has to process.
   if (document.body.lastElementChild !== tooltip) document.body.appendChild(tooltip);
   const placement = resolveHoverTooltipPlacement({
-    anchorRect: readAnchorRect(registration.anchor),
+    anchorRect: readAnchorRect(anchor),
     tooltipSize: {
       width: tooltip.getBoundingClientRect().width,
       height: tooltip.getBoundingClientRect().height,
@@ -171,84 +182,80 @@ function positionTooltip(registration: TooltipRegistration): void {
   tooltip.style.top = `${placement.top}px`;
 }
 
-function installActiveListeners(registration: TooltipRegistration): void {
+function installActiveListeners(anchor: Element): void {
   activeKeyHandler = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') hideTooltip(registration);
+    if (event.key === 'Escape') hideTooltip();
   };
   document.addEventListener('keydown', activeKeyHandler);
 
   activeRepositionHandler = () => {
-    if (!registration.anchor.isConnected) {
-      disposeRegistration(registration);
+    if (!anchor.isConnected || !anchor.hasAttribute(HOVER_TOOLTIP_ATTRIBUTE)) {
+      hideTooltip(true);
       return;
     }
-    positionTooltip(registration);
+    positionTooltip(anchor);
   };
   window.addEventListener('resize', activeRepositionHandler);
   window.addEventListener('scroll', activeRepositionHandler, true);
 
   if (document.body) {
     activeMutationObserver = new MutationObserver(() => {
-      if (!registration.anchor.isConnected) disposeRegistration(registration);
+      if (!anchor.isConnected || !anchor.hasAttribute(HOVER_TOOLTIP_ATTRIBUTE)) hideTooltip(true);
     });
-    activeMutationObserver.observe(document.body, { childList: true, subtree: true });
+    activeMutationObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: [HOVER_TOOLTIP_ATTRIBUTE],
+      childList: true,
+      subtree: true,
+    });
   }
 }
 
-function showTooltip(registration: TooltipRegistration): void {
-  if (registration.disposed) return;
-  if (!registration.anchor.isConnected) {
-    disposeRegistration(registration);
+function showTooltip(anchor: Element): void {
+  const label = anchor.getAttribute(HOVER_TOOLTIP_ATTRIBUTE);
+  // A blank label is treated as no tooltip at all. The attribute alone would still open the box,
+  // painting an empty bordered rectangle — a reply row whose quoted text is entirely whitespace
+  // reaches here, and so would any future consumer that sets the attribute from optional data.
+  if (label === null || label.trim() === '' || !anchor.isConnected) {
+    if (activeAnchor === anchor) hideTooltip(true);
     return;
   }
-  if (activeRegistration === registration) {
-    positionTooltip(registration);
-    sharedTooltip?.classList.add(HOVER_TOOLTIP_VISIBLE_CLASS);
-    return;
-  }
-  if (activeRegistration) hideTooltip(activeRegistration);
+  const isNewAnchor = activeAnchor !== anchor;
+  if (isNewAnchor && activeAnchor) hideTooltip();
 
   const tooltip = ensureSharedTooltip();
   if (!tooltip) return;
-  activeRegistration = registration;
-  tooltip.textContent = registration.label;
-  positionTooltip(registration);
+  activeAnchor = anchor;
+  tooltip.textContent = label;
+  positionTooltip(anchor);
   tooltip.classList.add(HOVER_TOOLTIP_VISIBLE_CLASS);
-  installActiveListeners(registration);
+  if (isNewAnchor) installActiveListeners(anchor);
 }
 
-function disposeRegistration(registration: TooltipRegistration): void {
-  if (registration.disposed) return;
-  registration.disposed = true;
-  registration.anchor.removeEventListener('mouseenter', registration.onMouseEnter);
-  registration.anchor.removeEventListener('mouseleave', registration.onMouseLeave);
-  registration.anchor.removeEventListener('focus', registration.onFocus);
-  registration.anchor.removeEventListener('blur', registration.onBlur);
-  if (activeRegistration === registration) {
-    hideTooltip(registration);
-  }
-  if (!activeRegistration) {
-    sharedTooltip?.remove();
-    sharedTooltip = null;
-  }
+function resolveTooltipAnchor(target: EventTarget | null): Element | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest(HOVER_TOOLTIP_ANCHOR_SELECTOR);
 }
 
-/** Registers one badge or other future anchor and returns its complete listener disposer. */
-export function registerHoverTooltip(anchor: HTMLElement, label: string): () => void {
-  let registration: TooltipRegistration;
-  registration = {
-    anchor,
-    label,
-    disposed: false,
-    onMouseEnter: () => showTooltip(registration),
-    onMouseLeave: () => hideTooltip(registration),
-    onFocus: () => showTooltip(registration),
-    onBlur: () => hideTooltip(registration),
-  };
-  anchor.addEventListener('mouseenter', registration.onMouseEnter);
-  anchor.addEventListener('mouseleave', registration.onMouseLeave);
-  anchor.addEventListener('focus', registration.onFocus);
-  anchor.addEventListener('blur', registration.onBlur);
-  ensureSharedTooltip();
-  return () => disposeRegistration(registration);
+function installDelegatedListeners(): void {
+  if (delegatedListenersInstalled || typeof document === 'undefined') return;
+  delegatedListenersInstalled = true;
+
+  document.addEventListener('mouseover', (event) => {
+    const anchor = resolveTooltipAnchor(event.target);
+    if (!anchor || resolveTooltipAnchor(event.relatedTarget) === anchor) return;
+    showTooltip(anchor);
+  });
+  document.addEventListener('mouseout', (event) => {
+    if (activeAnchor && resolveTooltipAnchor(event.relatedTarget) !== activeAnchor) hideTooltip();
+  });
+  document.addEventListener('focusin', (event) => {
+    const anchor = resolveTooltipAnchor(event.target);
+    if (anchor) showTooltip(anchor);
+  });
+  document.addEventListener('focusout', (event) => {
+    if (activeAnchor && resolveTooltipAnchor(event.relatedTarget) !== activeAnchor) hideTooltip();
+  });
 }
+
+installDelegatedListeners();

@@ -7,7 +7,7 @@ import { openInNewTab } from '../shared/new-tab';
 import { formatDurationMinutes, formatNumber, getLang, t, type MessageKey } from '../shared/i18n';
 import { CONTENT_TOKEN_RE } from './content-tokens';
 import { applyOwnListHighlights } from './message-highlight-apply';
-import { registerHoverTooltip } from '../shared/hover-tooltip';
+import { HOVER_TOOLTIP_ATTRIBUTE } from '../shared/hover-tooltip';
 
 export { extractMentionUsernames } from './content-tokens';
 
@@ -145,7 +145,7 @@ function appendEmote(parent: HTMLElement, id: string, name: string, rawToken: st
   const img = document.createElement('img');
   img.src = `${EMOTE_URL_PREFIX}${id}${EMOTE_URL_SUFFIX}`;
   img.alt = name;
-  img.title = name;
+  img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, name);
   img.className = 'kickflow-emote';
   img.loading = 'lazy';
   const box = document.createElement('span');
@@ -361,7 +361,7 @@ function appendRoleBadge(parent: HTMLElement, label: string, style: RoleBadgeFal
   chip.style.backgroundColor = style.color;
   const tooltipLabel = label + (count ? ` (${count})` : '');
   chip.setAttribute('aria-label', tooltipLabel);
-  registerHoverTooltip(chip, tooltipLabel);
+  chip.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, tooltipLabel);
   const glyph = document.createElement('span');
   glyph.textContent = style.glyph;
   chip.appendChild(glyph);
@@ -389,7 +389,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
         img.alt = label;
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
-        registerHoverTooltip(img, label);
+        img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
         parent.appendChild(img);
         continue;
       }
@@ -405,7 +405,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       img.alt = label;
       img.className = 'kickflow-badge-icon';
       img.loading = 'lazy';
-      registerHoverTooltip(img, label);
+      img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
       parent.appendChild(img);
       continue;
     }
@@ -421,7 +421,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
         img.alt = label;
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
-        registerHoverTooltip(img, label);
+        img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
         parent.appendChild(img);
       } else {
         appendRoleBadge(parent, t('badge.subscriber'), SUBSCRIBER_FALLBACK_STYLE, badge.count);
@@ -444,7 +444,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       span.className = 'kickflow-badge-text';
       span.textContent = label;
       span.setAttribute('aria-label', label);
-      registerHoverTooltip(span, label);
+      span.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
       parent.appendChild(span);
     }
   }
@@ -587,11 +587,12 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
   // replied to. The visible line is ellipsized (user capped at 38%, snippet clipped), so the
   // tooltip is where the complete replied-to message is actually readable — more useful than
   // a redundant "…is replying to this user" phrase (the ↩ icon already conveys "reply").
-  // No child carries its own title, so hovering anywhere on the row shows this same string.
+  // No child carries the complete-reply tooltip, so hovering anywhere on the row shows this same string.
   const replyPlain = context.replyToText ? contentToPlainText(context.replyToText) : '';
-  reply.title =
+  const replyLabel =
     context.replyToUser && replyPlain ? `${context.replyToUser}: ${replyPlain}`
     : replyPlain || context.replyToUser || '';
+  reply.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, replyLabel);
   if (context.replyToMessageId) {
     const replyToMessageId = context.replyToMessageId;
     reply.setAttribute('role', 'button');

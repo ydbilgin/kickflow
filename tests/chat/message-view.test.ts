@@ -5,6 +5,11 @@ import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
 import { configureUserCardSession, configureUserMessageArchive } from '../../src/content/chat/user-card';
 import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
+import {
+  HOVER_TOOLTIP_ATTRIBUTE,
+  HOVER_TOOLTIP_MAX_WIDTH_CSS_VARIABLE,
+  HOVER_TOOLTIP_MAX_WIDTH_PX,
+} from '../../src/content/shared/hover-tooltip';
 import { setLang } from '../../src/content/shared/i18n';
 
 beforeEach(() => setLang('tr'));
@@ -36,6 +41,7 @@ describe('message-view safe rendering', () => {
     vi.restoreAllMocks();
     configureUserCardSession(null);
     setSubscriberBadges([]);
+    document.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
     document.body.innerHTML = '';
   });
 
@@ -64,7 +70,8 @@ describe('message-view safe rendering', () => {
     const emoteBox = parent.querySelector<HTMLElement>('.kickflow-emote-box');
     expect(emote?.src).toBe('https://files.kick.com/emotes/123/fullsize');
     expect(emote?.alt).toBe('kek');
-    expect(emote?.title).toBe('kek');
+    expect(emote?.getAttribute('title')).toBeNull();
+    expect(emote?.getAttribute(HOVER_TOOLTIP_ATTRIBUTE)).toBe('kek');
     expect(emoteBox?.firstElementChild).toBe(emote);
     const mention = parent.querySelector<HTMLElement>('.kickflow-mention');
     expect(mention?.textContent).toBe('@Bob');
@@ -97,7 +104,8 @@ describe('message-view safe rendering', () => {
 
     const emote = row.querySelector<HTMLImageElement>('.kickflow-message__content img.kickflow-emote');
     expect(emote?.alt).toBe(emoteName);
-    expect(emote?.title).toBe(emoteName);
+    expect(emote?.getAttribute('title')).toBeNull();
+    expect(emote?.getAttribute(HOVER_TOOLTIP_ATTRIBUTE)).toBe(emoteName);
     expect(row.querySelector('svg')).toBeNull();
   });
 
@@ -1000,10 +1008,11 @@ describe('message-view safe rendering', () => {
     expect(reply?.querySelector<HTMLElement>('.kickflow-message__reply-user')?.title).toBe('ZehoG');
     expect(reply?.querySelector('.kickflow-message__reply-separator')?.textContent).toBe(': ');
     expect(reply?.querySelector('.kickflow-message__reply-snippet')?.textContent).toBe('<script>alert(1)</script> hello');
-    // No child carries its own title — the whole row shows one "user: message" tooltip so the
+    // No child carries the complete-reply tooltip. The row carries one delegated label so the
     // ellipsized replied-to message is fully readable on hover (see appendReplyContext).
     expect(reply?.querySelector<HTMLElement>('.kickflow-message__reply-snippet')?.title).toBe('');
-    expect(reply?.title).toBe('ZehoG: <script>alert(1)</script> hello');
+    expect(reply?.getAttribute('title')).toBeNull();
+    expect(reply?.getAttribute(HOVER_TOOLTIP_ATTRIBUTE)).toBe('ZehoG: <script>alert(1)</script> hello');
     expect(reply?.querySelector('.kickflow-message__reply-label')).toBeNull();
     expect(reply?.querySelector('script')).toBeNull();
     expect(row.firstElementChild).toBe(reply);
@@ -1063,7 +1072,7 @@ describe('message-view safe rendering', () => {
     expect(reply?.hasAttribute('tabindex')).toBe(false);
   });
 
-  it('renders an emote inside a reply snippet and uses its plain name as the hover title', () => {
+  it('renders an emote inside a reply snippet with its plain delegated label', () => {
     const row = buildMessageElement(message('alice_123', undefined, {
       replyContext: {
         replyToUser: 'ZehoG',
@@ -1078,10 +1087,32 @@ describe('message-view safe rendering', () => {
     const snippet = row.querySelector<HTMLElement>('.kickflow-message__reply-snippet');
     const emote = snippet?.querySelector<HTMLImageElement>('img.kickflow-emote');
     expect(emote?.src).toBe('https://files.kick.com/emotes/5405749/fullsize');
-    // The row's hover title is the plain-texted "user: message" (bare emote name, not the raw
-    // `[emote:...]` token); the snippet itself carries no title.
-    expect(reply?.title).toBe('ZehoG: hi sreactayak there');
+    // The row's delegated label is the plain-texted "user: message" (bare emote name, not the raw
+    // `[emote:...]` token); the nested emote owns its own delegated label.
+    expect(reply?.getAttribute('title')).toBeNull();
+    expect(reply?.getAttribute(HOVER_TOOLTIP_ATTRIBUTE)).toBe('ZehoG: hi sreactayak there');
+    expect(emote?.getAttribute('title')).toBeNull();
+    expect(emote?.getAttribute(HOVER_TOOLTIP_ATTRIBUTE)).toBe('sreactayak');
     expect(snippet?.title).toBe('');
+  });
+
+  it('wraps a long reply label at the configured width without clipping its content', () => {
+    const replyText = Array.from({ length: 120 }, (_, index) => `word${index}`).join(' ');
+    const row = buildMessageElement(message('alice_123', undefined, {
+      replyContext: { replyToUser: 'Long_User', replyToText: replyText, replyToMessageId: null },
+    }));
+    document.body.append(row);
+
+    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
+    const label = `Long_User: ${replyText}`;
+    reply?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+
+    const tooltip = document.querySelector<HTMLElement>('.kickflow-hover-tooltip');
+    expect(reply?.getAttribute(HOVER_TOOLTIP_ATTRIBUTE)).toBe(label);
+    expect(tooltip?.textContent).toBe(label);
+    expect(tooltip?.style.getPropertyValue(HOVER_TOOLTIP_MAX_WIDTH_CSS_VARIABLE))
+      .toBe(`${HOVER_TOOLTIP_MAX_WIDTH_PX}px`);
+    expect(tooltip?.textContent?.length).toBe(label.length);
   });
 
   it('renders a URL inside a compact reply snippet as plain text, never as a link', () => {
@@ -1270,17 +1301,17 @@ describe('message-view safe rendering', () => {
     expect(badge?.getAttribute('title')).toBeNull();
     expect(badge?.alt).toBe('Moderator');
 
-    badge?.dispatchEvent(new Event('mouseenter'));
+    badge?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
     const tooltip = document.querySelector<HTMLElement>('.kickflow-hover-tooltip');
     expect(tooltip?.textContent).toBe('Moderator');
     expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(true);
 
-    badge?.dispatchEvent(new Event('mouseleave'));
+    badge?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
     expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(false);
 
-    badge?.dispatchEvent(new Event('focus'));
+    badge?.dispatchEvent(new Event('focusin', { bubbles: true }));
     expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(true);
-    badge?.dispatchEvent(new Event('blur'));
+    badge?.dispatchEvent(new Event('focusout', { bubbles: true }));
     expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(false);
 
     const fallbackParent = document.createElement('span');

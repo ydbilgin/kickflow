@@ -127,7 +127,8 @@ describe('NativeChatAugmenter', () => {
     expect(preserved?.parentElement).toBe(row);
     const emote = preserved?.querySelector<HTMLImageElement>('img.kickflow-emote');
     expect(emote?.alt).toBe('kek');
-    expect(emote?.title).toBe('kek');
+    expect(emote?.getAttribute('title')).toBeNull();
+    expect(emote?.getAttribute('data-kickflow-tooltip')).toBe('kek');
     expect(preserved?.querySelector('a.kickflow-link')?.textContent).toBe('https://example.com/duyuru');
     expect(preserved?.querySelector('[class*="line-clamp"], .truncate, [class*="max-h-"]')).toBeNull();
   });

@@ -300,7 +300,8 @@ describe('RemovedMessagesPanel', () => {
 
     const emote = document.querySelector<HTMLImageElement>('.kickflow-removed-row__content img.kickflow-emote');
     expect(emote?.alt).toBe('HYPERCLAP');
-    expect(emote?.title).toBe('HYPERCLAP');
+    expect(emote?.getAttribute('title')).toBeNull();
+    expect(emote?.getAttribute('data-kickflow-tooltip')).toBe('HYPERCLAP');
     lifecycle.dispose();
   });
 

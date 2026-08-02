@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { declarations, styleTemplate } from '../helpers/bootstrap-css';
+import { HOVER_TOOLTIP_MAX_WIDTH_CSS_VARIABLE } from '../../src/content/shared/hover-tooltip';
 
 describe('own-mode message row geometry styles', () => {
   afterEach(() => {
@@ -53,6 +54,8 @@ describe('own-mode message row geometry styles', () => {
     expect(tooltip).toContain('position: fixed');
     expect(tooltip).toContain('pointer-events: none');
     expect(tooltip).toContain('z-index: 2147483647');
+    expect(tooltip).toContain(`max-width: min(var(${HOVER_TOOLTIP_MAX_WIDTH_CSS_VARIABLE}), calc(100vw - (2 * var(--kickflow-hover-tooltip-viewport-inset))))`);
+    expect(tooltip).toContain('white-space: normal');
     expect(tooltip).toContain('background: #1c1c20');
     expect(tooltip).toContain('border: 1px solid rgba(255,255,255,0.16)');
     expect(tooltip).toContain('visibility: hidden');

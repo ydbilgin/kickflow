@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   HOVER_TOOLTIP_ANCHOR_GAP_PX,
+  HOVER_TOOLTIP_ATTRIBUTE,
   HOVER_TOOLTIP_CLASS,
-  registerHoverTooltip,
   resolveHoverTooltipPlacement,
   type HoverTooltipAnchorRect,
   type HoverTooltipSize,
@@ -12,10 +12,9 @@ import {
 const VIEWPORT: HoverTooltipViewport = { width: 320, height: 180 };
 const TOOLTIP: HoverTooltipSize = { width: 110, height: 28 };
 const VISIBLE_CLASS = `${HOVER_TOOLTIP_CLASS}--visible`;
-const disposers: Array<() => void> = [];
 
 afterEach(() => {
-  for (const dispose of disposers.splice(0)) dispose();
+  document.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
@@ -100,80 +99,95 @@ describe('hover-tooltip placement', () => {
   });
 });
 
-describe('registered hover tooltip', () => {
-  function register(anchor: HTMLElement, label: string): HTMLElement {
+describe('delegated hover tooltip', () => {
+  function addAnchor(label: string): HTMLSpanElement {
+    const anchor = document.createElement('span');
+    anchor.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
     document.body.append(anchor);
-    disposers.push(registerHoverTooltip(anchor, label));
-    return document.querySelector<HTMLElement>(`.${HOVER_TOOLTIP_CLASS}`)!;
+    return anchor;
   }
 
-  it('uses one shared body-level element for mouse and keyboard visibility', () => {
-    const anchor = document.createElement('span');
-    const tooltip = register(anchor, 'Moderator');
+  it('resolves deeply nested emote and badge descendants without touching unregistered elements', () => {
+    const row = document.createElement('div');
+    const nestedLevelOne = document.createElement('div');
+    const nestedLevelTwo = document.createElement('span');
+    const emote = document.createElement('span');
+    emote.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, 'Kappa');
+    const emoteImage = document.createElement('img');
+    emote.append(emoteImage);
+    const badge = document.createElement('span');
+    badge.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, 'Moderator');
+    const unregistered = document.createElement('span');
+    nestedLevelTwo.append(emote, badge, unregistered);
+    nestedLevelOne.append(nestedLevelTwo);
+    row.append(nestedLevelOne);
+    document.body.append(row);
 
-    anchor.dispatchEvent(new Event('mouseenter'));
+    emoteImage.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    const tooltip = document.querySelector<HTMLElement>(`.${HOVER_TOOLTIP_CLASS}`)!;
+    expect(tooltip.textContent).toBe('Kappa');
+    expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(true);
+
+    emoteImage.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: unregistered }));
+    expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(false);
+
+    badge.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    expect(tooltip.textContent).toBe('Moderator');
+    expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(true);
+
+    badge.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: unregistered }));
+    unregistered.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(false);
+  });
+
+  it('uses one shared body-level element for mouse and keyboard visibility', () => {
+    const anchor = addAnchor('Moderator');
+
+    anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    const tooltip = document.querySelector<HTMLElement>(`.${HOVER_TOOLTIP_CLASS}`)!;
     expect(tooltip.textContent).toBe('Moderator');
     expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(true);
     expect(tooltip.getAttribute('aria-hidden')).toBe('true');
     expect(tooltip.parentElement).toBe(document.body);
 
-    anchor.dispatchEvent(new Event('mouseleave'));
+    anchor.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
     expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(false);
 
-    anchor.dispatchEvent(new Event('focus'));
+    anchor.dispatchEvent(new Event('focusin', { bubbles: true }));
     expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(true);
-    anchor.dispatchEvent(new Event('blur'));
+    anchor.dispatchEvent(new Event('focusout', { bubbles: true }));
     expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(false);
 
-    anchor.dispatchEvent(new Event('mouseenter'));
+    anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(false);
   });
 
-  it('removes anchor, document, window, observer, and shared-element resources on disposal', () => {
-    const anchor = document.createElement('span');
-    const removeAnchorListener = vi.spyOn(anchor, 'removeEventListener');
-    const removeDocumentListener = vi.spyOn(document, 'removeEventListener');
-    const removeWindowListener = vi.spyOn(window, 'removeEventListener');
-    const disconnectObserver = vi.spyOn(MutationObserver.prototype, 'disconnect');
-    document.body.append(anchor);
-    const dispose = registerHoverTooltip(anchor, 'Moderator');
+  it('hides when the active anchor is removed from the document', async () => {
+    const anchor = addAnchor('Moderator');
 
-    anchor.dispatchEvent(new Event('mouseenter'));
-    expect(document.querySelector(`.${HOVER_TOOLTIP_CLASS}`)).not.toBeNull();
-    dispose();
-
-    expect(document.querySelector(`.${HOVER_TOOLTIP_CLASS}`)).toBeNull();
-    for (const eventName of ['mouseenter', 'mouseleave', 'focus', 'blur']) {
-      expect(removeAnchorListener).toHaveBeenCalledWith(eventName, expect.any(Function));
-    }
-    expect(removeDocumentListener).toHaveBeenCalledWith('keydown', expect.any(Function));
-    expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function));
-    expect(removeWindowListener).toHaveBeenCalledWith('scroll', expect.any(Function), true);
-    expect(disconnectObserver).toHaveBeenCalled();
-  });
-
-  it('removes the shared element even when a registration is disposed before activation', () => {
-    const anchor = document.createElement('span');
-    document.body.append(anchor);
-    const dispose = registerHoverTooltip(anchor, 'Moderator');
-
-    expect(document.querySelector(`.${HOVER_TOOLTIP_CLASS}`)).not.toBeNull();
-    dispose();
-    expect(document.querySelector(`.${HOVER_TOOLTIP_CLASS}`)).toBeNull();
-  });
-
-  it('disposes the active registration when its anchor leaves the document', async () => {
-    const anchor = document.createElement('span');
-    const removeAnchorListener = vi.spyOn(anchor, 'removeEventListener');
-    document.body.append(anchor);
-    const dispose = registerHoverTooltip(anchor, 'Moderator');
-
-    anchor.dispatchEvent(new Event('mouseenter'));
+    anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    const tooltip = document.querySelector<HTMLElement>(`.${HOVER_TOOLTIP_CLASS}`)!;
+    expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(true);
     anchor.remove();
-    await vi.waitFor(() => expect(document.querySelector(`.${HOVER_TOOLTIP_CLASS}`)).toBeNull());
 
-    expect(removeAnchorListener).toHaveBeenCalledWith('mouseenter', expect.any(Function));
-    dispose();
+    await vi.waitFor(() => expect(document.querySelector(`.${HOVER_TOOLTIP_CLASS}`)).toBeNull());
+    expect(tooltip.classList.contains(VISIBLE_CLASS)).toBe(false);
+  });
+
+  it('adds two hundred tooltip rows through attributes without per-row listeners', () => {
+    const addDocumentListener = vi.spyOn(document, 'addEventListener');
+    const rows = Array.from({ length: 200 }, (_, index) => {
+      const row = document.createElement('span');
+      vi.spyOn(row, 'addEventListener');
+      row.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, `Row ${index}`);
+      document.body.append(row);
+      return row;
+    });
+
+    expect(rows).toHaveLength(200);
+    expect(rows.every((row) => row.hasAttribute(HOVER_TOOLTIP_ATTRIBUTE))).toBe(true);
+    expect(rows.every((row) => vi.mocked(row.addEventListener).mock.calls.length === 0)).toBe(true);
+    expect(addDocumentListener).not.toHaveBeenCalled();
   });
 });
