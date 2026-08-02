@@ -2470,6 +2470,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_qualityLock',
     'kf_flag_screenshot',
     'kf_flag_speedControls',
+    'kf_flag_autoClaimDrops',
     'kf_flag_mentionHighlightEnabled',
     'kf_flag_mentionHighlightStyle',
     'kf_flag_mentionHighlightColor',
@@ -2500,6 +2501,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_qualityLock === 'boolean') setFeatureFlag('qualityLock', saved.kf_flag_qualityLock);
   if (typeof saved.kf_flag_screenshot === 'boolean') setFeatureFlag('screenshot', saved.kf_flag_screenshot);
   if (typeof saved.kf_flag_speedControls === 'boolean') setFeatureFlag('speedControls', saved.kf_flag_speedControls);
+  if (typeof saved.kf_flag_autoClaimDrops === 'boolean') setFeatureFlag('autoClaimDrops', saved.kf_flag_autoClaimDrops);
   if (typeof saved.kf_flag_mentionHighlightEnabled === 'boolean') setFeatureFlag('mentionHighlightEnabled', saved.kf_flag_mentionHighlightEnabled);
   if (
     saved.kf_flag_mentionHighlightStyle === 'frame'
