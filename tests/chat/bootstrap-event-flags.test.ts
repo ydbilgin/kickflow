@@ -502,6 +502,20 @@ describe('bootstrap event display flags', () => {
     expect(featureFlags.autoTheater).toBe(false);
   });
 
+  it('persists, loads, and reports the navbar daily-reward flag through the site flag path', async () => {
+    storageSet.mockClear();
+    featureFlags.autoClaimDailyReward = false;
+
+    bootstrap.applyFlagChange('autoClaimDailyReward', true);
+    expect(featureFlags.autoClaimDailyReward).toBe(true);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_autoClaimDailyReward: true });
+    expect(bootstrap.getPopupFeatureFlags().autoClaimDailyReward).toBe(true);
+
+    storageGet.mockResolvedValue({ kf_flag_autoClaimDailyReward: false });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.autoClaimDailyReward).toBe(false);
+  });
+
   it('persists, loads, and reports every newly toggleable player feature', async () => {
     storageSet.mockClear();
     for (const key of ['captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {

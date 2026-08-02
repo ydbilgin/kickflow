@@ -31,14 +31,23 @@ describe('i18n', () => {
     expect(t('setting.mod_frame_desc')).toBe('Uses the shared role style and moderator color.');
     expect(t('setting.vip_frame')).toBe('Highlight VIP messages');
     expect(t('setting.vip_frame_desc')).toBe('Uses the shared role style and VIP color.');
-    for (const key of ['tab.drops', 'panel.drops_intro', 'setting.auto_claim_drops', 'setting.auto_claim_drops_desc'] as const) {
+    for (const key of [
+      'tab.rewards',
+      'panel.rewards_intro',
+      'setting.auto_claim_drops',
+      'setting.auto_claim_drops_desc',
+      'setting.auto_claim_daily_reward',
+      'setting.auto_claim_daily_reward_desc',
+    ] as const) {
       expect(messages[key].en.trim()).not.toBe('');
       expect(messages[key].tr.trim()).not.toBe('');
     }
-    expect(t('tab.drops')).toBe('Drops');
-    expect(t('panel.drops_intro')).toBe('Manage Kick Drops rewards that become claimable when their progress reaches 100%.');
+    expect(t('tab.rewards')).toBe('Rewards');
+    expect(t('panel.rewards_intro')).toBe("Manage Kick Drops and daily rewards from this tab. Drops use Kick's own button; daily rewards briefly open and close Kick's reward window. Neither feature touches channel points.");
     expect(t('setting.auto_claim_drops')).toBe('Auto-claim Drops');
     expect(t('setting.auto_claim_drops_desc')).toBe("On the channel you watch, automatically claims Kick Drops rewards when a reward reaches 100% by clicking Kick's own Claim button. Only while this Kick tab is open: it never calls a Kick API or runs as a background service. Never touches channel points; spending them is your choice.");
+    expect(t('setting.auto_claim_daily_reward')).toBe('Auto-claim daily reward');
+    expect(t('setting.auto_claim_daily_reward_desc')).toBe("Automatically claims Kick's daily reward by briefly opening and closing Kick's own reward window. It runs only while this Kick tab is open and never touches channel points.");
 
     const listener = vi.fn();
     const unsubscribe = subscribeLang(listener);
@@ -59,10 +68,12 @@ describe('i18n', () => {
     expect(t('setting.mod_frame_desc')).toBe('Ortak rol stilini ve moderatör rengini kullanır.');
     expect(t('setting.vip_frame')).toBe('VIP mesajlarını vurgula');
     expect(t('setting.vip_frame_desc')).toBe('Ortak rol stilini ve VIP rengini kullanır.');
-    expect(t('tab.drops')).toBe('Drops');
-    expect(t('panel.drops_intro')).toBe('İlerlemesi %100’e ulaştığında alınabilir hale gelen Kick Drops ödüllerini yönet.');
+    expect(t('tab.rewards')).toBe(messages['tab.rewards'].tr);
+    expect(t('panel.rewards_intro')).toBe(messages['panel.rewards_intro'].tr);
     expect(t('setting.auto_claim_drops')).toBe('Drops ödüllerini otomatik al');
     expect(t('setting.auto_claim_drops_desc')).toBe('İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi Claim düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick API’sini hiç çağırmaz ve arka plan servisi değildir. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.');
+    expect(t('setting.auto_claim_daily_reward')).toBe(messages['setting.auto_claim_daily_reward'].tr);
+    expect(t('setting.auto_claim_daily_reward_desc')).toBe(messages['setting.auto_claim_daily_reward_desc'].tr);
     expect(t('event.gift.single', { name: 'sarah_lee' })).toBe(', sarah_lee kullanıcısına abonelik hediye etti');
     expect(listener).toHaveBeenCalledWith('tr');
     expect(storageSet).toHaveBeenCalledWith({ kf_lang: 'tr' });

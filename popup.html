@@ -55,6 +55,7 @@
     .section-title {
       margin: 0 0 8px; color: oklch(0.80 0.01 150); font-size: 12px; font-weight: 700; letter-spacing: .01em;
     }
+    .section-intro { margin: 0 0 10px; color: var(--muted); font-size: 10px; line-height: 1.45; }
     .status-card { border-top: 1px solid var(--line); }
     #reason { min-height: 17px; margin: 11px 0 13px; color: oklch(0.75 0.01 150); font-size: 10.5px; }
     .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
@@ -183,9 +184,11 @@
     </section>
 
     <section class="section">
-      <h2 class="section-title">Drops</h2>
+      <h2 class="section-title">Rewards</h2>
+      <p class="section-intro" id="rewards-intro">Manage Kick Drops and daily rewards from this tab.</p>
       <div class="control-list">
         <label class="row" for="t-auto-claim-drops"><span>Auto-claim Drops</span><input type="checkbox" id="t-auto-claim-drops" /></label>
+        <label class="row" for="t-auto-claim-daily-reward"><span>Auto-claim daily reward</span><input type="checkbox" id="t-auto-claim-daily-reward" /></label>
       </div>
     </section>
 

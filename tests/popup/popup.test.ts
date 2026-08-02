@@ -35,6 +35,7 @@ const statusResponse = {
     screenshot: true,
     speedControls: true,
     autoClaimDrops: true,
+    autoClaimDailyReward: true,
   },
   hotkeys: {
     rewind: { enabled: true, key: 'ArrowLeft' },
@@ -184,17 +185,19 @@ describe('popup event display toggles', () => {
     }
   });
 
-  it('renders Auto-claim Drops under its own section and still dispatches the flag change', async () => {
+  it('renders both reward toggles under Rewards and dispatches each flag change', async () => {
     await import('../../src/popup/popup');
     await flushAsyncWork();
 
     const sections = Array.from(document.querySelectorAll<HTMLElement>('.section'));
     const player = sections.find((section) => section.querySelector('.section-title')?.textContent === 'Oynatıcı');
-    const drops = sections.find((section) => section.querySelector('.section-title')?.textContent === 'Drops');
+    const rewards = sections.find((section) => section.querySelector('#t-auto-claim-daily-reward') !== null);
     expect(player?.querySelector('#t-auto-claim-drops')).toBeNull();
-    expect(drops).not.toBeUndefined();
-    expect(drops?.querySelector('#t-auto-claim-drops')).not.toBeNull();
+    expect(rewards).not.toBeUndefined();
+    expect(rewards?.querySelector('#t-auto-claim-drops')).not.toBeNull();
+    expect(rewards?.querySelector('#t-auto-claim-daily-reward')).not.toBeNull();
     expect((document.getElementById('t-auto-claim-drops') as HTMLInputElement).checked).toBe(true);
+    expect((document.getElementById('t-auto-claim-daily-reward') as HTMLInputElement).checked).toBe(true);
 
     sendMessage.mockClear();
     const checkbox = document.getElementById('t-auto-claim-drops') as HTMLInputElement;
@@ -205,6 +208,18 @@ describe('popup event display toggles', () => {
     expect(sendMessage).toHaveBeenCalledWith(7, {
       type: 'kickflow:setFlag',
       key: 'autoClaimDrops',
+      value: false,
+    });
+
+    sendMessage.mockClear();
+    const dailyCheckbox = document.getElementById('t-auto-claim-daily-reward') as HTMLInputElement;
+    dailyCheckbox.checked = false;
+    dailyCheckbox.dispatchEvent(new Event('change'));
+    await flushAsyncWork();
+
+    expect(sendMessage).toHaveBeenCalledWith(7, {
+      type: 'kickflow:setFlag',
+      key: 'autoClaimDailyReward',
       value: false,
     });
   });

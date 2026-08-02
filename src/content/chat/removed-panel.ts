@@ -45,14 +45,14 @@ const REMOVED_EMPTY_CLASS = 'kickflow-removed-empty';
 // newest N removed messages only.
 const MAX_PANEL_ROWS = 60;
 
-export type DashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'drops' | 'hotkeys' | 'about';
+export type DashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'rewards' | 'hotkeys' | 'about';
 
 const DASHBOARD_SECTIONS: ReadonlyArray<{ key: DashboardSection; labelKey: MessageKey }> = [
   { key: 'general', labelKey: 'tab.general' },
   { key: 'removed', labelKey: 'tab.removed' },
   { key: 'chat', labelKey: 'tab.chat' },
   { key: 'player', labelKey: 'tab.player' },
-  { key: 'drops', labelKey: 'tab.drops' },
+  { key: 'rewards', labelKey: 'tab.rewards' },
   { key: 'hotkeys', labelKey: 'tab.shortcuts' },
   { key: 'about', labelKey: 'tab.about' },
 ];
@@ -161,6 +161,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private screenshotCheckbox: HTMLInputElement | null = null;
   private speedControlsCheckbox: HTMLInputElement | null = null;
   private autoClaimDropsCheckbox: HTMLInputElement | null = null;
+  private autoClaimDailyRewardCheckbox: HTMLInputElement | null = null;
   private readonly hotkeyRows = new Map<HotkeyAction, HotkeyRowControls>();
   private hotkeyStatus: HTMLElement | null = null;
   private captureAction: HotkeyAction | null = null;
@@ -707,17 +708,24 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     player.append(playerGroup);
 
-    const drops = this.buildDashboardPane('drops');
-    drops.append(this.buildPaneIntro(t('panel.drops_intro')));
-    const dropsGroup = document.createElement('section');
-    dropsGroup.className = 'kickflow-panel__group';
+    const rewards = this.buildDashboardPane('rewards');
+    rewards.append(this.buildPaneIntro(t('panel.rewards_intro')));
+    const rewardsGroup = document.createElement('section');
+    rewardsGroup.className = 'kickflow-panel__group';
 
     const { label: autoClaimDropsLabel, checkbox: autoClaimDropsCheckbox } = this.buildSettingsToggle(
       t('setting.auto_claim_drops'), t('setting.auto_claim_drops_desc'), 'autoClaimDrops', featureFlags.autoClaimDrops,
     );
     this.autoClaimDropsCheckbox = autoClaimDropsCheckbox;
-    dropsGroup.append(autoClaimDropsLabel);
-    drops.append(dropsGroup);
+    const { label: autoClaimDailyRewardLabel, checkbox: autoClaimDailyRewardCheckbox } = this.buildSettingsToggle(
+      t('setting.auto_claim_daily_reward'),
+      t('setting.auto_claim_daily_reward_desc'),
+      'autoClaimDailyReward',
+      featureFlags.autoClaimDailyReward,
+    );
+    this.autoClaimDailyRewardCheckbox = autoClaimDailyRewardCheckbox;
+    rewardsGroup.append(autoClaimDropsLabel, autoClaimDailyRewardLabel);
+    rewards.append(rewardsGroup);
 
     const hotkeys = this.buildDashboardPane('hotkeys');
     hotkeys.append(this.buildPaneIntro(t('panel.shortcuts_intro')));
@@ -771,7 +779,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     about.append(aboutMark, aboutText, aboutFacts);
 
-    settings.append(general, removed, chat, player, drops, hotkeys, about);
+    settings.append(general, removed, chat, player, rewards, hotkeys, about);
     return settings;
   }
 
@@ -1336,6 +1344,12 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.autoClaimDropsCheckbox && this.autoClaimDropsCheckbox.checked !== featureFlags.autoClaimDrops) {
       this.autoClaimDropsCheckbox.checked = featureFlags.autoClaimDrops;
     }
+    if (
+      this.autoClaimDailyRewardCheckbox
+      && this.autoClaimDailyRewardCheckbox.checked !== featureFlags.autoClaimDailyReward
+    ) {
+      this.autoClaimDailyRewardCheckbox.checked = featureFlags.autoClaimDailyReward;
+    }
     this.refreshHotkeyControls();
   }
 
@@ -1452,6 +1466,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.screenshotCheckbox = null;
     this.speedControlsCheckbox = null;
     this.autoClaimDropsCheckbox = null;
+    this.autoClaimDailyRewardCheckbox = null;
     this.hotkeyRows.clear();
     this.hotkeyStatus = null;
     this.filterChip = null;

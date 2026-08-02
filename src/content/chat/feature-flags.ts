@@ -54,6 +54,10 @@ export interface FeatureFlags {
    * Opt-in because it acts on the page rather than only observing it. KickFlow never calls a
    * Drops endpoint itself, and never touches the separate channel-points redemption surface. */
   autoClaimDrops: boolean;
+  /** Open, claim, and close Kick's global navbar daily reward window through its native controls.
+   * Opt-in because it briefly changes the page UI. KickFlow never calls a reward endpoint and
+   * never touches the separate channel-points redemption surface. */
+  autoClaimDailyReward: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
   /** Highlight chat rows that @-mention the owner or reply to the owner's messages. */
@@ -98,6 +102,7 @@ export const featureFlags: FeatureFlags = {
   screenshot: true,
   speedControls: true,
   autoClaimDrops: false,
+  autoClaimDailyReward: false,
   modLogPanel: false,
   mentionHighlightEnabled: true,
   mentionHighlightStyle: 'both',

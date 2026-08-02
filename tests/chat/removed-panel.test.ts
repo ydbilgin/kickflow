@@ -5,7 +5,7 @@ import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { getHotkeyBindings, resetHotkeyBindings } from '../../src/content/player/hotkey-registry';
 import type { KickFlowStatusSnapshot, StatusSnapshotProvider } from '../../src/content/status';
-import { setLang } from '../../src/content/shared/i18n';
+import { setLang, t } from '../../src/content/shared/i18n';
 
 function statusSnapshot(overrides: Partial<KickFlowStatusSnapshot> = {}): KickFlowStatusSnapshot {
   return {
@@ -37,7 +37,7 @@ function settingsControl(section: HTMLElement, labelText: string): HTMLInputElem
   return label?.querySelector<HTMLInputElement | HTMLSelectElement>('input, select') ?? null;
 }
 
-type TestDashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'drops' | 'hotkeys' | 'about';
+type TestDashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'rewards' | 'hotkeys' | 'about';
 
 function openDashboardSection(
   panel: RemovedMessagesPanel,
@@ -444,7 +444,7 @@ describe('RemovedMessagesPanel', () => {
       expect(dialog.getAttribute('aria-modal')).toBe('true');
       expect(dialog.getAttribute('aria-labelledby')).toBe('kickflow-dashboard-title');
       expect(buttons.map((button) => button.textContent)).toEqual([
-        'Genel', 'Kaldırılanlar', 'Sohbet', 'Oynatıcı', 'Drops', 'Kısayollar', 'Hakkında',
+        'Genel', 'Kaldırılanlar', 'Sohbet', 'Oynatıcı', t('tab.rewards'), 'Kısayollar', 'Hakkında',
       ]);
       expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
       expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(false);
@@ -715,10 +715,12 @@ describe('RemovedMessagesPanel', () => {
       }
     });
 
-    it('renders Auto-claim Drops in its own section and refreshes it after an external flag change', () => {
+    it('renders both reward toggles in the Rewards section and refreshes them after external flag changes', () => {
       setLang('en');
       const originalAutoClaimDrops = featureFlags.autoClaimDrops;
+      const originalAutoClaimDailyReward = featureFlags.autoClaimDailyReward;
       featureFlags.autoClaimDrops = true;
+      featureFlags.autoClaimDailyReward = true;
       const lifecycle = new Lifecycle();
 
       try {
@@ -726,20 +728,25 @@ describe('RemovedMessagesPanel', () => {
         const player = openDashboardSection(panel, 'player').pane;
         expect(settingsControl(player, 'Auto-claim Drops')).toBeNull();
 
-        const drops = openDashboardSection(panel, 'drops').pane;
-        expect(drops.querySelector('.kickflow-panel__section-intro')?.textContent).toBe(
-          'Manage Kick Drops rewards that become claimable when their progress reaches 100%.',
+        const rewards = openDashboardSection(panel, 'rewards').pane;
+        expect(rewards.querySelector('.kickflow-panel__section-intro')?.textContent).toBe(
+          "Manage Kick Drops and daily rewards from this tab. Drops use Kick's own button; daily rewards briefly open and close Kick's reward window. Neither feature touches channel points.",
         );
-        const checkbox = requiredSettingsControl<HTMLInputElement>(drops, 'Auto-claim Drops');
-        expect(checkbox.checked).toBe(true);
+        const dropsCheckbox = requiredSettingsControl<HTMLInputElement>(rewards, 'Auto-claim Drops');
+        const dailyCheckbox = requiredSettingsControl<HTMLInputElement>(rewards, t('setting.auto_claim_daily_reward'));
+        expect(dropsCheckbox.checked).toBe(true);
+        expect(dailyCheckbox.checked).toBe(true);
 
         featureFlags.autoClaimDrops = false;
+        featureFlags.autoClaimDailyReward = false;
         panel.render();
 
-        expect(checkbox.checked).toBe(false);
+        expect(dropsCheckbox.checked).toBe(false);
+        expect(dailyCheckbox.checked).toBe(false);
       } finally {
         lifecycle.dispose();
         featureFlags.autoClaimDrops = originalAutoClaimDrops;
+        featureFlags.autoClaimDailyReward = originalAutoClaimDailyReward;
       }
     });
 
@@ -817,17 +824,23 @@ describe('RemovedMessagesPanel', () => {
       lifecycle.dispose();
     });
 
-    it('clears the Auto-claim Drops checkbox reference when disposed', () => {
+    it('clears both reward checkbox references when disposed', () => {
       setLang('en');
       const lifecycle = new Lifecycle();
       const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
-      const drops = openDashboardSection(panel, 'drops').pane;
-      const checkbox = requiredSettingsControl<HTMLInputElement>(drops, 'Auto-claim Drops');
-      const refs = panel as unknown as { autoClaimDropsCheckbox: HTMLInputElement | null };
+      const rewards = openDashboardSection(panel, 'rewards').pane;
+      const dropsCheckbox = requiredSettingsControl<HTMLInputElement>(rewards, 'Auto-claim Drops');
+      const dailyCheckbox = requiredSettingsControl<HTMLInputElement>(rewards, t('setting.auto_claim_daily_reward'));
+      const refs = panel as unknown as {
+        autoClaimDropsCheckbox: HTMLInputElement | null;
+        autoClaimDailyRewardCheckbox: HTMLInputElement | null;
+      };
 
-      expect(refs.autoClaimDropsCheckbox).toBe(checkbox);
+      expect(refs.autoClaimDropsCheckbox).toBe(dropsCheckbox);
+      expect(refs.autoClaimDailyRewardCheckbox).toBe(dailyCheckbox);
       lifecycle.dispose();
       expect(refs.autoClaimDropsCheckbox).toBeNull();
+      expect(refs.autoClaimDailyRewardCheckbox).toBeNull();
     });
 
     it.each([
@@ -848,6 +861,7 @@ describe('RemovedMessagesPanel', () => {
       ['Ekran görüntüsü', 'screenshot'],
       ['Hız kontrolleri', 'speedControls'],
       ['Drops ödüllerini otomatik al', 'autoClaimDrops'],
+      ['Daily reward toggle', 'autoClaimDailyReward'],
     ] as const)('toggling "%s" dispatches kickflow:setFlag with {key: %s, value}', (label, key) => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
@@ -855,11 +869,12 @@ describe('RemovedMessagesPanel', () => {
       const playerKeys: readonly string[] = [
         'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls',
       ];
-      const section: TestDashboardSection = key === 'autoClaimDrops'
-        ? 'drops'
+      const section: TestDashboardSection = key === 'autoClaimDrops' || key === 'autoClaimDailyReward'
+        ? 'rewards'
         : playerKeys.includes(key) ? 'player' : 'chat';
       const pane = openDashboardSection(panel, section).pane;
-      const checkbox = requiredSettingsControl<HTMLInputElement>(pane, label);
+      const controlLabel = key === 'autoClaimDailyReward' ? t('setting.auto_claim_daily_reward') : label;
+      const checkbox = requiredSettingsControl<HTMLInputElement>(pane, controlLabel);
 
       let received: { key: string; value: unknown } | null = null;
       const listener = (event: Event) => {

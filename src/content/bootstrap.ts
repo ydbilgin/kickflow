@@ -27,6 +27,7 @@ import { NativeChatAugmenter, getActiveNativeChatGhostStats, reconcileActiveNati
 import { ActiveChattersBadgesController } from './chat/active-chatters-badges';
 import { RemovedMessagesPanel } from './chat/removed-panel';
 import { initAutoClaimDrops, syncAutoClaimDropsFlag } from './chat/drops-auto-claim';
+import { initAutoClaimDailyReward, syncAutoClaimDailyRewardFlag } from './daily-reward-auto-claim';
 import { ModActionFeed, type ModAction, type ModActionNotice } from './chat/mod-action-feed';
 import { FooterToggleButton } from './chat/footer-toggle';
 import { NavbarSettingsButton } from './chat/navbar-settings';
@@ -101,6 +102,7 @@ const BOOLEAN_FLAG_KEYS = [
   'screenshot',
   'speedControls',
   'autoClaimDrops',
+  'autoClaimDailyReward',
   'mentionHighlightEnabled',
   'modFrameEnabled',
   'vipFrameEnabled',
@@ -1995,6 +1997,7 @@ export function initSiteLifecycle(): SiteLifecycleServices {
   ensureStyles();
   const panel = new RemovedMessagesPanel(lifecycle, null, getLiveStatusSnapshot);
   new NavbarSettingsButton(lifecycle, panel);
+  initAutoClaimDailyReward(lifecycle);
   siteLifecycleServices = { lifecycle, panel, layoutWatchdog: null };
   return siteLifecycleServices;
 }
@@ -2279,6 +2282,7 @@ export function applyFlagChange(key: string, value: boolean | string): void {
     }
     if (key === 'autoTheater') syncAutoTheaterFlag();
     if (key === 'autoClaimDrops') syncAutoClaimDropsFlag();
+    if (key === 'autoClaimDailyReward') syncAutoClaimDailyRewardFlag();
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
     if (key === 'showChattersBadges') {
       syncActiveChattersBadges();
@@ -2351,6 +2355,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     screenshot: featureFlags.screenshot,
     speedControls: featureFlags.speedControls,
     autoClaimDrops: featureFlags.autoClaimDrops,
+    autoClaimDailyReward: featureFlags.autoClaimDailyReward,
     mentionHighlightEnabled: featureFlags.mentionHighlightEnabled,
     mentionHighlightStyle: featureFlags.mentionHighlightStyle,
     mentionHighlightColor: featureFlags.mentionHighlightColor,
@@ -2474,6 +2479,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_screenshot',
     'kf_flag_speedControls',
     'kf_flag_autoClaimDrops',
+    'kf_flag_autoClaimDailyReward',
     'kf_flag_mentionHighlightEnabled',
     'kf_flag_mentionHighlightStyle',
     'kf_flag_mentionHighlightColor',
@@ -2505,6 +2511,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_screenshot === 'boolean') setFeatureFlag('screenshot', saved.kf_flag_screenshot);
   if (typeof saved.kf_flag_speedControls === 'boolean') setFeatureFlag('speedControls', saved.kf_flag_speedControls);
   if (typeof saved.kf_flag_autoClaimDrops === 'boolean') setFeatureFlag('autoClaimDrops', saved.kf_flag_autoClaimDrops);
+  if (typeof saved.kf_flag_autoClaimDailyReward === 'boolean') setFeatureFlag('autoClaimDailyReward', saved.kf_flag_autoClaimDailyReward);
   if (typeof saved.kf_flag_mentionHighlightEnabled === 'boolean') setFeatureFlag('mentionHighlightEnabled', saved.kf_flag_mentionHighlightEnabled);
   if (
     saved.kf_flag_mentionHighlightStyle === 'frame'

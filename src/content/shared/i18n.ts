@@ -106,7 +106,7 @@ export const messages = {
   'tab.removed': { en: 'Removed', tr: 'Kaldırılanlar' },
   'tab.chat': { en: 'Chat', tr: 'Sohbet' },
   'tab.player': { en: 'Player', tr: 'Oynatıcı' },
-  'tab.drops': { en: 'Drops', tr: 'Drops' },
+  'tab.rewards': { en: 'Rewards', tr: 'Ödüller' },
   'tab.shortcuts': { en: 'Shortcuts', tr: 'Kısayollar' },
   'tab.about': { en: 'About', tr: 'Hakkında' },
   'panel.removed_count': { en: 'Removed, {n} messages', tr: 'Kaldırılanlar, {n} mesaj' },
@@ -192,7 +192,10 @@ export const messages = {
   },
   'chatters.open_removed': { en: 'Review {n} removed messages from {name}', tr: '{name} için kaldırılan {n} mesajı incele' },
   'panel.player_intro': { en: 'Manage playback and tools added to the native control bar.', tr: 'Yayın oynatımını ve yerel kontrol çubuğuna eklenen araçları yönet.' },
-  'panel.drops_intro': { en: 'Manage Kick Drops rewards that become claimable when their progress reaches 100%.', tr: 'İlerlemesi %100’e ulaştığında alınabilir hale gelen Kick Drops ödüllerini yönet.' },
+  'panel.rewards_intro': {
+    en: "Manage Kick Drops and daily rewards from this tab. Drops use Kick's own button; daily rewards briefly open and close Kick's reward window. Neither feature touches channel points.",
+    tr: 'Kick Drops ve günlük ödüllerini bu sekmeden yönet. Drops, Kick’in kendi düğmesiyle alınır; günlük ödül için Kick’in ödül penceresi kısa süre açılıp kapanır. İki özellik de kanal puanlarına dokunmaz.',
+  },
   'setting.auto_theater': { en: 'Automatic theater mode', tr: 'Otomatik tiyatro modu' },
   'setting.auto_theater_desc': { en: 'Switches to the wide player layout when a channel opens.', tr: 'Kanal açıldığında geniş oynatıcı düzenine geçer.' },
   'setting.caption_guard': { en: 'Keep captions off by default', tr: 'Altyazıyı varsayılan olarak kapalı tut' },
@@ -211,6 +214,11 @@ export const messages = {
   'setting.auto_claim_drops_desc': {
     en: "On the channel you watch, automatically claims Kick Drops rewards when a reward reaches 100% by clicking Kick's own Claim button. Only while this Kick tab is open: it never calls a Kick API or runs as a background service. Never touches channel points; spending them is your choice.",
     tr: 'İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi Claim düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick API’sini hiç çağırmaz ve arka plan servisi değildir. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.',
+  },
+  'setting.auto_claim_daily_reward': { en: 'Auto-claim daily reward', tr: 'Günlük ödülü otomatik al' },
+  'setting.auto_claim_daily_reward_desc': {
+    en: "Automatically claims Kick's daily reward by briefly opening and closing Kick's own reward window. It runs only while this Kick tab is open and never touches channel points.",
+    tr: 'Kick’in günlük ödülünü, kendi ödül penceresini kısa süre açıp kapatarak senin için otomatik alır. Yalnızca bu Kick sekmesi açıkken çalışır ve kanal puanlarına hiç dokunmaz.',
   },
   'panel.shortcuts_intro': { en: 'Run player actions with one key. Shortcuts are disabled while typing.', tr: 'Oynatıcı eylemlerini tek tuşla çalıştır. Yazı alanındayken kısayollar devre dışıdır.' },
   'panel.changes_live': { en: 'Changes apply immediately.', tr: 'Değişiklikler anında uygulanır.' },

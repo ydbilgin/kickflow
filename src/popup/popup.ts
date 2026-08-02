@@ -35,6 +35,7 @@ interface StatusResponse extends KickFlowStatusSnapshot {
     screenshot: boolean;
     speedControls: boolean;
     autoClaimDrops: boolean;
+    autoClaimDailyReward: boolean;
   };
   hotkeys: HotkeyBindings;
 }
@@ -55,8 +56,10 @@ function applyStaticTranslations(): void {
   setText('.mode-copy span', 'popup.mode_desc');
   $('t-chat-mode').setAttribute('aria-label', t('panel.chat_mode'));
   const sectionTitles = document.querySelectorAll<HTMLElement>('.section-title');
-  const titleKeys: MessageKey[] = ['popup.status_stats', 'tab.chat', 'tab.player', 'tab.drops', 'tab.shortcuts'];
+  const titleKeys: MessageKey[] = ['popup.status_stats', 'tab.chat', 'tab.player', 'tab.rewards', 'tab.shortcuts'];
   sectionTitles.forEach((element, index) => { if (titleKeys[index]) element.textContent = t(titleKeys[index]); });
+  const rewardsIntro = document.getElementById('rewards-intro');
+  if (rewardsIntro) rewardsIntro.textContent = t('panel.rewards_intro');
   const statKeys: Array<[string, MessageKey]> = [
     ['slug', 'stat.channel'], ['chatroomId', 'stat.chatroom_id'], ['pusher', 'stat.pusher'],
     ['messages', 'stat.messages'], ['preserved', 'stat.preserved'], ['banned', 'stat.bans'],
@@ -78,6 +81,7 @@ function applyStaticTranslations(): void {
     ['t-quality-lock', 'setting.quality_lock'], ['t-screenshot', 'setting.screenshot'],
     ['t-speed-controls', 'setting.speed'],
     ['t-auto-claim-drops', 'setting.auto_claim_drops'],
+    ['t-auto-claim-daily-reward', 'setting.auto_claim_daily_reward'],
   ];
   for (const [id, key] of settingKeys) {
     const label = document.querySelector<HTMLElement>(`label[for="${id}"] > span`);
@@ -184,6 +188,7 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-screenshot') as HTMLInputElement)).checked = res.flags.screenshot;
   (($('t-speed-controls') as HTMLInputElement)).checked = res.flags.speedControls;
   (($('t-auto-claim-drops') as HTMLInputElement)).checked = res.flags.autoClaimDrops;
+  (($('t-auto-claim-daily-reward') as HTMLInputElement)).checked = res.flags.autoClaimDailyReward;
   (($('t-chat-mode') as HTMLSelectElement)).value = res.flags.chatMode;
   renderHotkeys(res.hotkeys ?? createDefaultHotkeyBindings());
 }
@@ -201,12 +206,12 @@ async function refresh(): Promise<void> {
 }
 
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward',
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'chatMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward' | 'chatMode',
   value: boolean | 'native' | 'own'
 ): Promise<void> {
   const id = await activeTabId();
@@ -258,6 +263,7 @@ $('t-quality-lock').addEventListener('change', (e) => setFlag('qualityLock', (e.
 $('t-screenshot').addEventListener('change', (e) => setFlag('screenshot', (e.target as HTMLInputElement).checked));
 $('t-speed-controls').addEventListener('change', (e) => setFlag('speedControls', (e.target as HTMLInputElement).checked));
 $('t-auto-claim-drops').addEventListener('change', (e) => setFlag('autoClaimDrops', (e.target as HTMLInputElement).checked));
+$('t-auto-claim-daily-reward').addEventListener('change', (e) => setFlag('autoClaimDailyReward', (e.target as HTMLInputElement).checked));
 $('t-chat-mode').addEventListener('change', (e) => setFlag('chatMode', (e.target as HTMLSelectElement).value as 'native' | 'own'));
 
 for (const action of HOTKEY_ACTIONS) {
