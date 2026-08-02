@@ -37,7 +37,7 @@ function settingsControl(section: HTMLElement, labelText: string): HTMLInputElem
   return label?.querySelector<HTMLInputElement | HTMLSelectElement>('input, select') ?? null;
 }
 
-type TestDashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'hotkeys' | 'about';
+type TestDashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'drops' | 'hotkeys' | 'about';
 
 function openDashboardSection(
   panel: RemovedMessagesPanel,
@@ -431,7 +431,7 @@ describe('RemovedMessagesPanel', () => {
   });
 
   describe('dashboard structure and modal interaction', () => {
-    it('builds one labelled modal with all six panes and switches sections in place', () => {
+    it('builds one labelled modal with all seven panes and switches sections in place', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
@@ -444,7 +444,7 @@ describe('RemovedMessagesPanel', () => {
       expect(dialog.getAttribute('aria-modal')).toBe('true');
       expect(dialog.getAttribute('aria-labelledby')).toBe('kickflow-dashboard-title');
       expect(buttons.map((button) => button.textContent)).toEqual([
-        'Genel', 'Kaldırılanlar', 'Sohbet', 'Oynatıcı', 'Kısayollar', 'Hakkında',
+        'Genel', 'Kaldırılanlar', 'Sohbet', 'Oynatıcı', 'Drops', 'Kısayollar', 'Hakkında',
       ]);
       expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
       expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(false);
@@ -715,7 +715,8 @@ describe('RemovedMessagesPanel', () => {
       }
     });
 
-    it('renders Auto-claim Drops in Player and refreshes it after an external flag change', () => {
+    it('renders Auto-claim Drops in its own section and refreshes it after an external flag change', () => {
+      setLang('en');
       const originalAutoClaimDrops = featureFlags.autoClaimDrops;
       featureFlags.autoClaimDrops = true;
       const lifecycle = new Lifecycle();
@@ -723,7 +724,13 @@ describe('RemovedMessagesPanel', () => {
       try {
         const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
         const player = openDashboardSection(panel, 'player').pane;
-        const checkbox = requiredSettingsControl<HTMLInputElement>(player, 'Drops ödüllerini otomatik al');
+        expect(settingsControl(player, 'Auto-claim Drops')).toBeNull();
+
+        const drops = openDashboardSection(panel, 'drops').pane;
+        expect(drops.querySelector('.kickflow-panel__section-intro')?.textContent).toBe(
+          'Manage Kick Drops rewards that become claimable when their progress reaches 100%.',
+        );
+        const checkbox = requiredSettingsControl<HTMLInputElement>(drops, 'Auto-claim Drops');
         expect(checkbox.checked).toBe(true);
 
         featureFlags.autoClaimDrops = false;
@@ -811,10 +818,11 @@ describe('RemovedMessagesPanel', () => {
     });
 
     it('clears the Auto-claim Drops checkbox reference when disposed', () => {
+      setLang('en');
       const lifecycle = new Lifecycle();
       const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
-      const player = openDashboardSection(panel, 'player').pane;
-      const checkbox = requiredSettingsControl<HTMLInputElement>(player, 'Drops ödüllerini otomatik al');
+      const drops = openDashboardSection(panel, 'drops').pane;
+      const checkbox = requiredSettingsControl<HTMLInputElement>(drops, 'Auto-claim Drops');
       const refs = panel as unknown as { autoClaimDropsCheckbox: HTMLInputElement | null };
 
       expect(refs.autoClaimDropsCheckbox).toBe(checkbox);
@@ -845,9 +853,12 @@ describe('RemovedMessagesPanel', () => {
       const store = new ChatIntegrityStore();
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
       const playerKeys: readonly string[] = [
-        'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls', 'autoClaimDrops',
+        'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls',
       ];
-      const pane = openDashboardSection(panel, playerKeys.includes(key) ? 'player' : 'chat').pane;
+      const section: TestDashboardSection = key === 'autoClaimDrops'
+        ? 'drops'
+        : playerKeys.includes(key) ? 'player' : 'chat';
+      const pane = openDashboardSection(panel, section).pane;
       const checkbox = requiredSettingsControl<HTMLInputElement>(pane, label);
 
       let received: { key: string; value: unknown } | null = null;

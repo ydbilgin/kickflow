@@ -45,13 +45,14 @@ const REMOVED_EMPTY_CLASS = 'kickflow-removed-empty';
 // newest N removed messages only.
 const MAX_PANEL_ROWS = 60;
 
-export type DashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'hotkeys' | 'about';
+export type DashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'drops' | 'hotkeys' | 'about';
 
 const DASHBOARD_SECTIONS: ReadonlyArray<{ key: DashboardSection; labelKey: MessageKey }> = [
   { key: 'general', labelKey: 'tab.general' },
   { key: 'removed', labelKey: 'tab.removed' },
   { key: 'chat', labelKey: 'tab.chat' },
   { key: 'player', labelKey: 'tab.player' },
+  { key: 'drops', labelKey: 'tab.drops' },
   { key: 'hotkeys', labelKey: 'tab.shortcuts' },
   { key: 'about', labelKey: 'tab.about' },
 ];
@@ -695,11 +696,6 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.speedControlsCheckbox = speedControlsCheckbox;
 
-    const { label: autoClaimDropsLabel, checkbox: autoClaimDropsCheckbox } = this.buildSettingsToggle(
-      t('setting.auto_claim_drops'), t('setting.auto_claim_drops_desc'), 'autoClaimDrops', featureFlags.autoClaimDrops,
-    );
-    this.autoClaimDropsCheckbox = autoClaimDropsCheckbox;
-
     playerGroup.append(
       autoTheaterLabel,
       captionGuardLabel,
@@ -708,9 +704,20 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       qualityLockLabel,
       screenshotLabel,
       speedControlsLabel,
-      autoClaimDropsLabel,
     );
     player.append(playerGroup);
+
+    const drops = this.buildDashboardPane('drops');
+    drops.append(this.buildPaneIntro(t('panel.drops_intro')));
+    const dropsGroup = document.createElement('section');
+    dropsGroup.className = 'kickflow-panel__group';
+
+    const { label: autoClaimDropsLabel, checkbox: autoClaimDropsCheckbox } = this.buildSettingsToggle(
+      t('setting.auto_claim_drops'), t('setting.auto_claim_drops_desc'), 'autoClaimDrops', featureFlags.autoClaimDrops,
+    );
+    this.autoClaimDropsCheckbox = autoClaimDropsCheckbox;
+    dropsGroup.append(autoClaimDropsLabel);
+    drops.append(dropsGroup);
 
     const hotkeys = this.buildDashboardPane('hotkeys');
     hotkeys.append(this.buildPaneIntro(t('panel.shortcuts_intro')));
@@ -764,7 +771,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     about.append(aboutMark, aboutText, aboutFacts);
 
-    settings.append(general, removed, chat, player, hotkeys, about);
+    settings.append(general, removed, chat, player, drops, hotkeys, about);
     return settings;
   }
 

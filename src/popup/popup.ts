@@ -55,7 +55,7 @@ function applyStaticTranslations(): void {
   setText('.mode-copy span', 'popup.mode_desc');
   $('t-chat-mode').setAttribute('aria-label', t('panel.chat_mode'));
   const sectionTitles = document.querySelectorAll<HTMLElement>('.section-title');
-  const titleKeys: MessageKey[] = ['popup.status_stats', 'tab.chat', 'tab.player', 'tab.shortcuts'];
+  const titleKeys: MessageKey[] = ['popup.status_stats', 'tab.chat', 'tab.player', 'tab.drops', 'tab.shortcuts'];
   sectionTitles.forEach((element, index) => { if (titleKeys[index]) element.textContent = t(titleKeys[index]); });
   const statKeys: Array<[string, MessageKey]> = [
     ['slug', 'stat.channel'], ['chatroomId', 'stat.chatroom_id'], ['pusher', 'stat.pusher'],

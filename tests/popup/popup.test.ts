@@ -173,7 +173,6 @@ describe('popup event display toggles', () => {
       ['t-quality-lock', 'qualityLock'],
       ['t-screenshot', 'screenshot'],
       ['t-speed-controls', 'speedControls'],
-      ['t-auto-claim-drops', 'autoClaimDrops'],
     ] as const) {
       const checkbox = document.getElementById(id) as HTMLInputElement;
       expect(checkbox.checked).toBe(true);
@@ -183,6 +182,31 @@ describe('popup event display toggles', () => {
       await flushAsyncWork();
       expect(sendMessage).toHaveBeenCalledWith(7, { type: 'kickflow:setFlag', key, value: false });
     }
+  });
+
+  it('renders Auto-claim Drops under its own section and still dispatches the flag change', async () => {
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+
+    const sections = Array.from(document.querySelectorAll<HTMLElement>('.section'));
+    const player = sections.find((section) => section.querySelector('.section-title')?.textContent === 'Oynatıcı');
+    const drops = sections.find((section) => section.querySelector('.section-title')?.textContent === 'Drops');
+    expect(player?.querySelector('#t-auto-claim-drops')).toBeNull();
+    expect(drops).not.toBeUndefined();
+    expect(drops?.querySelector('#t-auto-claim-drops')).not.toBeNull();
+    expect((document.getElementById('t-auto-claim-drops') as HTMLInputElement).checked).toBe(true);
+
+    sendMessage.mockClear();
+    const checkbox = document.getElementById('t-auto-claim-drops') as HTMLInputElement;
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+    await flushAsyncWork();
+
+    expect(sendMessage).toHaveBeenCalledWith(7, {
+      type: 'kickflow:setFlag',
+      key: 'autoClaimDrops',
+      value: false,
+    });
   });
 
   it('captures the next key for a hotkey rebind and sends it live', async () => {
