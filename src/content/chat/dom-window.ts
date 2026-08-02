@@ -12,6 +12,8 @@ export const MAX_NON_PRESERVED_NODES = 200;
 export const MAX_NON_PRESERVED_NODES_PAUSED = 600;
 const BOTTOM_THRESHOLD_PX = 60;
 
+export type ScrollFollowBehavior = 'auto' | 'smooth';
+
 export function isNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - container.scrollTop - container.clientHeight <= BOTTOM_THRESHOLD_PX;
 }
@@ -66,11 +68,16 @@ export class ScrollFollowController {
 
   /** Snap through one marked programmatic-scroll window. Explicit user intent always wins, even
    * if the user starts scrolling upward before the browser delivers our synthetic scroll event. */
-  scrollToBottom(): void {
+  scrollToBottom(behavior: ScrollFollowBehavior = 'auto'): void {
     if (this.disposed) return;
     this.setPinned(true);
     this.programmaticScroll = true;
-    this.container.scrollTop = this.container.scrollHeight;
+    const top = this.container.scrollHeight;
+    if (behavior === 'smooth' && typeof this.container.scrollTo === 'function') {
+      this.container.scrollTo({ top, behavior });
+    } else {
+      this.container.scrollTop = top;
+    }
     this.lastScrollTop = this.container.scrollTop;
     if (this.programmaticClearFrame !== null) this.cancelFrame(this.programmaticClearFrame);
     this.programmaticClearFrame = this.scheduleFrame(() => {
@@ -167,6 +174,7 @@ export function trimMessageWindow(
 
 export interface ScrollFollowDecision {
   scrollToBottom: boolean;
+  scrollBehavior: ScrollFollowBehavior;
   trimCap: number;
   showPill: boolean;
 }
@@ -175,9 +183,75 @@ export interface ScrollFollowDecision {
  * appended, decide follow behavior. Pinned → snap to bottom + normal trim, hide pill. Paused
  * (user scrolled up) → do NOT snap, do NOT trim from the top (only a high safety cap so the
  * message the user is reading is never yanked), and surface the "new messages" pill. */
-export function decideScrollFollow(stickToBottom: boolean, appendedCount: number): ScrollFollowDecision {
+export function decideScrollFollow(
+  stickToBottom: boolean,
+  appendedCount: number,
+  isHovered = false,
+): ScrollFollowDecision {
   if (stickToBottom) {
-    return { scrollToBottom: true, trimCap: MAX_NON_PRESERVED_NODES, showPill: false };
+    return {
+      scrollToBottom: true,
+      scrollBehavior: isHovered ? 'smooth' : 'auto',
+      trimCap: MAX_NON_PRESERVED_NODES,
+      showPill: false,
+    };
   }
-  return { scrollToBottom: false, trimCap: MAX_NON_PRESERVED_NODES_PAUSED, showPill: appendedCount > 0 };
+  return {
+    scrollToBottom: false,
+    scrollBehavior: 'auto',
+    trimCap: MAX_NON_PRESERVED_NODES_PAUSED,
+    showPill: appendedCount > 0,
+  };
+}
+
+export interface ScrollFollowHoverOptions {
+  onHoverChange?: (hovered: boolean) => void;
+  onPointerLeave?: () => void;
+}
+
+export interface ScrollFollowHoverWiring {
+  readonly isHovered: boolean;
+  decide(appendedCount: number): ScrollFollowDecision;
+  apply(decision: ScrollFollowDecision): void;
+  dispose(): void;
+}
+
+/** Adds one pointer-state listener pair and transition hooks around the pure follow decision. */
+export function attachScrollFollowHover(
+  container: HTMLElement,
+  follow: ScrollFollowController,
+  options: ScrollFollowHoverOptions = {},
+): ScrollFollowHoverWiring {
+  let hovered = false;
+
+  const onPointerEnter = (): void => {
+    hovered = true;
+    options.onHoverChange?.(true);
+  };
+
+  const onPointerLeave = (): void => {
+    hovered = false;
+    options.onHoverChange?.(false);
+    options.onPointerLeave?.();
+  };
+
+  container.addEventListener('pointerenter', onPointerEnter);
+  container.addEventListener('pointerleave', onPointerLeave);
+
+  return {
+    get isHovered(): boolean {
+      return hovered;
+    },
+    decide(appendedCount: number): ScrollFollowDecision {
+      return decideScrollFollow(follow.isPinned, appendedCount, hovered);
+    },
+    apply(decision: ScrollFollowDecision): void {
+      if (!decision.scrollToBottom) return;
+      follow.scrollToBottom(decision.scrollBehavior);
+    },
+    dispose(): void {
+      container.removeEventListener('pointerenter', onPointerEnter);
+      container.removeEventListener('pointerleave', onPointerLeave);
+    },
+  };
 }

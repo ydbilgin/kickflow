@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ScrollFollowController, decideScrollFollow, trimMessageWindow } from '../../src/content/chat/dom-window';
+import {
+  attachScrollFollowHover,
+  ScrollFollowController,
+  decideScrollFollow,
+  trimMessageWindow,
+} from '../../src/content/chat/dom-window';
+import { HoverReleaseMeter } from '../../src/content/chat/hover-meter';
 import { RenderQueue } from '../../src/content/chat/render-queue';
 import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 
@@ -28,6 +34,130 @@ afterEach(() => {
 });
 
 describe('RenderQueue', () => {
+  it('meters ten hovered rows at one row per interval and cancels its wake-up on dispose', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const meter = new HoverReleaseMeter();
+    meter.setMetered(true);
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry: new ChatDomRegistry(),
+      releasePolicy: meter,
+      now: () => Date.now(),
+    });
+
+    for (let i = 0; i < 10; i++) queue.enqueue(message(`metered-${i}`));
+    vi.advanceTimersByTime(0);
+    expect(container.childElementCount).toBe(1);
+    vi.advanceTimersByTime(249);
+    expect(container.childElementCount).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(container.childElementCount).toBe(2);
+    vi.advanceTimersByTime(250 * 8);
+    expect(container.childElementCount).toBe(10);
+
+    expect(vi.getTimerCount()).toBe(0);
+    queue.enqueue(message('dispose-wakeup'));
+    expect(vi.getTimerCount()).toBe(1);
+    queue.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not let MAX_BATCH_SIZE eager flush bypass the metered policy', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const meter = new HoverReleaseMeter();
+    meter.setMetered(true);
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry: new ChatDomRegistry(),
+      releasePolicy: meter,
+      now: () => Date.now(),
+    });
+
+    for (let i = 0; i < 50; i++) queue.enqueue(message(`eager-metered-${i}`));
+    expect(container.childElementCount).toBe(1);
+    vi.advanceTimersByTime(249);
+    expect(container.childElementCount).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(container.childElementCount).toBe(2);
+    queue.dispose();
+  });
+
+  it('meters and flushes the own-list backlog through the existing pointer hooks', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    const ownList = document.createElement('div');
+    ownList.id = 'kickflow-message-list';
+    document.body.append(ownList);
+    const follow = new ScrollFollowController(ownList, { createResizeObserver: () => null });
+    const meter = new HoverReleaseMeter();
+    let queue: RenderQueue | null = null;
+    const hover = attachScrollFollowHover(ownList, follow, {
+      onHoverChange: (hovered) => {
+        meter.setMetered(hovered && follow.isPinned);
+        queue?.wake();
+      },
+      onPointerLeave: () => queue?.flushPending(),
+    });
+    const visibleIds = new Set<string>();
+    queue = new RenderQueue({
+      getContainer: () => ownList,
+      registry: new ChatDomRegistry(),
+      releasePolicy: meter,
+      now: () => Date.now(),
+      shouldRender: (nextMessage) => visibleIds.has(nextMessage.id),
+    });
+
+    try {
+      ownList.dispatchEvent(new Event('pointerenter'));
+      for (const id of ['own-1', 'own-2']) {
+        visibleIds.add(id);
+        queue.enqueue(message(id));
+      }
+      vi.advanceTimersByTime(0);
+      expect(ownList.childElementCount).toBe(1);
+      vi.advanceTimersByTime(249);
+      expect(ownList.childElementCount).toBe(1);
+      vi.advanceTimersByTime(1);
+      expect(ownList.childElementCount).toBe(2);
+
+      const deleted = message('deleted-while-waiting');
+      visibleIds.add(deleted.id);
+      queue.enqueue(deleted);
+      visibleIds.delete(deleted.id);
+      vi.advanceTimersByTime(250);
+      expect(ownList.querySelector('[data-message-id="deleted-while-waiting"]')).toBeNull();
+
+      for (const id of ['own-3', 'own-4']) {
+        visibleIds.add(id);
+        queue.enqueue(message(id));
+      }
+      ownList.dispatchEvent(new Event('pointerleave'));
+      expect(ownList.childElementCount).toBe(4);
+    } finally {
+      hover.dispose();
+      follow.dispose();
+      queue.dispose();
+    }
+  });
+
   it('passes a session timestamp formatter to rendered message rows', () => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {

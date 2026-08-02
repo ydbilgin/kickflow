@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  attachScrollFollowHover,
   MAX_NON_PRESERVED_NODES,
   MAX_NON_PRESERVED_NODES_PAUSED,
   ScrollFollowController,
@@ -202,6 +203,7 @@ describe('decideScrollFollow', () => {
   it('pinned to bottom: snaps to bottom, normal trim cap, no pill', () => {
     expect(decideScrollFollow(true, 5)).toEqual({
       scrollToBottom: true,
+      scrollBehavior: 'auto',
       trimCap: 200,
       showPill: false,
     });
@@ -210,6 +212,7 @@ describe('decideScrollFollow', () => {
   it('paused (scrolled up) with rows appended: no snap, paused trim cap, shows pill', () => {
     expect(decideScrollFollow(false, 5)).toEqual({
       scrollToBottom: false,
+      scrollBehavior: 'auto',
       trimCap: 600,
       showPill: true,
     });
@@ -217,6 +220,68 @@ describe('decideScrollFollow', () => {
 
   it('paused with no rows appended: no pill', () => {
     expect(decideScrollFollow(false, 0).showPill).toBe(false);
+  });
+
+  it('uses smooth behavior only for a pinned hovered list', () => {
+    expect(decideScrollFollow(true, 1, true)).toEqual({
+      scrollToBottom: true,
+      scrollBehavior: 'smooth',
+      trimCap: 200,
+      showPill: false,
+    });
+  });
+});
+
+describe('attachScrollFollowHover', () => {
+  it('tracks one pointer listener pair and exposes transition hooks', () => {
+    const container = document.createElement('div');
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
+    const smoothScroll = vi.fn((options: ScrollToOptions) => {
+      container.scrollTop = options.top ?? 0;
+    });
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: smoothScroll });
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: () => null,
+      scheduleFrame: () => 1,
+      cancelFrame: vi.fn(),
+    });
+    const hoverChanges: boolean[] = [];
+    const onPointerLeave = vi.fn();
+    const hover = attachScrollFollowHover(container, controller, {
+      onHoverChange: (hovered) => hoverChanges.push(hovered),
+      onPointerLeave,
+    });
+
+    try {
+      const initialDecision = hover.decide(1);
+      hover.apply(initialDecision);
+      expect(initialDecision.scrollBehavior).toBe('auto');
+      expect(metrics.scrollTop).toBe(750);
+
+      container.dispatchEvent(new Event('pointerenter'));
+      const hoveredDecision = hover.decide(1);
+      hover.apply(hoveredDecision);
+
+      expect(hoveredDecision.scrollToBottom).toBe(true);
+      expect(hoveredDecision.scrollBehavior).toBe('smooth');
+      expect(smoothScroll).toHaveBeenCalledWith({ top: 1_000, behavior: 'smooth' });
+
+      container.dispatchEvent(new Event('pointerleave'));
+      const restoredDecision = hover.decide(1);
+      hover.apply(restoredDecision);
+      expect(restoredDecision).toEqual({
+        scrollToBottom: true,
+        scrollBehavior: 'auto',
+        trimCap: 200,
+        showPill: false,
+      });
+      expect(hoverChanges).toEqual([true, false]);
+      expect(onPointerLeave).toHaveBeenCalledOnce();
+      expect(metrics.scrollTop).toBe(750);
+    } finally {
+      hover.dispose();
+      controller.dispose();
+    }
   });
 });
 

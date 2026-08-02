@@ -32,7 +32,12 @@ import { ModActionFeed, type ModAction, type ModActionNotice } from './chat/mod-
 import { FooterToggleButton } from './chat/footer-toggle';
 import { NavbarSettingsButton } from './chat/navbar-settings';
 import { RenderQueue } from './chat/render-queue';
-import { ScrollFollowController, trimMessageWindow, decideScrollFollow } from './chat/dom-window';
+import { HoverReleaseMeter } from './chat/hover-meter';
+import {
+  attachScrollFollowHover,
+  ScrollFollowController,
+  trimMessageWindow,
+} from './chat/dom-window';
 import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
 import {
@@ -1630,12 +1635,26 @@ function initOwnChatIntegrity(
   scrollPill.textContent = t('chat.new_messages');
   scrollPill.style.display = 'none';
   scrollPill.style.pointerEvents = 'auto';
+  const hoverMeter = context.kind === 'live' ? new HoverReleaseMeter() : null;
+  let hovered = false;
+  let renderQueue: RenderQueue | null = null;
   const scrollFollow = new ScrollFollowController(ownList, {
     onPinnedChange: (pinned) => {
       if (pinned) scrollPill.style.display = 'none';
+      hoverMeter?.setMetered(hovered && pinned);
+      renderQueue?.wake();
     },
   });
   lifecycle.add(() => scrollFollow.dispose());
+  const hoverFollow = attachScrollFollowHover(ownList, scrollFollow, {
+    onHoverChange: (nextHovered) => {
+      hovered = nextHovered;
+      hoverMeter?.setMetered(nextHovered && scrollFollow.isPinned);
+      renderQueue?.wake();
+    },
+    onPointerLeave: hoverMeter ? () => renderQueue?.flushPending() : undefined,
+  });
+  lifecycle.add(() => hoverFollow.dispose());
   scrollPill.addEventListener('click', () => {
     scrollFollow.scrollToBottom();
     scrollPill.style.display = 'none';
@@ -1644,9 +1663,10 @@ function initOwnChatIntegrity(
   lifecycle.add(() => scrollPill.remove());
 
   let vodStartTimeMs: number | null = null;
-  const renderQueue = new RenderQueue({
+  const queue = new RenderQueue({
     getContainer: () => mount.getRenderContainer(),
     registry,
+    releasePolicy: hoverMeter ?? undefined,
     // A delete can arrive while its ChatMessageEvent is waiting in RenderQueue's 250ms batch.
     // Only render objects that this session's store still owns: this drops those removed-before-
     // flush rows and also prevents a replayed Pusher/history id from creating a duplicate row.
@@ -1669,12 +1689,10 @@ function initOwnChatIntegrity(
         });
       }
 
-      const decision = decideScrollFollow(scrollFollow.isPinned, appended.length);
+      const decision = hoverFollow.decide(appended.length);
       trimMessageWindow(ownList, registry, decision.trimCap);
       scrollFollow.observeRows(appended);
-      if (decision.scrollToBottom) {
-        scrollFollow.scrollToBottom();
-      }
+      hoverFollow.apply(decision);
       if (decision.showPill) {
         scrollPill.style.display = '';
       } else if (decision.scrollToBottom) {
@@ -1682,14 +1700,15 @@ function initOwnChatIntegrity(
       }
     },
   });
-  lifecycle.add(() => renderQueue.dispose());
+  renderQueue = queue;
+  lifecycle.add(() => queue.dispose());
   lifecycle.setInterval(() => {
     store.sweepExpiredPreserved();
     archive.sweepExpired();
   }, PRESERVED_SWEEP_INTERVAL_MS);
 
   const enqueueOnce = (message: ChatMessage): void => {
-    if (store.addMessage(message)) renderQueue.enqueue(message);
+    if (store.addMessage(message)) queue.enqueue(message);
   };
 
   const updateSystemEvent = (message: ChatMessage): void => {
@@ -1749,7 +1768,7 @@ function initOwnChatIntegrity(
 
     if (context.kind === 'vod') {
       const resetReplayWindow = (): void => {
-        renderQueue.clearPending();
+        queue.clearPending();
         store.reset();
         registry.clear();
         for (const row of ownList.querySelectorAll<HTMLElement>(

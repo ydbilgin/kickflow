@@ -1,6 +1,10 @@
 import { logger } from '../shared/logger';
 import { buildMessageElement } from './message-view';
 import { isNearBottom } from './dom-window';
+import {
+  UNMETERED_RELEASE_POLICY,
+  type RenderReleasePolicy,
+} from './hover-meter';
 import type { ChatDomRegistry, ChatMessage } from './message-store';
 
 const FLUSH_INTERVAL_MS = 250;
@@ -11,6 +15,13 @@ const MOUNT_RETRY_DELAY_MS = 250;
 export interface RenderQueueOptions {
   getContainer: () => HTMLElement | null;
   registry: ChatDomRegistry;
+  /** Controls how many pending rows may enter the DOM during one render pass. */
+  releasePolicy?: RenderReleasePolicy;
+  /** Injectable clock for release-policy decisions and deterministic queue tests. */
+  now?: () => number;
+  /** Injectable timer boundary for deterministic queue tests. */
+  scheduleTimer?: (callback: () => void, delayMs: number) => number;
+  cancelTimer?: (timerId: number) => void;
   /** Re-check that a queued message is still eligible immediately before it reaches the DOM.
    * Moderation events can remove a message from the store during the batching interval. */
   shouldRender?: (message: ChatMessage) => boolean;
@@ -26,9 +37,18 @@ export class RenderQueue {
   private timerId: number | null = null;
   private frameId: number | null = null;
   private frameUsesTimeout = false;
+  private forceUnmeteredOnNextRender = false;
   private disposed = false;
+  private readonly releasePolicy: RenderReleasePolicy;
+  private readonly now: () => number;
+  private readonly scheduleTimer: (callback: () => void, delayMs: number) => number;
+  private readonly cancelTimer: (timerId: number) => void;
 
   constructor(private readonly options: RenderQueueOptions) {
+    this.releasePolicy = options.releasePolicy ?? UNMETERED_RELEASE_POLICY;
+    this.now = options.now ?? Date.now;
+    this.scheduleTimer = options.scheduleTimer ?? ((callback, delayMs) => window.setTimeout(callback, delayMs));
+    this.cancelTimer = options.cancelTimer ?? ((timerId) => window.clearTimeout(timerId));
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
   }
 
@@ -39,9 +59,23 @@ export class RenderQueue {
       this.flush();
       return;
     }
-    if (this.timerId === null) {
-      this.timerId = window.setTimeout(() => this.flush(), FLUSH_INTERVAL_MS);
-    }
+    this.schedulePendingWork(false);
+  }
+
+  /** Re-evaluates a pending batch after hover or pin state changes without adding another timer
+   * owner. A metered queue can wake immediately; an unmetered queue retains the normal batch. */
+  wake(): void {
+    if (this.disposed || this.pending.length === 0) return;
+    this.cancelScheduledTimer();
+    this.schedulePendingWork(false);
+  }
+
+  /** Releases every pending row without applying metering. Pointer-leave calls this only after
+   * its hover transition has disabled the injected meter. */
+  flushPending(): void {
+    if (this.disposed || this.pending.length === 0) return;
+    this.cancelScheduledTimer();
+    this.scheduleRender(true);
   }
 
   /** A VOD seek invalidates every row captured for the previous playback window, including rows
@@ -49,23 +83,18 @@ export class RenderQueue {
    * old animation-frame callback cannot race the reset. */
   clearPending(): void {
     this.pending = [];
-    if (this.timerId !== null) {
-      window.clearTimeout(this.timerId);
-      this.timerId = null;
-    }
+    this.cancelScheduledTimer();
     if (this.frameId !== null) {
-      if (this.frameUsesTimeout) window.clearTimeout(this.frameId);
+      if (this.frameUsesTimeout) this.cancelTimer(this.frameId);
       else window.cancelAnimationFrame(this.frameId);
       this.frameId = null;
       this.frameUsesTimeout = false;
     }
+    this.forceUnmeteredOnNextRender = false;
   }
 
   private flush(): void {
-    if (this.timerId !== null) {
-      window.clearTimeout(this.timerId);
-      this.timerId = null;
-    }
+    this.cancelScheduledTimer();
     if (this.pending.length === 0) return;
     this.scheduleRender();
   }
@@ -77,16 +106,20 @@ export class RenderQueue {
     this.scheduleRender();
   };
 
-  private scheduleRender(): void {
-    if (this.disposed || this.frameId !== null || this.pending.length === 0) return;
+  private scheduleRender(forceUnmetered = false): void {
+    if (this.disposed || this.pending.length === 0) return;
+    if (forceUnmetered) this.forceUnmeteredOnNextRender = true;
+    if (this.frameId !== null) return;
     const render = (): void => {
       this.frameId = null;
       this.frameUsesTimeout = false;
-      this.renderNextBatch();
+      const forceForThisRender = this.forceUnmeteredOnNextRender;
+      this.forceUnmeteredOnNextRender = false;
+      this.renderNextBatch(forceForThisRender);
     };
     if (document.hidden) {
       this.frameUsesTimeout = true;
-      this.frameId = window.setTimeout(render, HIDDEN_FLUSH_DELAY_MS);
+      this.frameId = this.scheduleTimer(render, HIDDEN_FLUSH_DELAY_MS);
     } else {
       this.frameUsesTimeout = false;
       // Test harnesses and browser shims may invoke RAF synchronously. Do not overwrite the
@@ -100,20 +133,29 @@ export class RenderQueue {
     }
   }
 
-  private renderNextBatch(): void {
+  private renderNextBatch(forceUnmetered: boolean): void {
     if (this.disposed || this.pending.length === 0) return;
     const container = this.options.getContainer();
     if (!container) {
       logger.debug('render-queue: guarded container unavailable; retaining', this.pending.length, 'queued rows');
       if (this.timerId === null) {
-        this.timerId = window.setTimeout(() => {
+        this.timerId = this.scheduleTimer(() => {
           this.timerId = null;
-          this.scheduleRender();
+          this.scheduleRender(forceUnmetered);
         }, MOUNT_RETRY_DELAY_MS);
       }
       return;
     }
-    const batch = this.pending.splice(0, MAX_BATCH_SIZE);
+    const decision = forceUnmetered
+      ? { maxRows: this.pending.length, releaseAll: true }
+      : this.releasePolicy.release(this.pending.length, this.now());
+    if (decision.maxRows <= 0) {
+      this.schedulePendingWork(false);
+      return;
+    }
+
+    const batchSize = Math.min(this.pending.length, decision.maxRows, MAX_BATCH_SIZE);
+    const batch = this.pending.splice(0, batchSize);
     const wasAtBottom = isNearBottom(container);
     const fragment = document.createDocumentFragment();
     const appended: HTMLElement[] = [];
@@ -140,7 +182,32 @@ export class RenderQueue {
         logger.error('render-queue: flush callback failed', error);
       }
     }
-    this.scheduleRender();
+    if (this.pending.length === 0) return;
+    if (decision.releaseAll) this.scheduleRender(true);
+    else this.schedulePendingWork(true);
+  }
+
+  private schedulePendingWork(afterRender: boolean): void {
+    if (this.disposed || this.pending.length === 0 || this.frameId !== null || this.timerId !== null) return;
+    const delayMs = this.releasePolicy.timeUntilNextRelease(this.pending.length, this.now());
+    if (delayMs !== null) {
+      this.timerId = this.scheduleTimer(() => {
+        this.timerId = null;
+        this.scheduleRender();
+      }, delayMs);
+      return;
+    }
+    if (afterRender) {
+      this.scheduleRender();
+      return;
+    }
+    this.timerId = this.scheduleTimer(() => this.flush(), FLUSH_INTERVAL_MS);
+  }
+
+  private cancelScheduledTimer(): void {
+    if (this.timerId === null) return;
+    this.cancelTimer(this.timerId);
+    this.timerId = null;
   }
 
   dispose(): void {
