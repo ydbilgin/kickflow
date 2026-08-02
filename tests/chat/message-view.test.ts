@@ -3,7 +3,8 @@ import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageE
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
-import { configureUserCardSession } from '../../src/content/chat/user-card';
+import { configureUserCardSession, configureUserMessageArchive } from '../../src/content/chat/user-card';
+import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
 import { setLang } from '../../src/content/shared/i18n';
 
 beforeEach(() => setLang('tr'));
@@ -419,6 +420,46 @@ describe('message-view safe rendering', () => {
     const localizedJump = localized.querySelector<HTMLElement>('.kickflow-event-row__jump-control')!;
     expect(localizedJump.getAttribute('aria-label'))
       .toBe('hedef-kullanici kullanıcısının korunmuş mesajına git');
+  });
+
+  it('opens the archived message list when a mod-action target is activated through real wiring', async () => {
+    configureUserCardSession('channel');
+    const archive = new UserMessageArchive();
+    const archived = message('target-user', undefined, {
+      id: 'target-archive-message',
+      content: 'target archived message',
+      sender: {
+        ...message('target-user').sender,
+        id: 61,
+        username: 'Target-User',
+        slug: 'target-user',
+      },
+    });
+    archive.add(archived);
+    configureUserMessageArchive(archive);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+
+    const row = buildMessageElement(message('', undefined, {
+      id: 'mod-action:target-message-list',
+      type: 'mod-action',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'timeout',
+        moderator: null,
+        durationMin: 5,
+        victims: [{ name: 'Target-User', messageId: null }],
+        count: 1,
+      },
+    }));
+    const target = row.querySelector<HTMLElement>('[data-kickflow-role="target"]');
+    expect(target).not.toBeNull();
+
+    target?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+
+    await vi.waitFor(() => {
+      const list = document.querySelector<HTMLElement>('.kickflow-user-messages');
+      expect(list?.textContent).toContain('target archived message');
+    });
   });
 
   it('keeps only the bulk row background as a Removed-panel fallback and excludes nested controls', () => {

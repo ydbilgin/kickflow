@@ -10,6 +10,18 @@ import { UserMessageArchive } from '../../src/content/chat/user-message-archive'
 import { chatMessage } from '../helpers/chat-message';
 import { setLang } from '../../src/content/shared/i18n';
 
+function archivedMessageForUser(userId: number, name: string, content: string) {
+  const base = chatMessage(`${name}-${content}`, { userId, content });
+  return {
+    ...base,
+    sender: {
+      ...base.sender,
+      slug: name.toLowerCase(),
+      username: name,
+    },
+  };
+}
+
 describe('user-card', () => {
   beforeEach(() => setLang('tr'));
   afterEach(() => {
@@ -33,6 +45,47 @@ describe('user-card', () => {
     const card = document.querySelector<HTMLElement>('.kickflow-user-card');
     expect(card?.querySelector('.kickflow-user-messages')).not.toBeNull();
     expect(card?.textContent).toContain('kayitli mesaj');
+  });
+
+  it('resolves the session message list from the clicked name when no user ID is passed', async () => {
+    configureUserCardSession('channel');
+    const archive = new UserMessageArchive();
+    archive.add(archivedMessageForUser(61, 'Cahitc61', 'message from the target'));
+    configureUserMessageArchive(archive);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+
+    await openUserCard('cahitc61', 'Cahitc61', 10, 10, null);
+
+    const list = document.querySelector<HTMLElement>('.kickflow-user-messages');
+    expect(list).not.toBeNull();
+    expect(list?.textContent).toContain('message from the target');
+  });
+
+  it('does not render a session message list when the clicked name is absent from the archive', async () => {
+    configureUserCardSession('channel');
+    const archive = new UserMessageArchive();
+    archive.add(archivedMessageForUser(61, 'archived-user', 'unrelated message'));
+    configureUserMessageArchive(archive);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+
+    await openUserCard('missing-user', 'Missing User', 10, 10, null);
+
+    expect(document.querySelector('.kickflow-user-messages')).toBeNull();
+  });
+
+  it('keeps an explicitly passed user ID ahead of name lookup', async () => {
+    configureUserCardSession('channel');
+    const archive = new UserMessageArchive();
+    archive.add(archivedMessageForUser(61, 'alice', 'name lookup message'));
+    archive.add(archivedMessageForUser(62, 'other-user', 'explicit ID message'));
+    configureUserMessageArchive(archive);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+
+    await openUserCard('alice', 'Alice', 10, 10, 62);
+
+    const list = document.querySelector<HTMLElement>('.kickflow-user-messages');
+    expect(list?.textContent).toContain('explicit ID message');
+    expect(list?.textContent).not.toContain('name lookup message');
   });
 
   it('maps card + channel fields (avatar/bio/followers/verified) without exposing a level field', () => {

@@ -3,8 +3,95 @@ import { ARCHIVE_MAX_AGE_MS, ARCHIVE_MAX_MESSAGES, ARCHIVE_PER_USER_CAP, UserMes
 import { chatMessage } from '../helpers/chat-message';
 
 const NOW = Date.parse('2026-08-01T12:00:00.000Z');
+const INDEXED_USER_ID = 61;
+const INDEXED_USER_NAME = 'Cahitc61';
+const OTHER_USER_ID = 62;
+const OTHER_USER_NAME = 'other-user';
+
+function indexedMessage(
+  id: string,
+  userId = INDEXED_USER_ID,
+  name = INDEXED_USER_NAME,
+  createdAt = new Date(NOW).toISOString(),
+) {
+  const base = chatMessage(id, { userId, createdAt });
+  return {
+    ...base,
+    sender: {
+      ...base.sender,
+      slug: name.toLowerCase(),
+      username: name,
+    },
+  };
+}
 
 describe('UserMessageArchive', () => {
+  it('resolves sender slugs and usernames case-insensitively', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    const base = chatMessage('indexed-name', {
+      userId: INDEXED_USER_ID,
+      createdAt: new Date(NOW).toISOString(),
+    });
+
+    archive.add({
+      ...base,
+      sender: {
+        ...base.sender,
+        slug: 'archive-slug',
+        username: INDEXED_USER_NAME,
+      },
+    });
+
+    expect(archive.getUserIdByName('archive-slug')).toBe(INDEXED_USER_ID);
+    expect(archive.getUserIdByName('cahitc61')).toBe(INDEXED_USER_ID);
+    expect(archive.getUserIdByName(' Cahitc61 ')).toBe(INDEXED_USER_ID);
+  });
+
+  it('returns null for an unknown name', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+
+    archive.add(indexedMessage('known-name'));
+
+    expect(archive.getUserIdByName('unknown-name')).toBeNull();
+  });
+
+  it('removes the name index when the per-user cap evicts every record', () => {
+    const archive = new UserMessageArchive({ perUserCap: 0, now: () => NOW });
+
+    archive.add(indexedMessage('per-user-eviction'));
+
+    expect(archive.getUserIdByName(INDEXED_USER_NAME)).toBeNull();
+  });
+
+  it('removes the name index when the age cap evicts every record', () => {
+    let now = 0;
+    const archive = new UserMessageArchive({ maxAgeMs: 5, now: () => now });
+
+    archive.add(indexedMessage('age-eviction', INDEXED_USER_ID, INDEXED_USER_NAME, new Date(0).toISOString()));
+    now = 6;
+    archive.sweepExpired();
+
+    expect(archive.getUserIdByName(INDEXED_USER_NAME)).toBeNull();
+  });
+
+  it('removes the name index when the global cap evicts every record', () => {
+    const archive = new UserMessageArchive({ maxMessages: 1, now: () => NOW });
+
+    archive.add(indexedMessage('global-eviction'));
+    archive.add(indexedMessage('global-eviction-other', OTHER_USER_ID, OTHER_USER_NAME));
+
+    expect(archive.getUserIdByName(INDEXED_USER_NAME)).toBeNull();
+  });
+
+  it('clears the name index', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+
+    archive.add(indexedMessage('clear-index'));
+    archive.clear();
+
+    expect(archive.getUserIdByName(INDEXED_USER_NAME)).toBeNull();
+  });
+
   it('stores a normal message and returns it for its user', () => {
     const archive = new UserMessageArchive({ now: () => NOW });
     const message = chatMessage('m1', {

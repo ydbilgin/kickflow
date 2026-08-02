@@ -1,4 +1,4 @@
-import type { ChatMessage } from './message-store';
+import { normalizeChatIdentity, type ChatMessage } from './message-store';
 
 // 30_000 × 240 B = 7.2 MB heap ceiling. At the measured 3.57 msg/s busy rate the count cap binds
 // first and covers 30_000 / 3.57 = 8,403 s = 2 h 20 min; at 1.00 msg/s the 3-hour age cap binds
@@ -61,6 +61,8 @@ export class UserMessageArchive {
   private readonly slotById = new Map<string, number>();
   private readonly recordsById = new Map<string, ArchivedMessage>();
   private readonly recordsByUserId = new Map<number, ArchivedMessage[]>();
+  private readonly userIdByName = new Map<string, number>();
+  private readonly namesByUserId = new Map<number, Set<string>>();
   private wasTruncated = false;
 
   constructor(options: UserMessageArchiveOptions = {}) {
@@ -93,11 +95,20 @@ export class UserMessageArchive {
       this.recordsByUserId.set(record.userId, userRecords);
     }
     userRecords.push(record);
+    this.indexSenderName(record.userId, message.sender.slug);
+    this.indexSenderName(record.userId, message.sender.username);
 
     this.drainExpiredFromHead();
     this.enforcePerUserCap(record.userId);
     this.enforceGlobalCap();
     return true;
+  }
+
+  /** Returns the archived user's ID for a case-insensitive slug or username. */
+  getUserIdByName(name: string): number | null {
+    const key = normalizeChatIdentity(name);
+    if (!key) return null;
+    return this.userIdByName.get(key) ?? null;
   }
 
   /** Oldest → newest. Returns a fresh array; callers must never mutate internal state. */
@@ -153,7 +164,31 @@ export class UserMessageArchive {
     this.slotById.clear();
     this.recordsById.clear();
     this.recordsByUserId.clear();
+    this.userIdByName.clear();
+    this.namesByUserId.clear();
     this.wasTruncated = false;
+  }
+
+  private indexSenderName(userId: number, name: string): void {
+    const key = normalizeChatIdentity(name);
+    if (!key) return;
+
+    this.userIdByName.set(key, userId);
+    let names = this.namesByUserId.get(userId);
+    if (!names) {
+      names = new Set<string>();
+      this.namesByUserId.set(userId, names);
+    }
+    names.add(key);
+  }
+
+  private removeUserNameIndex(userId: number): void {
+    const names = this.namesByUserId.get(userId);
+    if (!names) return;
+    for (const name of names) {
+      if (this.userIdByName.get(name) === userId) this.userIdByName.delete(name);
+    }
+    this.namesByUserId.delete(userId);
   }
 
   private drainExpiredFromHead(): void {
@@ -200,7 +235,10 @@ export class UserMessageArchive {
     if (userRecords) {
       const userIndex = userRecords.indexOf(record);
       if (userIndex >= 0) userRecords.splice(userIndex, 1);
-      if (userRecords.length === 0) this.recordsByUserId.delete(record.userId);
+      if (userRecords.length === 0) {
+        this.recordsByUserId.delete(record.userId);
+        this.removeUserNameIndex(record.userId);
+      }
     }
     this.liveCount -= 1;
     this.wasTruncated = true;

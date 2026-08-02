@@ -447,12 +447,29 @@ export function dismissUserCard(): void {
   activeCard = null;
 }
 
-function getUserMessageListModel(userId: number | null): UserMessageListModel | null {
-  if (!featureFlags.showUserMessages || !userMessageArchive || typeof userId !== 'number' || !Number.isInteger(userId) || userId <= 0) {
+function isUsableUserId(userId: number | null): userId is number {
+  return typeof userId === 'number' && Number.isInteger(userId) && userId > 0;
+}
+
+function getUserMessageListModel(userId: number | null, names: readonly string[]): UserMessageListModel | null {
+  if (!featureFlags.showUserMessages || !userMessageArchive) {
     return null;
   }
+
+  let resolvedUserId = isUsableUserId(userId) ? userId : null;
+  if (resolvedUserId === null) {
+    for (const name of names) {
+      const archivedUserId = userMessageArchive.getUserIdByName(name);
+      if (isUsableUserId(archivedUserId)) {
+        resolvedUserId = archivedUserId;
+        break;
+      }
+    }
+  }
+  if (resolvedUserId === null) return null;
+
   return {
-    messages: userMessageArchive.getByUserId(userId),
+    messages: userMessageArchive.getByUserId(resolvedUserId),
     truncated: userMessageArchive.truncated,
   };
 }
@@ -467,7 +484,7 @@ export async function openUserCard(
   dismissUserCard();
   // Built once and reused for both cards: the archive is a live object, so re-querying it after
   // the await could hand the two cards different rows for the same click.
-  const messages = getUserMessageListModel(userId);
+  const messages = getUserMessageListModel(userId, [username, displayName]);
   const loading = buildMinimalCard(displayName, username, messages);
   document.body.appendChild(loading);
   positionCard(loading, clientX, clientY);
