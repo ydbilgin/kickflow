@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
-import * as messageJump from '../../src/content/chat/message-jump';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
+import { configureUserCardSession } from '../../src/content/chat/user-card';
 import { setLang } from '../../src/content/shared/i18n';
 
 beforeEach(() => setLang('tr'));
@@ -33,6 +33,7 @@ function message(
 describe('message-view safe rendering', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    configureUserCardSession(null);
     setSubscriberBadges([]);
     document.body.innerHTML = '';
   });
@@ -314,61 +315,119 @@ describe('message-view safe rendering', () => {
     expect(target?.style.color).toBe('rgb(18, 171, 239)');
   });
 
-  it('jumps to retained victim messages and opens profiles for unretained victims', () => {
+  it('keeps every moderator-action name on the profile path and gives retained messages separate jump controls', async () => {
     setLang('en');
-    const jumpSpy = vi.spyOn(messageJump, 'jumpToMessage').mockReturnValue(true);
+    configureUserCardSession('channel');
+    const fetchSpy = vi.fn(async () => ({ ok: false, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const jump = vi.fn();
     const openPanel = vi.fn();
-    const row = buildMessageElement(message('', undefined, {
-      id: 'mod-action:bulk-1',
+    const single = buildMessageElement(message('', undefined, {
+      id: 'mod-action:single-links',
+      type: 'mod-action',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'delete',
+        moderator: 'single-moderator',
+        durationMin: null,
+        victims: [{ name: 'single-target', messageId: 'single-message' }],
+        count: 1,
+      },
+    }), { onJumpToMessage: jump, onOpenRemovedPanel: openPanel });
+    const bulk = buildMessageElement(message('', undefined, {
+      id: 'mod-action:bulk-links',
       type: 'mod-action',
       systemEvent: {
         kind: 'mod-action',
         actionKind: 'ban',
-        moderator: 'moderator_one',
+        moderator: 'bulk-moderator',
         durationMin: null,
         victims: [
-          { name: 'first', messageId: 'first-message' },
-          { name: 'second', messageId: 'second-message' },
+          { name: 'first-target', messageId: 'first-message' },
           { name: 'no-target', messageId: null },
-          { name: 'fourth', messageId: 'fourth-message' },
+          { name: 'third-target', messageId: 'third-message' },
         ],
-        count: 4,
+        count: 3,
       },
-    }), { onOpenRemovedPanel: openPanel });
+    }), { onJumpToMessage: jump, onOpenRemovedPanel: openPanel });
 
-    const first = row.querySelector<HTMLElement>('.kickflow-event-row__victim')!;
-    expect(first.getAttribute('role')).toBe('button');
-    expect(first.tabIndex).toBe(0);
-    expect(first.title).toBe("Jump to first's retained message");
-    first.click();
-    expect(jumpSpy).toHaveBeenCalledWith('first-message', first);
+    const names = [
+      ...single.querySelectorAll<HTMLElement>('.kickflow-event-row__moderator, .kickflow-event-row__victim'),
+      ...bulk.querySelectorAll<HTMLElement>('.kickflow-event-row__moderator, .kickflow-event-row__victim'),
+    ];
+    for (const name of names) {
+      expect(name.getAttribute('role')).toBe('link');
+      expect(name.tabIndex).toBe(0);
+      expect(name.title).toContain('profile');
+      name.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    }
+    await Promise.resolve();
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(jump).not.toHaveBeenCalled();
     expect(openPanel).not.toHaveBeenCalled();
 
-    const more = row.querySelector<HTMLElement>('.kickflow-event-row__more')!;
-    more.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
-    const fourth = [...row.querySelectorAll<HTMLElement>('.kickflow-event-row__victim')]
-      .find((element) => element.textContent === 'fourth');
-    expect(fourth).not.toBeUndefined();
-    expect(fourth?.getAttribute('role')).toBe('button');
-    expect(fourth?.tabIndex).toBe(0);
-    expect(fourth?.title).toBe("Jump to fourth's retained message");
-    fourth!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
-    expect(jumpSpy).toHaveBeenCalledWith('fourth-message', fourth);
+    const profileTabClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    for (const name of names) {
+      name.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+    }
+    expect(profileTabClick).toHaveBeenCalledTimes(names.length);
+    expect(jump).not.toHaveBeenCalled();
 
-    const noTarget = [...row.querySelectorAll<HTMLElement>('.kickflow-event-row__victim')]
+    const singleJump = single.querySelector<HTMLElement>('.kickflow-event-row__jump-control')!;
+    const bulkJumps = [...bulk.querySelectorAll<HTMLElement>('.kickflow-event-row__jump-control')];
+    expect(single.querySelectorAll('.kickflow-event-row__jump-control')).toHaveLength(1);
+    expect(bulkJumps).toHaveLength(2);
+    expect(singleJump.getAttribute('role')).toBe('button');
+    expect(singleJump.tabIndex).toBe(0);
+    expect(singleJump.getAttribute('aria-label')).toBe("Jump to single-target's retained message");
+    expect(bulkJumps.map((control) => control.getAttribute('aria-label'))).toEqual([
+      "Jump to first-target's retained message",
+      "Jump to third-target's retained message",
+    ]);
+    const noTarget = [...bulk.querySelectorAll<HTMLElement>('.kickflow-event-row__victim')]
       .find((element) => element.textContent === 'no-target')!;
-    expect(noTarget.getAttribute('role')).toBe('link');
-    expect(noTarget.tabIndex).toBe(0);
-    expect(noTarget.title).toBe("Open no-target's profile");
-    expect(openPanel).not.toHaveBeenCalled();
+    expect(noTarget.nextElementSibling?.classList.contains('kickflow-event-row__jump-control') ?? false).toBe(false);
+
+    singleJump.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    bulkJumps[0].dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter',
+    }));
+    bulkJumps[1].dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: ' ',
+    }));
+    expect(jump).toHaveBeenNthCalledWith(1, 'single-message', singleJump);
+    expect(jump).toHaveBeenNthCalledWith(2, 'first-message', bulkJumps[0]);
+    expect(jump).toHaveBeenNthCalledWith(3, 'third-message', bulkJumps[1]);
+
+    setLang('tr');
+    const localized = buildMessageElement(message('', undefined, {
+      id: 'mod-action:localized-jump',
+      type: 'mod-action',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'delete',
+        moderator: null,
+        durationMin: null,
+        victims: [{ name: 'hedef-kullanici', messageId: 'localized-message' }],
+        count: 1,
+      },
+    }), { onJumpToMessage: jump });
+    const localizedJump = localized.querySelector<HTMLElement>('.kickflow-event-row__jump-control')!;
+    expect(localizedJump.getAttribute('aria-label'))
+      .toBe('hedef-kullanici kullanıcısının korunmuş mesajına git');
   });
 
-  it('uses the victim jump for a single row and opens the panel for a burst background', () => {
+  it('keeps only the bulk row background as a Removed-panel fallback and excludes nested controls', () => {
     setLang('en');
-    const jumpSpy = vi.spyOn(messageJump, 'jumpToMessage').mockReturnValue(true);
+    const jump = vi.fn();
     const openPanel = vi.fn();
     const single = buildMessageElement(message('', undefined, {
       id: 'mod-action:single-row',
+      type: 'mod-action',
       systemEvent: {
         kind: 'mod-action',
         actionKind: 'delete',
@@ -377,13 +436,15 @@ describe('message-view safe rendering', () => {
         victims: [{ name: 'single-user', messageId: 'single-message' }],
         count: 1,
       },
-    }), { onOpenRemovedPanel: openPanel });
+    }), { onJumpToMessage: jump, onOpenRemovedPanel: openPanel });
     single.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
-    expect(jumpSpy).toHaveBeenCalledWith('single-message', single);
+    expect(single.getAttribute('role')).toBeNull();
     expect(openPanel).not.toHaveBeenCalled();
+    expect(jump).not.toHaveBeenCalled();
 
     const burst = buildMessageElement(message('', undefined, {
       id: 'mod-action:burst-row',
+      type: 'mod-action',
       systemEvent: {
         kind: 'mod-action',
         actionKind: 'ban',
@@ -392,9 +453,18 @@ describe('message-view safe rendering', () => {
         victims: [{ name: 'first-user', messageId: 'first-message' }],
         count: 2,
       },
-    }), { onOpenRemovedPanel: openPanel });
+    }), { onJumpToMessage: jump, onOpenRemovedPanel: openPanel });
+    const name = burst.querySelector<HTMLElement>('.kickflow-event-row__victim')!;
+    const jumpControl = burst.querySelector<HTMLElement>('.kickflow-event-row__jump-control')!;
+    name.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+    jumpControl.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+    expect(openPanel).not.toHaveBeenCalled();
+    expect(jump).toHaveBeenCalledWith('first-message', jumpControl);
+
     burst.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
     expect(openPanel).toHaveBeenCalledTimes(1);
+    burst.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+    expect(openPanel).toHaveBeenCalledTimes(2);
   });
 
   it('wires every bulk-gift recipient, including recipients revealed later, as a profile link', async () => {

@@ -19,6 +19,8 @@ export const EVENT_ROW_CLASS = 'kickflow-event-row';
 
 export const MOD_ACTION_KIND_CLASS_PREFIX = 'kickflow-modaction-kind--';
 export const MOD_ACTION_SURFACE_CLASS = 'kickflow-modaction-surface';
+export const MOD_ACTION_BULK_CLASS = `${EVENT_ROW_CLASS}--mod-action-bulk`;
+export const MOD_ACTION_JUMP_CONTROL_CLASS = `${EVENT_ROW_CLASS}__jump-control`;
 const MOD_ACTION_TAG_KEYS: Record<ModActionKind, MessageKey> = {
   ban: 'modaction.tag.ban',
   timeout: 'modaction.tag.timeout',
@@ -52,32 +54,7 @@ function identityColor(username: string): string {
   return getSeenChatIdentityColor(username) || fallbackIdentityColor(username);
 }
 
-function styleAndWireEventIdentity(
-  element: HTMLElement,
-  username: string,
-  onActivate?: (event: Event) => void,
-): void {
-  element.style.color = identityColor(username);
-  if (onActivate) {
-    element.classList.add('kickflow-event-row__identity--link');
-    element.setAttribute('role', 'button');
-    element.tabIndex = 0;
-    element.addEventListener('click', (event) => {
-      const mouseEvent = event as MouseEvent;
-      if (mouseEvent.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onActivate(event);
-    });
-    element.addEventListener('keydown', (event) => {
-      const keyboardEvent = event as KeyboardEvent;
-      if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
-      event.preventDefault();
-      event.stopPropagation();
-      onActivate(event);
-    });
-    return;
-  }
+function wireEventProfileIdentity(element: HTMLElement, username: string): void {
   wireProfileSlugLink(
     element,
     username.toLowerCase(),
@@ -87,14 +64,43 @@ function styleAndWireEventIdentity(
   );
 }
 
-function wireEventModeratorIdentity(element: HTMLElement, username: string): void {
-  wireProfileSlugLink(
-    element,
-    username.toLowerCase(),
-    username,
-    'kickflow-event-row__identity--link',
-    null,
-  );
+function styleAndWireEventIdentity(element: HTMLElement, username: string): void {
+  element.style.color = identityColor(username);
+  wireEventProfileIdentity(element, username);
+}
+
+function createMessageJumpControl(
+  name: string,
+  messageId: string,
+  jump: (messageId: string, cueElement: HTMLElement) => void,
+): HTMLSpanElement {
+  const control = document.createElement('span');
+  control.className = MOD_ACTION_JUMP_CONTROL_CLASS;
+  control.setAttribute('role', 'button');
+  control.tabIndex = 0;
+  const label = t('modaction.target_jump_title', { name });
+  control.setAttribute('aria-label', label);
+  control.title = label;
+
+  const icon = document.createElement('span');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = '↗';
+  control.appendChild(icon);
+
+  const activate = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    jump(messageId, control);
+  };
+  control.addEventListener('click', (event) => {
+    if ((event as MouseEvent).button !== 0) return;
+    activate(event);
+  });
+  control.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    activate(event);
+  });
+  return control;
 }
 
 // Kick official emotes only (confirmed scope — no 7TV/BTTV). Live-verified 2026-07-04:
@@ -698,31 +704,36 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       name.dataset.kickflowRole = 'moderator-name';
       name.textContent = moderator;
       name.title = t('modaction.moderator_profile_title', { name: moderator });
-      wireEventModeratorIdentity(name, moderator);
+      wireEventProfileIdentity(name, moderator);
       actor.append(shield, name);
       return actor;
     };
 
-    const createVictim = (victim: ModActionVictim): HTMLSpanElement => {
+    const createVictimContent = (victim: ModActionVictim): DocumentFragment => {
       const name = victim.name || 'unknown user';
-      const element = document.createElement('span');
-      element.className = `${EVENT_ROW_CLASS}__victim`;
-      element.dataset.kickflowRole = 'target';
-      element.textContent = name;
-      if (victim.messageId === null) {
-        styleAndWireEventIdentity(element, name);
-        element.title = t('modaction.target_profile_title', { name });
-      } else {
-        styleAndWireEventIdentity(element, name, () => jump(victim.messageId!, element));
-        element.title = t('modaction.target_jump_title', { name });
+      const nameElement = document.createElement('span');
+      nameElement.className = `${EVENT_ROW_CLASS}__victim`;
+      nameElement.dataset.kickflowRole = 'target';
+      nameElement.textContent = name;
+      nameElement.title = t('modaction.target_profile_title', { name });
+      styleAndWireEventIdentity(nameElement, name);
+
+      const action = document.createElement('span');
+      action.className = `${EVENT_ROW_CLASS}__victim-action`;
+      action.appendChild(nameElement);
+      if (victim.messageId !== null) {
+        action.appendChild(createMessageJumpControl(name, victim.messageId, jump));
       }
-      return element;
+
+      const content = document.createDocumentFragment();
+      content.appendChild(action);
+      return content;
     };
 
     const appendTemplate = (
       key: MessageKey,
       params: Record<string, string | number>,
-      parts: Array<{ token: string; node: HTMLElement } | { count: number; formatted?: string }>,
+      parts: Array<{ token: string; node: Node } | { count: number; formatted?: string }>,
     ): void => {
       const localized = t(key, params);
       let cursor = 0;
@@ -802,13 +813,13 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       element.textContent = duration;
       return element;
     };
-    const parts: Array<{ token: string; node: HTMLElement } | { count: number; formatted?: string }> = [];
+    const parts: Array<{ token: string; node: Node } | { count: number; formatted?: string }> = [];
     if (hasModerator) {
       const moderatorElement = createModerator();
       if (moderatorElement) parts.push({ token: moderatorToken, node: moderatorElement });
     }
     if (single) {
-      parts.push({ token: victimToken, node: createVictim(firstVictim) });
+      parts.push({ token: victimToken, node: createVictimContent(firstVictim) });
       if (hasDuration) {
         parts.push({ token: durationToken, node: createDuration() });
       }
@@ -828,7 +839,7 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       const unknownRemainder = Math.max(0, event.count - event.victims.length);
       const appendVictim = (victim: ModActionVictim, index: number): void => {
         if (index > 0) preview.appendChild(document.createTextNode(', '));
-        preview.appendChild(createVictim(victim));
+        preview.appendChild(createVictimContent(victim));
       };
       shown.forEach(appendVictim);
       if (hiddenKnown.length > 0) {
@@ -843,7 +854,7 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
           eventObject.stopPropagation();
           hiddenKnown.forEach((victim) => {
             preview.insertBefore(document.createTextNode(', '), more);
-            preview.insertBefore(createVictim(victim), more);
+            preview.insertBefore(createVictimContent(victim), more);
           });
           if (unknownRemainder > 0) {
             more.removeAttribute('role');
@@ -866,24 +877,28 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       if (preview.childNodes.length > 0) body.append(document.createTextNode(' '), preview);
     }
 
-    const activateRow = (): void => {
-      if (single && firstVictim.messageId !== null) {
-        jump(firstVictim.messageId, row);
-      } else {
-        options.onOpenRemovedPanel?.();
-      }
-    };
-    row.setAttribute('role', 'button');
-    row.tabIndex = 0;
-    row.addEventListener('click', (eventObject) => {
-      if ((eventObject as MouseEvent).button !== 0) return;
-      activateRow();
-    });
-    row.addEventListener('keydown', (eventObject) => {
-      if (eventObject.key !== 'Enter' && eventObject.key !== ' ') return;
-      eventObject.preventDefault();
-      activateRow();
-    });
+    const openRemovedPanel = options.onOpenRemovedPanel;
+    if (!single && openRemovedPanel) {
+      row.classList.add(MOD_ACTION_BULK_CLASS);
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+      const isNestedAction = (target: EventTarget | null): boolean => (
+        target instanceof Element
+        && target.closest(
+          `.${EVENT_ROW_CLASS}__identity--link, .${MOD_ACTION_JUMP_CONTROL_CLASS}, .${EVENT_ROW_CLASS}__more`,
+        ) !== null
+      );
+      row.addEventListener('click', (eventObject) => {
+        if ((eventObject as MouseEvent).button !== 0 || isNestedAction(eventObject.target)) return;
+        eventObject.preventDefault();
+        openRemovedPanel();
+      });
+      row.addEventListener('keydown', (eventObject) => {
+        if (eventObject.target !== row || (eventObject.key !== 'Enter' && eventObject.key !== ' ')) return;
+        eventObject.preventDefault();
+        openRemovedPanel();
+      });
+    }
     row.append(body);
     return row;
   }

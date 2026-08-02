@@ -77,6 +77,9 @@ describe('own-mode message row geometry styles', () => {
     const tag = declarations('.kickflow-event-row--mod-action .kickflow-event-row__kind-tag');
     const moderator = declarations('.kickflow-event-row--mod-action .kickflow-event-row__moderator');
     const victim = declarations('.kickflow-event-row--mod-action .kickflow-event-row__victim');
+    const victimAction = declarations('.kickflow-event-row__victim-action');
+    const jumpControl = declarations('.kickflow-event-row__jump-control[role="button"]');
+    const bulkRow = declarations('.kickflow-event-row--mod-action-bulk[role="button"]');
     const block = declarations('.kickflow-modaction-block');
 
     const surface = declarations('.kickflow-modaction-surface');
@@ -92,6 +95,14 @@ describe('own-mode message row geometry styles', () => {
     expect(tag).toContain('text-transform: uppercase');
     expect(moderator).toContain('color: var(--kickflow-modaction-moderator-color)');
     expect(victim).toContain('text-decoration: underline');
+    expect(victimAction).toContain('display: inline-flex');
+    expect(victimAction).toContain('flex-wrap: nowrap');
+    expect(jumpControl).toContain('display: inline-flex');
+    expect(jumpControl).toContain('margin-left: 4px');
+    expect(jumpControl).toContain('color: var(--kickflow-modaction-meta-color)');
+    expect(jumpControl).toContain('text-decoration: none');
+    expect(jumpControl).not.toContain('font-size');
+    expect(bulkRow).toContain('cursor: pointer');
     expect(actionCss).toContain('.kickflow-event-row--mod-action .kickflow-event-row__count,');
     expect(actionCss).toContain('font-variant-numeric: tabular-nums');
     expect(block).toContain('border: 0');

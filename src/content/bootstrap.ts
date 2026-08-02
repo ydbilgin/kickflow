@@ -425,9 +425,9 @@ function ensureStyles(): void {
       font-weight: 700; color: inherit; text-decoration: none;
     }
     #${OWN_LIST_ID} .kickflow-message__username--link,
-    #${OWN_LIST_ID} .kickflow-event-row__identity--link { cursor: pointer; }
+    .kickflow-event-row__identity--link { cursor: pointer; }
     #${OWN_LIST_ID} .kickflow-message__username--link:hover,
-    #${OWN_LIST_ID} .kickflow-event-row__identity--link:hover { text-decoration: underline; }
+    .kickflow-event-row__identity--link:hover { text-decoration: underline; }
     #${OWN_LIST_ID} .kickflow-message__separator {
       display: inline-flex; color: inherit; font-weight: 700;
     }
@@ -868,15 +868,35 @@ function ensureStyles(): void {
     .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.7; }
     .kickflow-ghost-empty { color: #8b8b93; font-size: 11px; text-align: center; padding: 22px 10px; opacity: 0.9; }
 
-    #${OWN_LIST_ID} .kickflow-event-row--mod-action { cursor: pointer; }
     .kickflow-event-row__victim {
       font-weight: 700; color: inherit;
     }
-    .kickflow-event-row__victim[role="button"],
+    .kickflow-event-row__victim-action {
+      display: inline-flex; align-items: baseline; max-width: 100%; min-width: 0; flex-wrap: nowrap;
+      vertical-align: baseline;
+    }
+    .kickflow-event-row--mod-action-bulk[role="button"] {
+      cursor: pointer;
+    }
+    .kickflow-event-row__jump-control[role="button"],
     .kickflow-event-row__more[role="button"] {
       cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
     }
-    .kickflow-event-row__victim[role="button"]:hover,
+    .kickflow-event-row__jump-control[role="button"] {
+      display: inline-flex; align-items: baseline; margin-left: 4px; padding: 0 2px;
+      color: var(--kickflow-modaction-meta-color); text-decoration: none; vertical-align: baseline;
+    }
+    .kickflow-event-row__jump-control[role="button"] > [aria-hidden="true"] {
+      display: inline-block; line-height: 1;
+    }
+    .kickflow-event-row__jump-control[role="button"]:hover {
+      background: rgba(255,255,255,0.08); color: var(--kickflow-modaction-body-color);
+      text-decoration: none;
+    }
+    .kickflow-event-row__jump-control[role="button"]:focus-visible,
+    .kickflow-event-row__identity--link:focus-visible {
+      outline: 2px solid currentColor; outline-offset: 2px; border-radius: 3px;
+    }
     .kickflow-event-row__more[role="button"]:hover { opacity: 0.85; }
     .kickflow-event-row__victims { min-width: 0; }
     .kickflow-event-row__remainder { color: inherit; }
