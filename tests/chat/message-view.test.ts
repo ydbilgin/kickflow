@@ -1120,14 +1120,15 @@ describe('message-view safe rendering', () => {
     expect(row.querySelector('.kickflow-mod-label')?.textContent).toBe('· ban-mod');
   });
 
-  it('renders an authentic Kick SVG for a moderator role badge, with a tooltip', () => {
+  it('renders an authentic Kick SVG for a moderator role badge, with an accessible name', () => {
     const parent = document.createElement('span');
 
     appendBadges(parent, [{ type: 'moderator' }]);
 
     const img = parent.querySelector<HTMLImageElement>('img.kickflow-badge-icon');
     expect(img?.src.startsWith('data:image/svg+xml')).toBe(true);
-    expect(img?.title).toBe('Moderatör');
+    expect(img?.alt).toBe('Moderatör');
+    expect(img?.getAttribute('title')).toBeNull();
   });
 
   it('renders a level image (`badges_v2`) BEFORE an authentic role asset (`badges`), in sort_order', () => {
@@ -1142,9 +1143,10 @@ describe('message-view safe rendering', () => {
     // sortOrder 1 (level) < sortOrder 4 (moderator) — the level image must come first.
     expect(icons).toHaveLength(2);
     expect(icons[0].src).toBe('https://ext.cdn.kick.com/chat/badges/1_x.png');
-    expect(icons[0].title).toBe('1. Seviye');
+    expect(icons[0].alt).toBe('1. Seviye');
     expect(icons[1].src.startsWith('data:image/svg+xml')).toBe(true);
-    expect(icons[1].title).toBe('Moderatör');
+    expect(icons[1].alt).toBe('Moderatör');
+    expect(icons.every((icon) => icon.getAttribute('title') === null)).toBe(true);
   });
 
   it('keeps badges and username in one native-shaped identity group with a non-breaking separator', () => {
@@ -1204,7 +1206,7 @@ describe('message-view safe rendering', () => {
     expect(row.classList.contains('kickflow-message')).toBe(true);
     expect(row.querySelector('.kickflow-message__username')?.textContent).toBe('laureth');
     expect(badges?.querySelector('img[src*="/chat/badges/34_"]')).toBeNull();
-    expect(badges?.querySelector('.kickflow-badge-role')?.getAttribute('title')).toContain('Abone');
+    expect(badges?.querySelector('.kickflow-badge-role')?.getAttribute('aria-label')).toContain('Abone');
   });
 
   it('resolves the channel subscriber badge by month count and renders it as a real image', () => {
@@ -1218,8 +1220,9 @@ describe('message-view safe rendering', () => {
 
     const img = parent.querySelector<HTMLImageElement>('img.kickflow-badge-icon');
     expect(img?.src).toBe('https://files.kick.com/channel_subscriber_badges/6/original');
-    expect(img?.title).toContain('Abone');
-    expect(img?.title).toContain('12 ay');
+    expect(img?.alt).toContain('Abone');
+    expect(img?.alt).toContain('12 ay');
+    expect(img?.getAttribute('title')).toBeNull();
   });
 
   it('falls back to a subscriber chip when no channel subscriber-badge context is set', () => {
@@ -1230,8 +1233,9 @@ describe('message-view safe rendering', () => {
     const chip = parent.querySelector<HTMLElement>('.kickflow-badge-role');
     expect(parent.querySelector('img')).toBeNull();
     expect(chip).not.toBeNull();
-    expect(chip?.title).toContain('Abone');
+    expect(chip?.getAttribute('aria-label')).toContain('Abone');
     expect(chip?.querySelector('.kickflow-badge-role__count')?.textContent).toBe('14');
+    expect(chip?.getAttribute('title')).toBeNull();
   });
 
   it('renders a broadcaster fallback chip with its Turkish label as the tooltip', () => {
@@ -1241,10 +1245,10 @@ describe('message-view safe rendering', () => {
 
     const chip = parent.querySelector<HTMLElement>('.kickflow-badge-role');
     expect(chip).not.toBeNull();
-    expect(chip?.title).toBe('Yayıncı');
+    expect(chip?.getAttribute('aria-label')).toBe('Yayıncı');
   });
 
-  it('falls back to badge text (with a tooltip) for an unknown role type', () => {
+  it('falls back to badge text with an accessible name for an unknown role type', () => {
     const parent = document.createElement('span');
 
     appendBadges(parent, [{ type: 'weird', text: 'Weird' }]);
@@ -1252,6 +1256,38 @@ describe('message-view safe rendering', () => {
     const span = parent.querySelector<HTMLElement>('.kickflow-badge-text');
     expect(parent.querySelector('.kickflow-badge-role')).toBeNull();
     expect(span?.textContent).toBe('Weird');
-    expect(span?.title).toBe('Weird');
+    expect(span?.getAttribute('aria-label')).toBe('Weird');
+    expect(span?.getAttribute('title')).toBeNull();
+  });
+
+  it('shows the badge label instantly and replaces the browser title behavior', () => {
+    setLang('en');
+    const parent = document.createElement('span');
+    document.body.append(parent);
+    appendBadges(parent, [{ type: 'moderator' }]);
+
+    const badge = parent.querySelector<HTMLImageElement>('.kickflow-badge-icon');
+    expect(badge?.getAttribute('title')).toBeNull();
+    expect(badge?.alt).toBe('Moderator');
+
+    badge?.dispatchEvent(new Event('mouseenter'));
+    const tooltip = document.querySelector<HTMLElement>('.kickflow-hover-tooltip');
+    expect(tooltip?.textContent).toBe('Moderator');
+    expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(true);
+
+    badge?.dispatchEvent(new Event('mouseleave'));
+    expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(false);
+
+    badge?.dispatchEvent(new Event('focus'));
+    expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(true);
+    badge?.dispatchEvent(new Event('blur'));
+    expect(tooltip?.classList.contains('kickflow-hover-tooltip--visible')).toBe(false);
+
+    const fallbackParent = document.createElement('span');
+    document.body.append(fallbackParent);
+    appendBadges(fallbackParent, [{ type: 'broadcaster' }]);
+    const fallback = fallbackParent.querySelector<HTMLElement>('.kickflow-badge-role');
+    expect(fallback?.getAttribute('aria-label')).toBe('Broadcaster');
+    expect(fallback?.getAttribute('title')).toBeNull();
   });
 });

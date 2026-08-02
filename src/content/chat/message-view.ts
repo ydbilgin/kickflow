@@ -7,6 +7,7 @@ import { openInNewTab } from '../shared/new-tab';
 import { formatDurationMinutes, formatNumber, getLang, t, type MessageKey } from '../shared/i18n';
 import { CONTENT_TOKEN_RE } from './content-tokens';
 import { applyOwnListHighlights } from './message-highlight-apply';
+import { registerHoverTooltip } from '../shared/hover-tooltip';
 
 export { extractMentionUsernames } from './content-tokens';
 
@@ -358,7 +359,9 @@ function appendRoleBadge(parent: HTMLElement, label: string, style: RoleBadgeFal
   // Property assignment only (never setAttribute('style')/.cssText) — color is one of our own
   // trusted constants above, same pattern as username.style.color elsewhere in this file.
   chip.style.backgroundColor = style.color;
-  chip.title = label + (count ? ` (${count})` : '');
+  const tooltipLabel = label + (count ? ` (${count})` : '');
+  chip.setAttribute('aria-label', tooltipLabel);
+  registerHoverTooltip(chip, tooltipLabel);
   const glyph = document.createElement('span');
   glyph.textContent = style.glyph;
   chip.appendChild(glyph);
@@ -372,8 +375,8 @@ function appendRoleBadge(parent: HTMLElement, label: string, style: RoleBadgeFal
 }
 
 /** Per-badge render order: badges_v2 image → authentic role asset → subscriber's real channel
- * image → labelled chip fallback → plain text fallback. Every rendered badge gets a `title`
- * (hover tooltip) so unlabelled icons/chips are still identifiable. */
+ * image → labelled chip fallback → plain text fallback. Every rendered badge gets an instant
+ * shared hover/focus tooltip so unlabelled icons/chips are still identifiable. */
 export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
   for (const badge of badges) {
     // 1. badges_v2 image (level, and anything else Kick sends pre-rendered with image_url).
@@ -382,11 +385,11 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       if (url) {
         const img = document.createElement('img');
         img.src = url.href;
-        const title = badge.level != null ? t('badge.level', { n: badge.level }) : (badge.name || badge.text || t('badge.badge'));
-        img.alt = title;
-        img.title = title;
+        const label = badge.level != null ? t('badge.level', { n: badge.level }) : (badge.name || badge.text || t('badge.badge'));
+        img.alt = label;
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
+        registerHoverTooltip(img, label);
         parent.appendChild(img);
         continue;
       }
@@ -400,9 +403,9 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       img.src = asset.uri;
       const label = roleBadgeLabel(badge.type, asset.label);
       img.alt = label;
-      img.title = label;
       img.className = 'kickflow-badge-icon';
       img.loading = 'lazy';
+      registerHoverTooltip(img, label);
       parent.appendChild(img);
       continue;
     }
@@ -414,11 +417,11 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       if (subUrl) {
         const img = document.createElement('img');
         img.src = subUrl.href;
-        const title = badge.count ? t('badge.subscriber_months', { n: badge.count }) : t('badge.subscriber');
-        img.alt = title;
-        img.title = title;
+        const label = badge.count ? t('badge.subscriber_months', { n: badge.count }) : t('badge.subscriber');
+        img.alt = label;
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
+        registerHoverTooltip(img, label);
         parent.appendChild(img);
       } else {
         appendRoleBadge(parent, t('badge.subscriber'), SUBSCRIBER_FALLBACK_STYLE, badge.count);
@@ -440,7 +443,8 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       const span = document.createElement('span');
       span.className = 'kickflow-badge-text';
       span.textContent = label;
-      span.title = label;
+      span.setAttribute('aria-label', label);
+      registerHoverTooltip(span, label);
       parent.appendChild(span);
     }
   }

@@ -803,6 +803,14 @@ function ensureStyles(): void {
       min-width: calc(var(--chatroom-font-size, 13px) * (18 / 13));
       height: calc(var(--chatroom-font-size, 13px) * (18 / 13));
     }
+    .kickflow-hover-tooltip {
+      position: fixed; z-index: 2147483647; max-width: calc(100vw - 16px); box-sizing: border-box;
+      padding: 4px 7px; border: 1px solid rgba(255,255,255,0.16); border-radius: 4px;
+      background: #1c1c20; color: #efeff1; box-shadow: 0 4px 14px rgba(0,0,0,0.42);
+      font: 12px/1.35 'Inter','Segoe UI',system-ui,sans-serif; overflow-wrap: anywhere;
+      pointer-events: none; user-select: none; visibility: hidden; opacity: 0;
+    }
+    .kickflow-hover-tooltip--visible { visibility: visible; opacity: 1; }
     .kickflow-emote-box {
       position: relative; display: inline-block;
       width: 24px; height: 24px; vertical-align: middle; margin: 0 2px;

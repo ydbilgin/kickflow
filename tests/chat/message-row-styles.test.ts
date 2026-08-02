@@ -46,6 +46,21 @@ describe('own-mode message row geometry styles', () => {
     }
   });
 
+  it('keeps the shared tooltip floating, decorative, and literal in the production stylesheet', () => {
+    const tooltip = declarations('.kickflow-hover-tooltip');
+    const visible = declarations('.kickflow-hover-tooltip--visible');
+
+    expect(tooltip).toContain('position: fixed');
+    expect(tooltip).toContain('pointer-events: none');
+    expect(tooltip).toContain('z-index: 2147483647');
+    expect(tooltip).toContain('background: #1c1c20');
+    expect(tooltip).toContain('border: 1px solid rgba(255,255,255,0.16)');
+    expect(tooltip).toContain('visibility: hidden');
+    expect(visible).toContain('visibility: visible');
+    expect(styleTemplate()).toContain('.kickflow-hover-tooltip {');
+    expect(styleTemplate()).not.toContain('.kickflow-hover-tooltip {\n      position: fixed; z-index: ${');
+  });
+
   it('matches native separator and content treatment', () => {
     const separator = declarations('#${OWN_LIST_ID} .kickflow-message__separator');
     const content = declarations('#${OWN_LIST_ID} .kickflow-message__content');
