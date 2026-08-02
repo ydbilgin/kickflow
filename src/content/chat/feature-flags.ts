@@ -50,6 +50,10 @@ export interface FeatureFlags {
   screenshot: boolean;
   /** Show manual/automatic playback-speed controls. */
   speedControls: boolean;
+  /** Click Kick's own Claim button when a Drops reward reaches 100% on the watched channel.
+   * Opt-in because it acts on the page rather than only observing it. KickFlow never calls a
+   * Drops endpoint itself, and never touches the separate channel-points redemption surface. */
+  autoClaimDrops: boolean;
   /** Mini mod-log panel — Phase 2, UI intentionally not implemented. Stub flag only. */
   modLogPanel: boolean;
   /** Highlight chat rows that @-mention the owner or reply to the owner's messages. */
@@ -93,6 +97,7 @@ export const featureFlags: FeatureFlags = {
   qualityLock: true,
   screenshot: true,
   speedControls: true,
+  autoClaimDrops: false,
   modLogPanel: false,
   mentionHighlightEnabled: true,
   mentionHighlightStyle: 'both',
