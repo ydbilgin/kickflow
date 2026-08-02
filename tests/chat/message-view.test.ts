@@ -162,13 +162,77 @@ describe('message-view safe rendering', () => {
       },
     }));
 
-    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('🛡');
-    expect(row.textContent).toBe(`🛡moderator_one banned ${unsafeName}`);
-    expect(row.querySelector('.kickflow-event-row__username')?.textContent).toBe('moderator_one');
+    expect(row.querySelector('.kickflow-event-row__icon')).toBeNull();
+    expect(row.querySelector('.kickflow-event-row__kind-tag')?.textContent).toBe('BAN');
+    expect(row.textContent).toBe(`BAN 🛡moderator_one banned ${unsafeName}`);
+    expect(row.querySelector('.kickflow-event-row__moderator')?.textContent).toBe('moderator_one');
     expect(row.querySelector('.kickflow-event-row__victim')?.textContent).toBe(unsafeName);
+    expect(row.querySelector('[data-kickflow-role="moderator"]')).not.toBeNull();
+    expect(row.querySelector('[data-kickflow-role="target"]')).not.toBeNull();
     expect(row.querySelector('img')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('role')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('tabindex')).toBeNull();
+  });
+
+  it('renders an unknown-moderator action with only its tag and target', () => {
+    setLang('tr');
+    const row = buildMessageElement(message('', undefined, {
+      id: 'mod-action:unknown-1',
+      type: 'mod-action',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'timeout',
+        moderator: null,
+        durationMin: 5,
+        victims: [{ name: 'target-user', messageId: null }],
+        count: 1,
+      },
+    }));
+
+    expect(row.querySelector('.kickflow-event-row__kind-tag')?.textContent).toBe('SUSTURMA');
+    expect(row.querySelector('[data-kickflow-role="moderator"]')).toBeNull();
+    expect(row.querySelector('.kickflow-event-row__moderator-shield')).toBeNull();
+    expect(row.querySelector('[data-kickflow-role="target"]')?.textContent).toBe('target-user');
+  });
+
+  it('takes the moderator color from the fixed role system and the target color from identity', () => {
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('moderator_one', { color: '#E879F9' }, {
+      id: 'moderator-seed',
+      sender: {
+        ...message('moderator_one').sender,
+        username: 'moderator_one',
+        slug: 'moderator_one',
+        identity: { color: '#E879F9', badges: [], badgesV2: [] },
+      },
+    }));
+    store.addMessage(message('target_user', { color: '#12ABEF' }, {
+      id: 'target-seed',
+      sender: {
+        ...message('target_user').sender,
+        username: 'target_user',
+        slug: 'target_user',
+        identity: { color: '#12ABEF', badges: [], badgesV2: [] },
+      },
+    }));
+
+    const row = buildMessageElement(message('', undefined, {
+      id: 'mod-action:roles-1',
+      type: 'mod-action',
+      systemEvent: {
+        kind: 'mod-action',
+        actionKind: 'delete',
+        moderator: 'moderator_one',
+        durationMin: null,
+        victims: [{ name: 'target_user', messageId: null }],
+        count: 1,
+      },
+    }));
+    const moderator = row.querySelector<HTMLElement>('.kickflow-event-row__moderator');
+    const target = row.querySelector<HTMLElement>('.kickflow-event-row__victim');
+
+    expect(moderator?.style.color).toBe('');
+    expect(target?.style.color).toBe('rgb(18, 171, 239)');
   });
 
   it('jumps to the clicked victim message and keeps a null target plain', () => {

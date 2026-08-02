@@ -6,6 +6,8 @@ import {
   BANNED_CLASS,
   buildMessageElement,
   DELETED_CLASS,
+  MOD_ACTION_KIND_CLASS_PREFIX,
+  MOD_ACTION_SURFACE_CLASS,
   PRESERVED_CLASS,
   TIMEOUT_CLASS,
   appendBadges,
@@ -565,7 +567,7 @@ export class NativeChatAugmenter {
     anchorMid: string,
   ): HTMLElement {
     const block = document.createElement('div');
-    block.className = MOD_ACTION_BLOCK_CLASS;
+    block.className = `${MOD_ACTION_BLOCK_CLASS} ${MOD_ACTION_SURFACE_CLASS} ${MOD_ACTION_KIND_CLASS_PREFIX}${notice.kind}`;
     block.setAttribute(MOD_ACTION_ANCHOR_ATTRIBUTE, anchorMid);
     block.setAttribute(MOD_ACTION_ID_ATTRIBUTE, noticeId);
     block.setAttribute(MOD_ACTION_SIGNATURE_ATTRIBUTE, this.modActionSignature(notice));

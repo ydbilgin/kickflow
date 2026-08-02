@@ -17,6 +17,14 @@ export const TIMEOUT_CLASS = 'kickflow-timeout';
 export const DELETED_CLASS = 'kickflow-deleted';
 export const EVENT_ROW_CLASS = 'kickflow-event-row';
 
+export const MOD_ACTION_KIND_CLASS_PREFIX = 'kickflow-modaction-kind--';
+export const MOD_ACTION_SURFACE_CLASS = 'kickflow-modaction-surface';
+const MOD_ACTION_TAG_KEYS: Record<ModActionKind, MessageKey> = {
+  ban: 'modaction.tag.ban',
+  timeout: 'modaction.tag.timeout',
+  delete: 'modaction.tag.delete',
+};
+
 // Bulk gifts name at most this many recipients inline (a Kick bulk can be 50+; three ~25-char
 // usernames is about one wrapped line at the panel's 13px width). The rest collapse into
 // a localized "and N more", with every known name still reachable on the preview's hover title.
@@ -70,6 +78,16 @@ function styleAndWireEventIdentity(
     });
     return;
   }
+  wireProfileSlugLink(
+    element,
+    username.toLowerCase(),
+    username,
+    'kickflow-event-row__identity--link',
+    null,
+  );
+}
+
+function wireEventModeratorIdentity(element: HTMLElement, username: string): void {
   wireProfileSlugLink(
     element,
     username.toLowerCase(),
@@ -598,26 +616,33 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
   const row = document.createElement('div');
   row.className = `${MESSAGE_CLASS} ${EVENT_ROW_CLASS} ${EVENT_ROW_CLASS}--${event.kind}`;
   row.dataset.messageId = message.id;
+  if (event.kind === 'mod-action') {
+    row.classList.add(
+      MOD_ACTION_SURFACE_CLASS,
+      `${MOD_ACTION_KIND_CLASS_PREFIX}${event.actionKind}`,
+    );
+  }
 
-  const icon = document.createElement('span');
-  icon.className = `${EVENT_ROW_CLASS}__icon`;
-  icon.textContent = event.kind === 'subscription'
-    ? '⭐'
-    : event.kind === 'gifted-subscription'
-      ? '🎁'
-      : event.kind === 'kicks'
-        ? '💰'
-        : event.kind === 'host'
-          ? '📡'
-          : event.kind === 'mod-action'
-            ? '🛡'
-          : '⚙';
+  const icon = event.kind === 'mod-action' ? null : document.createElement('span');
+  if (icon) {
+    icon.className = `${EVENT_ROW_CLASS}__icon`;
+    icon.textContent = event.kind === 'subscription'
+      ? '⭐'
+      : event.kind === 'gifted-subscription'
+        ? '🎁'
+        : event.kind === 'kicks'
+          ? '💰'
+          : event.kind === 'host'
+            ? '📡'
+            : '⚙';
+  }
 
   if (event.kind === 'mode') {
     const text = document.createElement('span');
     text.className = `${EVENT_ROW_CLASS}__text`;
     text.textContent = event.text;
-    row.append(icon, text);
+    if (icon) row.append(icon);
+    row.append(text);
     return row;
   }
 
@@ -659,20 +684,36 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
     const firstVictim: ModActionVictim = event.victims[0] ?? { name: 'unknown user', messageId: null };
     const jump = options.onJumpToMessage ?? ((messageId: string, cue: HTMLElement) => jumpToMessage(messageId, cue));
 
+    const tag = document.createElement('span');
+    tag.className = `${EVENT_ROW_CLASS}__kind-tag`;
+    tag.dataset.kickflowRole = 'action-kind';
+    tag.textContent = t(MOD_ACTION_TAG_KEYS[event.actionKind]);
+    body.append(tag, document.createTextNode(' '));
+
     const createModerator = (): HTMLSpanElement | null => {
       const moderator = event.moderator?.trim();
       if (!moderator) return null;
-      const element = document.createElement('span');
-      element.className = `${EVENT_ROW_CLASS}__username`;
-      element.textContent = moderator;
-      styleAndWireEventIdentity(element, moderator);
-      return element;
+      const actor = document.createElement('span');
+      actor.className = `${EVENT_ROW_CLASS}__actor`;
+      actor.dataset.kickflowRole = 'moderator';
+      const shield = document.createElement('span');
+      shield.className = `${EVENT_ROW_CLASS}__moderator-shield`;
+      shield.setAttribute('aria-hidden', 'true');
+      shield.textContent = '🛡';
+      const name = document.createElement('span');
+      name.className = `${EVENT_ROW_CLASS}__username ${EVENT_ROW_CLASS}__moderator`;
+      name.dataset.kickflowRole = 'moderator-name';
+      name.textContent = moderator;
+      wireEventModeratorIdentity(name, moderator);
+      actor.append(shield, name);
+      return actor;
     };
 
     const createVictim = (victim: ModActionVictim): HTMLSpanElement => {
       const name = victim.name || 'unknown user';
       const element = document.createElement('span');
       element.className = `${EVENT_ROW_CLASS}__victim`;
+      element.dataset.kickflowRole = 'target';
       element.textContent = name;
       if (victim.messageId === null) {
         element.style.color = identityColor(name);
@@ -828,7 +869,7 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       eventObject.preventDefault();
       activateRow();
     });
-    row.append(icon, body);
+    row.append(body);
     return row;
   }
 
@@ -958,7 +999,8 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
     body.appendChild(document.createTextNode(` ${t('event.host')}`));
   }
 
-  row.append(icon, body);
+  if (icon) row.append(icon);
+  row.append(body);
   return row;
 }
 
