@@ -496,7 +496,7 @@ export class NativeChatAugmenter {
       // it is attached to does, and comes back if the reader scrolls that far up again.
       if (!row) continue;
 
-      const host = this.findGhostHost(row);
+      const host = this.findModActionHost(row);
       const existing = Array.from(host.children).filter((child): child is HTMLElement => (
         child instanceof HTMLElement && child.classList.contains(MOD_ACTION_BLOCK_CLASS)
       ));
@@ -700,6 +700,13 @@ export class NativeChatAugmenter {
     return Array.from(row.children).find((child): child is HTMLElement => (
       child instanceof HTMLElement && child.classList.contains('group')
     )) ?? row;
+  }
+
+  /** Mount moderator notices under Kick's native content element so the notice inherits the same
+   * typography and horizontal origin as the neighboring message. The anchor remains the native
+   * row, so virtualization still removes and restores the notice with that row. */
+  private findModActionHost(row: HTMLElement): HTMLElement {
+    return row.querySelector<HTMLElement>(NATIVE_CONTENT_SELECTOR) ?? this.findGhostHost(row);
   }
 
   private buildGhostRow(message: NonNullable<ReturnType<ChatIntegrityStore['getMessageById']>>): HTMLElement {

@@ -880,17 +880,13 @@ function ensureStyles(): void {
     .kickflow-event-row__more[role="button"]:hover { opacity: 0.85; }
     .kickflow-event-row__victims { min-width: 0; }
     .kickflow-event-row__remainder { color: inherit; }
-    #chatroom-messages .group:has(> .kickflow-modaction-block) {
-      flex-direction: column; align-items: stretch; gap: 0;
-    }
-    #chatroom-messages .group:has(> .kickflow-modaction-block) > .flex {
-      flex: 0 0 auto; width: 100%;
-    }
     .kickflow-modaction-block {
-      --kickflow-modaction-row-inset: 26px;
+      --kickflow-native-content-inline-padding: 8px;
       display: block; box-sizing: border-box; flex: 0 0 auto;
-      width: calc(100% - var(--kickflow-modaction-row-inset)); max-width: calc(100% - var(--kickflow-modaction-row-inset));
-      min-width: 0; margin: 3px 0 0 18px; padding-left: 8px;
+      width: calc(100% + (2 * var(--kickflow-native-content-inline-padding)));
+      max-width: calc(100% + (2 * var(--kickflow-native-content-inline-padding))); min-width: 0;
+      margin: 3px 0 0 calc(-1 * var(--kickflow-native-content-inline-padding)); padding-left: 0;
+      font: inherit;
       border-left: 2px solid rgba(168,139,250,0.7); color: #ddd0ff;
     }
     .kickflow-modaction-block .kickflow-event-row {

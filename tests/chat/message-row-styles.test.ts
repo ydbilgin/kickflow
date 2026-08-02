@@ -50,6 +50,16 @@ describe('own-mode message row geometry styles', () => {
     expect(hover).toContain('background: rgba(255,255,255,0.06)');
   });
 
+  it('neutralizes the native content-holder inset for injected moderator notices', () => {
+    const notice = declarations('.kickflow-modaction-block');
+    const inlinePadding = '--kickflow-native-content-inline-padding';
+
+    expect(notice).toContain(`${inlinePadding}: 8px`);
+    expect(notice).toContain(`margin: 3px 0 0 calc(-1 * var(${inlinePadding}))`);
+    expect(notice).toContain(`width: calc(100% + (2 * var(${inlinePadding})))`);
+    expect(notice).toContain(`max-width: calc(100% + (2 * var(${inlinePadding})))`);
+  });
+
   it('uses native-sized, line-box-neutral emote wrappers at every chat font size', () => {
     const baseBox = declarations('.kickflow-emote-box');
     const baseImage = declarations('.kickflow-emote');

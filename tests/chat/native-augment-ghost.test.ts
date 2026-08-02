@@ -305,7 +305,7 @@ describe('NativeChatAugmenter ghost blocks', () => {
     expect(host).not.toBeNull();
     expect(host?.querySelector('.kickflow-modaction-block')?.getAttribute('data-kickflow-modaction-anchor'))
       .toBe('m3');
-    expect(host?.querySelector('.kickflow-modaction-block')?.parentElement?.classList.contains('group')).toBe(true);
+    expect(host?.querySelector('.kickflow-modaction-block')?.parentElement?.classList.contains('break-words')).toBe(true);
     expect(list.querySelectorAll('.kickflow-modaction-block')).toHaveLength(1);
 
     // A newer message must NOT drag the block down. Re-resolving the newest row every pass is the
