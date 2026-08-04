@@ -828,7 +828,7 @@ describe('bootstrap event display flags', () => {
       }
       if (
         url
-        === 'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A48.000Z'
+        === 'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A53.000Z'
       ) {
         return {
           ok: true,
@@ -900,8 +900,9 @@ describe('bootstrap event display flags', () => {
       for (let i = 0; i < 10; i++) await Promise.resolve();
       await vi.advanceTimersByTimeAsync(250);
 
+      // Anchored one bucket ahead: Kick returns the window ENDING at start_time.
       expect(fetchSpy).toHaveBeenCalledWith(
-        'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A48.000Z',
+        'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A53.000Z',
         expect.objectContaining({ headers: { accept: 'application/json' } }),
       );
       expect(

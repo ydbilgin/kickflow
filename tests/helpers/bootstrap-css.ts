@@ -6,9 +6,9 @@ import { resolve } from 'node:path';
 export function styleTemplate(): string {
   const source = readFileSync(resolve(process.cwd(), 'src/content/bootstrap.ts'), 'utf8')
     .replace(/\r\n?/g, '\n');
-  const marker = 'style.textContent = `';
+  const marker = 'const css = `';
   const start = source.indexOf(marker);
-  const end = source.indexOf('`;\n  document.head.appendChild(style);', start + marker.length);
+  const end = source.indexOf('`;\n  adoptedStyleSheet = installStyleSheet(css);', start + marker.length);
   if (start < 0 || end < 0) throw new Error('bootstrap style template not found');
   return source.slice(start + marker.length, end);
 }

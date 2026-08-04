@@ -5,7 +5,8 @@ import {
 } from '../../src/content/chat/active-chatters-badges';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
-import { configureUserCardSession, configureUserMessageArchive } from '../../src/content/chat/user-card';
+import { configureUserCardSession } from '../../src/content/chat/user-card';
+import { configureUserMessageArchive } from '../../src/content/chat/archive-session';
 import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { setLang } from '../../src/content/shared/i18n';

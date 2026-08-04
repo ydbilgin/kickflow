@@ -13,6 +13,7 @@ import {
   type RoleHighlightStyle,
 } from './message-highlight';
 import { isOwnerIdentityResolved } from './owner-identity';
+import { buildMessageSearchResults, getMessageSearchModel } from './message-search';
 import { getExtensionVersion } from '../shared/extension-context';
 import {
   HOTKEY_ACTIONS,
@@ -45,11 +46,24 @@ const REMOVED_EMPTY_CLASS = 'kickflow-removed-empty';
 // newest N removed messages only.
 const MAX_PANEL_ROWS = 60;
 
-export type DashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'rewards' | 'hotkeys' | 'about';
+// One quiet frame of typing before re-running the search and rebuilding up to 100 emote-parsed rows.
+const SEARCH_DEBOUNCE_MS = 120;
+
+/** True for anything the reader could be typing into, where a keyboard chord belongs to the page
+ * and not to us. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+export type DashboardSection = 'general' | 'removed' | 'search' | 'chat' | 'player' | 'rewards' | 'hotkeys' | 'about';
 
 const DASHBOARD_SECTIONS: ReadonlyArray<{ key: DashboardSection; labelKey: MessageKey }> = [
   { key: 'general', labelKey: 'tab.general' },
   { key: 'removed', labelKey: 'tab.removed' },
+  { key: 'search', labelKey: 'tab.search' },
   { key: 'chat', labelKey: 'tab.chat' },
   { key: 'player', labelKey: 'tab.player' },
   { key: 'rewards', labelKey: 'tab.rewards' },
@@ -143,6 +157,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private chattersBadgesCheckbox: HTMLInputElement | null = null;
   private userMessagesCheckbox: HTMLInputElement | null = null;
+  private searchHotkeyCheckbox: HTMLInputElement | null = null;
   private modActionsCheckbox: HTMLInputElement | null = null;
   private mentionHighlightCheckbox: HTMLInputElement | null = null;
   private modFrameCheckbox: HTMLInputElement | null = null;
@@ -167,6 +182,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private captureAction: HotkeyAction | null = null;
   private userFilter: { slug: string; label: string } | null = null;
   private filterChip: HTMLButtonElement | null = null;
+  private searchInput: HTMLInputElement | null = null;
+  private searchResults: HTMLElement | null = null;
+  private searchRenderHandle: number | null = null;
 
   private store: ChatIntegrityStore | null;
 
@@ -180,6 +198,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     lifecycle.add(subscribeLang(() => this.rebuildForLanguage()));
     lifecycle.setInterval(() => this.render(), 1000);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onHotkeyCapture(event as KeyboardEvent), true);
+    lifecycle.addEventListener(document, 'keydown', (event) => this.onSearchHotkey(event as KeyboardEvent), true);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onDashboardKeydown(event as KeyboardEvent), true);
     lifecycle.add(() => this.dispose());
   }
@@ -536,6 +555,31 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     body.setAttribute('aria-live', 'polite');
     removed.append(filterChip, body);
 
+    const search = this.buildDashboardPane('search');
+    search.append(this.buildPaneIntro(t('search.hotkey_hint')));
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.className = 'kickflow-search__input';
+    searchInput.placeholder = t('search.placeholder');
+    searchInput.setAttribute('aria-label', t('search.placeholder'));
+    // Rebuilding on every keystroke re-parses emotes for up to 100 rows; one frame of quiet
+    // typing is cheaper and reads as instant.
+    searchInput.addEventListener('input', () => this.scheduleSearchRender());
+    // Results are a snapshot, not a live feed — Enter re-runs the same query against whatever has
+    // arrived since, without the reader having to retype it.
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      this.renderSearchResults();
+    });
+    this.searchInput = searchInput;
+    const searchResults = document.createElement('div');
+    searchResults.className = 'kickflow-search';
+    searchResults.setAttribute('aria-live', 'polite');
+    this.searchResults = searchResults;
+    search.append(searchInput, searchResults);
+    this.renderSearchResults();
+
     const chat = this.buildDashboardPane('chat');
     chat.append(this.buildPaneIntro(t('panel.chat_intro')));
     const chatGroup = document.createElement('section');
@@ -592,6 +636,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.userMessagesCheckbox = userMessagesCheckbox;
 
+    const { label: searchHotkeyLabel, checkbox: searchHotkeyCheckbox } = this.buildSettingsToggle(
+      t('setting.search_hotkey'), t('setting.search_hotkey_desc'), 'chatSearchHotkey', featureFlags.chatSearchHotkey,
+    );
+    this.searchHotkeyCheckbox = searchHotkeyCheckbox;
+
     const { label: modActionsLabel, checkbox: modActionsCheckbox } = this.buildSettingsToggle(
       t('setting.mod_actions'), t('setting.mod_actions_desc'), 'showModActions', featureFlags.showModActions,
     );
@@ -645,6 +694,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       modeChangesLabel,
       chattersBadgesLabel,
       userMessagesLabel,
+      searchHotkeyLabel,
       modActionsLabel,
       mentionHighlightLabel,
       mentionStyleRow,
@@ -779,7 +829,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     about.append(aboutMark, aboutText, aboutFacts);
 
-    settings.append(general, removed, chat, player, rewards, hotkeys, about);
+    settings.append(general, removed, search, chat, player, rewards, hotkeys, about);
     return settings;
   }
 
@@ -1196,6 +1246,31 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
   }
 
+  /** Opens Search focused and ready to type. The Ctrl+F entry point and the nav button share it
+   * so the tab always arrives in the same state. */
+  showSearch(): void {
+    this.showSettings('search');
+    this.renderSearchResults();
+    const input = this.searchInput;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }
+
+  private scheduleSearchRender(): void {
+    if (this.searchRenderHandle !== null) return;
+    this.searchRenderHandle = window.setTimeout(() => {
+      this.searchRenderHandle = null;
+      this.renderSearchResults();
+    }, SEARCH_DEBOUNCE_MS);
+  }
+
+  private renderSearchResults(): void {
+    const container = this.searchResults;
+    if (!container) return;
+    container.replaceChildren(buildMessageSearchResults(getMessageSearchModel(this.searchInput?.value ?? '')));
+  }
+
   private refreshStats(): void {
     const stats = this.stats;
     if (!stats) return;
@@ -1239,6 +1314,19 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     return minutes < 60
       ? t('time.minutes_ago', { n: minutes })
       : t('time.hours_ago', { n: Math.round(minutes / 60) });
+  }
+
+  /** Ctrl+F / ⌘F opens KickFlow's search. Typing surfaces keep the chord — including our own
+   * search box, which is the deliberate escape hatch back to the browser's page find. */
+  private onSearchHotkey(event: KeyboardEvent): void {
+    if (!featureFlags.chatSearchHotkey) return;
+    if (event.key.toLowerCase() !== 'f' || event.altKey || event.shiftKey) return;
+    if (!event.ctrlKey && !event.metaKey) return;
+    if (isTypingTarget(event.target)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.showSearch();
   }
 
   private onDashboardKeydown(event: KeyboardEvent): void {
@@ -1295,6 +1383,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     if (this.chattersBadgesCheckbox && this.chattersBadgesCheckbox.checked !== featureFlags.showChattersBadges) {
       this.chattersBadgesCheckbox.checked = featureFlags.showChattersBadges;
+    }
+    if (this.searchHotkeyCheckbox && this.searchHotkeyCheckbox.checked !== featureFlags.chatSearchHotkey) {
+      this.searchHotkeyCheckbox.checked = featureFlags.chatSearchHotkey;
     }
     if (this.userMessagesCheckbox && this.userMessagesCheckbox.checked !== featureFlags.showUserMessages) {
       this.userMessagesCheckbox.checked = featureFlags.showUserMessages;

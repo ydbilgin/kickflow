@@ -11,6 +11,17 @@ export const ARCHIVE_PER_USER_CAP = 500;
 // This threshold is what makes compaction amortised O(1) per eviction.
 const ARCHIVE_COMPACT_MIN_HEAD = 1024;
 
+/** Rows a search hands to the DOM at once. The archive keeps counting past it, so the reader is
+ * told how many matches were left off instead of silently seeing a truncated list. */
+export const SEARCH_RESULT_LIMIT = 100;
+
+export interface ArchiveSearchResult {
+  /** Newest first — the message you just missed is the one you are looking for. */
+  readonly matches: ArchivedMessage[];
+  /** Total matches in the archive, which can exceed `matches.length`. */
+  readonly total: number;
+}
+
 /** The message this one answered. Without it a reply reads as a non-sequitur in the list — the
  * archive is the only place that still knows what was being answered once chat has scrolled on. */
 export interface ArchivedReply {
@@ -23,8 +34,16 @@ export interface ArchivedReply {
 export interface ArchivedMessage {
   readonly id: string;
   readonly userId: number;
-  /** Epoch milliseconds, taken from the message's own createdAt when parseable, else the clock. */
+  /** Name as chat showed it. Kept per record because search results are read across users, where
+   * a bare user id says nothing — the per-user list could get away without it. */
+  readonly username: string;
+  /** Epoch milliseconds, taken from the message's own createdAt when parseable, else the clock.
+   * This is what the reader sees, and on a VOD it is the time the message was originally sent. */
   readonly at: number;
+  /** When THIS archive stored the record. Retention counts from here, never from `at`: VOD replay
+   * archives day-old messages, and ageing those out by their original timestamp evicted every one
+   * of them the instant it arrived. Monotonic, so the record array stays ordered by it. */
+  readonly addedAt: number;
   /** Raw content, `[emote:...]` tokens intact — the renderer parses them, the archive never does. */
   readonly text: string;
   readonly replyTo: ArchivedReply | null;
@@ -77,10 +96,13 @@ export class UserMessageArchive {
     if (message.systemEvent || this.recordsById.has(message.id) || message.content.trim() === '') return false;
 
     const parsedAt = Date.parse(message.createdAt);
+    const addedAt = this.now();
     const record: ArchivedMessage = {
       id: message.id,
       userId: message.sender.id,
-      at: Number.isFinite(parsedAt) ? parsedAt : this.now(),
+      username: message.sender.displayName?.trim() || message.sender.username,
+      at: Number.isFinite(parsedAt) ? parsedAt : addedAt,
+      addedAt,
       text: message.content,
       replyTo: readReplyTo(message),
       deleted: false,
@@ -111,6 +133,26 @@ export class UserMessageArchive {
     return this.userIdByName.get(key) ?? null;
   }
 
+  /** Newest → oldest, capped at `limit`. Every whitespace-separated term must appear in the
+   * message text or in the sender's name, so "ahmet link" finds Ahmet's message with a link
+   * instead of every message containing either word. `total` counts matches before the cap. */
+  search(query: string, limit: number = SEARCH_RESULT_LIMIT): ArchiveSearchResult {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0 || limit <= 0) return { matches: [], total: 0 };
+
+    const matches: ArchivedMessage[] = [];
+    let total = 0;
+    for (let slot = this.records.length - 1; slot >= this.head; slot -= 1) {
+      const record = this.records[slot];
+      if (!record) continue;
+      const haystack = `${record.text}\n${record.username}`.toLowerCase();
+      if (!terms.every((term) => haystack.includes(term))) continue;
+      total += 1;
+      if (matches.length < limit) matches.push({ ...record });
+    }
+    return { matches, total };
+  }
+
   /** Oldest → newest. Returns a fresh array; callers must never mutate internal state. */
   getByUserId(userId: number): ArchivedMessage[] {
     const records = this.recordsByUserId.get(userId);
@@ -133,7 +175,7 @@ export class UserMessageArchive {
         slot += 1;
         continue;
       }
-      if (record.at >= cutoff) {
+      if (record.addedAt >= cutoff) {
         slot += 1;
         continue;
       }
@@ -193,15 +235,15 @@ export class UserMessageArchive {
 
   private drainExpiredFromHead(): void {
     const cutoff = this.now() - this.maxAgeMs;
-    // An out-of-order createdAt can survive up to one sweep interval past its age cap instead of
-    // dying on the next add. The periodic full sweep bounds this deliberate delay.
+    // `addedAt` is monotonic, so the oldest live record is always at the head and this loop can
+    // stop at the first survivor.
     while (this.head < this.records.length) {
       const record = this.records[this.head];
       if (!record) {
         this.head += 1;
         continue;
       }
-      if (record.at >= cutoff) return;
+      if (record.addedAt >= cutoff) return;
       this.evict(record);
     }
   }

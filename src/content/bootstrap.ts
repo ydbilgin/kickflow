@@ -46,7 +46,8 @@ import {
 } from './chat/session-context';
 import { VodChatReplayController } from './chat/vod-replay';
 import { formatVodReplayTimestamp } from './chat/timestamp';
-import { CARD_MAX_HEIGHT_INSET_PX, configureUserCardSession, configureUserMessageArchive } from './chat/user-card';
+import { CARD_MAX_HEIGHT_INSET_PX, configureUserCardSession } from './chat/user-card';
+import { configureUserMessageArchive } from './chat/archive-session';
 import { UserMessageArchive } from './chat/user-message-archive';
 import { USER_MESSAGE_TIME_COLUMN_PX } from './chat/user-message-list';
 import { buildMessageElement, clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
@@ -77,7 +78,6 @@ import {
   type HotkeyBinding,
 } from './player/hotkey-registry';
 
-const STYLE_ID = 'kickflow-styles';
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
 const OWN_LIST_ID = 'kickflow-message-list';
 const PRESERVED_SWEEP_INTERVAL_MS = 60_000;
@@ -98,6 +98,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showModeChanges',
   'showChattersBadges',
   'showUserMessages',
+  'chatSearchHotkey',
   'showModActions',
   'autoTheater',
   'captionGuard',
@@ -398,13 +399,25 @@ export async function resolveChannel(slug: string): Promise<ResolvedChannel | nu
   return null;
 }
 
+/** Id of the fallback `<style>` element, used only where constructable sheets are unavailable. */
+const FALLBACK_STYLE_ID = 'kickflow-styles';
+
+let stylesInstalled = false;
+/** The adopted stylesheet, or null when the fallback element carries the CSS instead. */
+let adoptedStyleSheet: CSSStyleSheet | null = null;
+
+/** Adopts KickFlow's stylesheet WITHOUT putting a node in the document.
+ *
+ * A `<style>` element appended to Kick's server-rendered `<head>` is a DOM change inside the tree
+ * React is still hydrating. Measured on the same VOD, one page load each: 1 × React #418 with the
+ * extension loaded, 0 × without. A constructable stylesheet applies exactly the same CSS and adds
+ * nothing for hydration to disagree with. Adopted sheets also come last in the cascade, so our
+ * rules no longer depend on where in `<head>` the element happened to land. */
 function ensureStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const style = document.createElement('style');
-  style.id = STYLE_ID;
+  if (stylesInstalled) return;
   // Images use `display: inline-block !important` + an explicit px height. Kick's page is built
   // with Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally.
-  style.textContent = `
+  const css = `
     #${OVERLAY_ROOT_ID} { display: flex; flex-direction: column; overflow: hidden; }
     #${OWN_LIST_ID} {
       flex: 1 1 auto; min-height: 0; padding: 6px 10px; overflow-y: auto; height: auto; box-sizing: border-box;
@@ -779,6 +792,27 @@ function ensureStyles(): void {
     .kickflow-user-messages--collapsed .kickflow-user-messages__body,
     .kickflow-user-messages--collapsed .kickflow-user-messages__empty,
     .kickflow-user-messages--collapsed .kickflow-user-messages__note { display: none; }
+    .kickflow-user-messages__name { color: #adadb8; font-weight: 600; }
+    /* Search reuses the archived-message row wholesale; only the input, the summary line and the
+       taller result body are its own. Heights are relative so the list follows the panel. */
+    .kickflow-search__input {
+      width: 100%; box-sizing: border-box; margin: 0 0 10px;
+      padding: 7px 10px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04);
+      color: #efeff1; font-size: 12px; font-family: inherit;
+    }
+    .kickflow-search__input::placeholder { color: #7c7c86; }
+    .kickflow-search__input:focus-visible {
+      outline: none; border-color: rgba(83,252,24,0.75); background: rgba(255,255,255,0.06);
+    }
+    .kickflow-search { display: flex; flex-direction: column; min-height: 0; }
+    .kickflow-search__results { display: flex; flex-direction: column; min-height: 0; }
+    .kickflow-search__summary {
+      flex: none; padding: 0 6px 6px; color: #8b8b93; font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .kickflow-search__note { padding: 4px 6px; color: #8b8b93; font-size: 11px; line-height: 1.5; }
+    .kickflow-search__body { max-height: 46vh; }
     .kickflow-user-card__link {
       display: inline-block; color: #66bfff; text-decoration: none; font-size: 11px;
       max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1469,7 +1503,48 @@ function ensureStyles(): void {
     }
 
   `;
+  adoptedStyleSheet = installStyleSheet(css);
+  stylesInstalled = true;
+}
+
+/** Adopts `css` and returns the sheet, or falls back to a `<style>` element and returns null.
+ *
+ * The fallback exists for one reason: jsdom has no `adoptedStyleSheets`, so without it the whole
+ * test suite would crash on boot. Chrome always takes the adoption path — which is the one that
+ * keeps a node out of React's hydration tree. Exported so both branches are covered by tests. */
+export function installStyleSheet(css: string): CSSStyleSheet | null {
+  const adopted = document.adoptedStyleSheets as CSSStyleSheet[] | undefined;
+  if (adopted && typeof CSSStyleSheet === 'function') {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...adopted, sheet];
+      return sheet;
+    } catch (error) {
+      logger.info('bootstrap: constructable stylesheet unavailable, falling back to <style>', error);
+    }
+  }
+  if (document.getElementById(FALLBACK_STYLE_ID)) return null;
+  const style = document.createElement('style');
+  style.id = FALLBACK_STYLE_ID;
+  style.textContent = css;
   document.head.appendChild(style);
+  return null;
+}
+
+/** Drops KickFlow's CSS from the page. Only zombie teardown needs this — an ordinary session end
+ * keeps the styles, because the next channel mounts the same UI. */
+function removeStyles(): void {
+  if (!stylesInstalled) return;
+  stylesInstalled = false;
+  const sheet = adoptedStyleSheet;
+  adoptedStyleSheet = null;
+  if (sheet) {
+    document.adoptedStyleSheets = (document.adoptedStyleSheets as CSSStyleSheet[])
+      .filter((entry) => entry !== sheet);
+    return;
+  }
+  document.getElementById(FALLBACK_STYLE_ID)?.remove();
 }
 
 function initNativeChatIntegrity(
@@ -1532,6 +1607,7 @@ function initNativeChatIntegrity(
       pusherConnected: false,
       reason: t('status.active_native_replay'),
     });
+    startNativeVodArchiveFeed(context, lifecycle, store);
     return;
   }
 
@@ -1582,6 +1658,40 @@ function initNativeChatIntegrity(
       setStatus({ pusherConnected: false });
     });
     client.connect();
+  });
+}
+
+/** Mode B on a VOD renders nothing of its own — Kick's replay owns the DOM. This mirrors the same
+ * replay messages into the store (and through it the archive) so the dashboard's search can find
+ * a line the reader scrolled past. Nothing here touches a row: no render, no marking.
+ *
+ * `onReset` is deliberately NOT wired to clear anything. A seek resets what Kick DISPLAYS; it does
+ * not un-see what the reader already watched, and the archive is the record of that. */
+function startNativeVodArchiveFeed(
+  context: Extract<ChatSessionContext, { kind: 'vod' }>,
+  lifecycle: Lifecycle,
+  store: ChatIntegrityStore,
+): void {
+  void resolveChannel(context.slug).then((resolved) => {
+    if (lifecycle.isDisposed || !resolved) return;
+    const replay = new VodChatReplayController(
+      lifecycle,
+      resolved.channelId,
+      context.videoId,
+      {
+        onReset: () => undefined,
+        onMessages: (messages) => {
+          let archived = 0;
+          for (const message of messages) {
+            if (store.addMessage(message)) archived += 1;
+          }
+          logger.debug('vod-archive-feed: archived', archived, 'of', messages.length);
+        },
+        onReady: () => undefined,
+        onUnavailable: () => undefined,
+      },
+    );
+    void replay.start();
   });
 }
 
@@ -2288,11 +2398,15 @@ function teardownZombie(): void {
   stopSession();
   disposeSiteLifecycle();
   configureUserCardSession(null);
+  // A dead extension context can leave the session lifecycle undisposed, and a stale archive
+  // would answer searches with a channel the reader has already left.
+  configureUserMessageArchive(null);
   document.getElementById('kickflow-chat-overlay')?.remove();
   document.querySelector('.kickflow-panel')?.remove();
   document.getElementById('kickflow-footer-toggle')?.remove();
   document.getElementById('kickflow-navbar-settings')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
+  removeStyles();
 }
 
 /** Named so extension-reload zombie teardown can remove the page-event route too. */
@@ -2402,6 +2516,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showModeChanges: featureFlags.showModeChanges,
     showChattersBadges: featureFlags.showChattersBadges,
     showUserMessages: featureFlags.showUserMessages,
+    chatSearchHotkey: featureFlags.chatSearchHotkey,
     showModActions: featureFlags.showModActions,
     autoTheater: featureFlags.autoTheater,
     captionGuard: featureFlags.captionGuard,
@@ -2526,6 +2641,7 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_showModeChanges',
     'kf_flag_showChattersBadges',
     'kf_flag_showUserMessages',
+    'kf_flag_chatSearchHotkey',
     'kf_flag_showModActions',
     'kf_flag_autoTheater',
     'kf_flag_captionGuard',
@@ -2558,6 +2674,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_showModeChanges === 'boolean') setFeatureFlag('showModeChanges', saved.kf_flag_showModeChanges);
   if (typeof saved.kf_flag_showChattersBadges === 'boolean') setFeatureFlag('showChattersBadges', saved.kf_flag_showChattersBadges);
   if (typeof saved.kf_flag_showUserMessages === 'boolean') setFeatureFlag('showUserMessages', saved.kf_flag_showUserMessages);
+  if (typeof saved.kf_flag_chatSearchHotkey === 'boolean') setFeatureFlag('chatSearchHotkey', saved.kf_flag_chatSearchHotkey);
   if (typeof saved.kf_flag_showModActions === 'boolean') setFeatureFlag('showModActions', saved.kf_flag_showModActions);
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
   if (typeof saved.kf_flag_captionGuard === 'boolean') setFeatureFlag('captionGuard', saved.kf_flag_captionGuard);
@@ -2609,14 +2726,41 @@ function installNavigationHooks(): void {
   window.addEventListener('kickflow:locationchange', handlePotentialNavigation);
 }
 
+/** Longest we wait for an idle slot before mounting anyway. */
+const PAGE_SETTLE_TIMEOUT_MS = 1_000;
+
+/** Defers the first DOM work until the page has finished loading and the browser goes idle.
+ *
+ * Kick is server-rendered React: every node an extension inserts while hydration is still running
+ * is a difference React did not expect. Measured on the same page, one load each — 1 × React #418
+ * with KickFlow loaded, 0 × without. Everything KickFlow mounts self-heals and re-injects anyway,
+ * so arriving a beat later costs nothing. Listeners and the status bridge are not deferred: they
+ * touch no DOM. */
+function afterPageSettled(mount: () => void): void {
+  const schedule = (): void => {
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(() => mount(), { timeout: PAGE_SETTLE_TIMEOUT_MS });
+      return;
+    }
+    window.setTimeout(mount, 0);
+  };
+  if (document.readyState === 'complete') {
+    schedule();
+    return;
+  }
+  window.addEventListener('load', schedule, { once: true });
+}
+
 async function main(): Promise<void> {
   await Promise.all([applySavedFlags(), loadHotkeyBindings(), loadLang()]);
   setDebugLogging(featureFlags.debugLogging);
-  initSiteLifecycle();
-  syncLayoutWatchdog();
   installStatusBridge();
   installNavigationHooks();
-  handlePotentialNavigation();
+  afterPageSettled(() => {
+    initSiteLifecycle();
+    syncLayoutWatchdog();
+    handlePotentialNavigation();
+  });
 }
 
 void main();

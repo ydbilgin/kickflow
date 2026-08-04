@@ -1,7 +1,7 @@
 import { appendBadges } from './message-view';
 import { mergeIdentityBadges } from './message-store';
 import { featureFlags } from './feature-flags';
-import { UserMessageArchive } from './user-message-archive';
+import { getUserMessageArchive } from './archive-session';
 import { buildUserMessageList, scrollUserMessageListToLatest, type UserMessageListModel } from './user-message-list';
 import { makeDraggable } from '../shared/draggable';
 import { openInNewTab, wireNewTabGestures } from '../shared/new-tab';
@@ -70,15 +70,8 @@ export interface UserCardViewModel {
 let channelSlug: string | null = null;
 const cache = new Map<string, Promise<UserCardViewModel | null>>();
 let activeCard: HTMLElement | null = null;
-let userMessageArchive: UserMessageArchive | null = null;
-
-export function configureUserMessageArchive(archive: UserMessageArchive | null): void {
-  userMessageArchive = archive;
-}
-
 export function configureUserCardSession(slug: string | null): void {
   channelSlug = slug && SAFE_SLUG_RE.test(slug) ? slug : null;
-  if (slug === null) userMessageArchive = null;
   cache.clear();
   dismissUserCard();
 }
@@ -452,6 +445,7 @@ function isUsableUserId(userId: number | null): userId is number {
 }
 
 function getUserMessageListModel(userId: number | null, names: readonly string[]): UserMessageListModel | null {
+  const userMessageArchive = getUserMessageArchive();
   if (!featureFlags.showUserMessages || !userMessageArchive) {
     return null;
   }

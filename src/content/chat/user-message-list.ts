@@ -52,7 +52,9 @@ export function buildUserMessageList(model: UserMessageListModel): HTMLElement {
     let previousLabel = '';
     for (const message of model.messages) {
       const label = formatClock(message.at);
-      body.appendChild(buildMessageRow(message, label === previousLabel ? '' : label));
+      body.appendChild(buildArchivedMessageRow(message, {
+        clockLabel: label === previousLabel ? '' : label,
+      }));
       previousLabel = label;
     }
     root.appendChild(body);
@@ -75,12 +77,24 @@ export function scrollUserMessageListToLatest(mountedCard: ParentNode): void {
   if (body) body.scrollTop = body.scrollHeight;
 }
 
-function formatClock(at: number): string {
+export function formatClock(at: number): string {
   const date = new Date(at);
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-function buildMessageRow(message: ArchivedMessage, clockLabel: string): HTMLElement {
+export interface ArchivedMessageRowOptions {
+  /** Blank keeps the grid column without repeating a clock value inside one minute. */
+  readonly clockLabel: string;
+  /** Rendered before the text. Omitted by the per-user list, where every row is the same person. */
+  readonly showUsername?: boolean;
+}
+
+/** The one archived-message row renderer. The user card's per-user list and the dashboard search
+ * both use it, so a change to how an archived message reads lands on both surfaces at once. */
+export function buildArchivedMessageRow(
+  message: ArchivedMessage,
+  options: ArchivedMessageRowOptions,
+): HTMLElement {
   const row = document.createElement('div');
   row.className = 'kickflow-user-messages__row';
   row.dataset.messageId = message.id;
@@ -97,10 +111,16 @@ function buildMessageRow(message: ArchivedMessage, clockLabel: string): HTMLElem
   const time = document.createElement('span');
   time.className = 'kickflow-user-messages__time';
   // Rendered even when blank so the text column stays on one grid line down the whole list.
-  time.textContent = clockLabel;
+  time.textContent = options.clockLabel;
 
   const text = document.createElement('span');
   text.className = 'kickflow-user-messages__text';
+  if (options.showUsername) {
+    const name = document.createElement('span');
+    name.className = 'kickflow-user-messages__name';
+    name.textContent = `${message.username}: `;
+    text.appendChild(name);
+  }
   appendParsedContent(text, message.text, { compact: true });
   line.append(time, text);
   row.appendChild(line);

@@ -102,7 +102,7 @@ describe('UserMessageArchive', () => {
 
     expect(archive.add(message)).toBe(true);
     expect(archive.getByUserId(7)).toEqual([{
-      id: 'm1', userId: 7, at: NOW, text: 'hello', replyTo: null, deleted: false,
+      id: 'm1', userId: 7, username: 'user7', at: NOW, addedAt: NOW, text: 'hello', replyTo: null, deleted: false,
     }]);
   });
 
@@ -238,7 +238,9 @@ describe('UserMessageArchive', () => {
     let now = 0;
     const archive = new UserMessageArchive({ maxAgeMs: 5, now: () => now });
 
+    // The clock advances between adds: retention counts from when the archive stored each record.
     for (let index = 0; index < 10; index += 1) {
+      now = index;
       archive.add(chatMessage(`age-${index}`, { createdAt: new Date(index).toISOString() }));
     }
 
@@ -251,19 +253,24 @@ describe('UserMessageArchive', () => {
     expect(archive.size).toBe(6);
   });
 
-  it('leaves an out-of-order age straggler for the full sweep', () => {
+  it('keeps a message whose own timestamp is old, and ages it out by how long it was held', () => {
+    // This is the VOD case: replay archives day-old messages. Expiring them by their original
+    // timestamp emptied the archive the instant it filled, so search found nothing on a VOD.
     let now = NOW;
     const archive = new UserMessageArchive({ maxAgeMs: 1_000, now: () => now });
 
-    archive.add(chatMessage('new-1', { createdAt: new Date(NOW).toISOString() }));
-    archive.add(chatMessage('new-2', { createdAt: new Date(NOW).toISOString() }));
-    archive.add(chatMessage('straggler', { createdAt: new Date(NOW - 10_000).toISOString() }));
-
-    expect(archive.getByUserId(1).map(({ id }) => id)).toEqual(['new-1', 'new-2', 'straggler']);
-
+    archive.add(chatMessage('live', { createdAt: new Date(NOW).toISOString() }));
+    archive.add(chatMessage('replayed', { createdAt: new Date(NOW - 24 * 60 * 60 * 1000).toISOString() }));
     archive.sweepExpired();
 
-    expect(archive.getByUserId(1).map(({ id }) => id)).toEqual(['new-1', 'new-2']);
+    expect(archive.getByUserId(1).map(({ id }) => id)).toEqual(['live', 'replayed']);
+    // The reader still sees the message's ORIGINAL time.
+    expect(archive.getByUserId(1)[1]?.at).toBe(NOW - 24 * 60 * 60 * 1000);
+
+    now = NOW + 1_001;
+    archive.sweepExpired();
+
+    expect(archive.getByUserId(1)).toEqual([]);
   });
 
   it('leaves no index residue after heavy churn', () => {
@@ -305,9 +312,10 @@ describe('UserMessageArchive', () => {
   });
 
   it('sweeps records older than the age cap while keeping a newer record', () => {
-    let now = 1000;
+    let now = 500;
     const archive = new UserMessageArchive({ maxAgeMs: 1000, now: () => now });
     archive.add(chatMessage('old', { createdAt: new Date(0).toISOString() }));
+    now = 1000;
     archive.add(chatMessage('new', { createdAt: new Date(1000).toISOString() }));
     now = 1501;
 
@@ -358,5 +366,43 @@ describe('UserMessageArchive', () => {
 
     expect(archive.getByUserId(1)[0]?.deleted).toBe(true);
     expect(archive.size).toBe(1);
+  });
+  it('searches newest first, requires every term, and matches the sender name', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('a', { userId: 4, content: 'kick.com/eray adresine bak' }));
+    archive.add(chatMessage('b', { userId: 5, content: 'BAK burada bir LINK var' }));
+    archive.add(chatMessage('c', { userId: 6, content: 'alakasiz mesaj' }));
+
+    // Case-insensitive, and both terms must be present in the same message.
+    expect(archive.search('bak link').matches.map((record) => record.id)).toEqual(['b']);
+    // Newest first: 'b' was archived after 'a'.
+    expect(archive.search('bak').matches.map((record) => record.id)).toEqual(['b', 'a']);
+    // The sender's name is part of the haystack, so a name alone finds that user's messages.
+    expect(archive.search('user6').matches.map((record) => record.id)).toEqual(['c']);
+    expect(archive.search('   ').matches).toEqual([]);
+    expect(archive.search('').total).toBe(0);
+  });
+
+  it('caps returned rows while still counting every match', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    for (let index = 0; index < 5; index += 1) {
+      archive.add(chatMessage(`m${index}`, { content: 'tekrar eden mesaj' }));
+    }
+
+    const result = archive.search('tekrar', 2);
+    expect(result.matches.map((record) => record.id)).toEqual(['m4', 'm3']);
+    expect(result.total).toBe(5);
+  });
+
+  it('keeps deleted messages searchable and never returns an evicted one', () => {
+    const archive = new UserMessageArchive({ now: () => NOW, maxMessages: 2 });
+    archive.add(chatMessage('old', { content: 'aranan kelime' }));
+    archive.add(chatMessage('mid', { content: 'aranan kelime' }));
+    archive.add(chatMessage('new', { content: 'aranan kelime' }));
+    archive.markDeleted('new');
+
+    const result = archive.search('aranan');
+    expect(result.matches.map((record) => record.id)).toEqual(['new', 'mid']);
+    expect(result.matches[0]?.deleted).toBe(true);
   });
 });

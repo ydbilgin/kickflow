@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildUserCardElement,
   configureUserCardSession,
-  configureUserMessageArchive,
   mapUserCardResponse,
   openUserCard,
 } from '../../src/content/chat/user-card';
+import { configureUserMessageArchive } from '../../src/content/chat/archive-session';
 import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
 import { chatMessage } from '../helpers/chat-message';
 import { setLang } from '../../src/content/shared/i18n';

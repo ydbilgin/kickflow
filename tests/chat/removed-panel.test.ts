@@ -6,6 +6,9 @@ import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { getHotkeyBindings, resetHotkeyBindings } from '../../src/content/player/hotkey-registry';
 import type { KickFlowStatusSnapshot, StatusSnapshotProvider } from '../../src/content/status';
 import { setLang, t } from '../../src/content/shared/i18n';
+import { configureUserMessageArchive } from '../../src/content/chat/archive-session';
+import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
+import { chatMessage } from '../helpers/chat-message';
 
 function statusSnapshot(overrides: Partial<KickFlowStatusSnapshot> = {}): KickFlowStatusSnapshot {
   return {
@@ -37,7 +40,7 @@ function settingsControl(section: HTMLElement, labelText: string): HTMLInputElem
   return label?.querySelector<HTMLInputElement | HTMLSelectElement>('input, select') ?? null;
 }
 
-type TestDashboardSection = 'general' | 'removed' | 'chat' | 'player' | 'rewards' | 'hotkeys' | 'about';
+type TestDashboardSection = 'general' | 'removed' | 'search' | 'chat' | 'player' | 'rewards' | 'hotkeys' | 'about';
 
 function openDashboardSection(
   panel: RemovedMessagesPanel,
@@ -432,7 +435,7 @@ describe('RemovedMessagesPanel', () => {
   });
 
   describe('dashboard structure and modal interaction', () => {
-    it('builds one labelled modal with all seven panes and switches sections in place', () => {
+    it('builds one labelled modal with all eight panes and switches sections in place', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
@@ -445,7 +448,7 @@ describe('RemovedMessagesPanel', () => {
       expect(dialog.getAttribute('aria-modal')).toBe('true');
       expect(dialog.getAttribute('aria-labelledby')).toBe('kickflow-dashboard-title');
       expect(buttons.map((button) => button.textContent)).toEqual([
-        'Genel', 'Kaldırılanlar', 'Sohbet', 'Oynatıcı', t('tab.rewards'), 'Kısayollar', 'Hakkında',
+        'Genel', 'Kaldırılanlar', 'Arama', 'Sohbet', 'Oynatıcı', t('tab.rewards'), 'Kısayollar', 'Hakkında',
       ]);
       expect(section.querySelector('.kickflow-panel__title')?.textContent).toBe('Genel');
       expect(section.querySelector<HTMLElement>('.kickflow-panel__section[data-section="general"]')?.hidden).toBe(false);
@@ -1062,6 +1065,67 @@ describe('RemovedMessagesPanel', () => {
 
       lifecycle.dispose();
       resetHotkeyBindings();
+    });
+  });
+  describe('chat search', () => {
+    afterEach(() => {
+      featureFlags.chatSearchHotkey = true;
+      configureUserMessageArchive(null);
+    });
+
+    function pressCtrlF(target: EventTarget = document): boolean {
+      const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    it('opens the Search tab focused and ready to type', () => {
+      const lifecycle = new Lifecycle();
+      const archive = new UserMessageArchive();
+      archive.add(chatMessage('m1', { content: 'kaçırdığım mesaj' }));
+      configureUserMessageArchive(archive);
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+
+      expect(pressCtrlF()).toBe(true);
+
+      const modal = document.querySelector<HTMLElement>('.kickflow-panel')!;
+      expect(panel.isOpen()).toBe(true);
+      expect(modal.querySelector<HTMLElement>('.kickflow-panel__section[data-section="search"]')!.hidden).toBe(false);
+      const input = modal.querySelector<HTMLInputElement>('.kickflow-search__input')!;
+      expect(document.activeElement).toBe(input);
+
+      input.value = 'kaçırdığım';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      expect(modal.querySelector('.kickflow-user-messages__row')?.textContent).toContain('kaçırdığım mesaj');
+      lifecycle.dispose();
+    });
+
+    it('leaves Ctrl+F to the page while typing, including inside its own box', () => {
+      const lifecycle = new Lifecycle();
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+      const kickComposer = document.createElement('input');
+      document.body.append(kickComposer);
+
+      expect(pressCtrlF(kickComposer)).toBe(false);
+      expect(panel.isOpen()).toBe(false);
+
+      panel.showSearch();
+      const ownInput = document.querySelector<HTMLInputElement>('.kickflow-search__input')!;
+      // The escape hatch back to the browser's own find.
+      expect(pressCtrlF(ownInput)).toBe(false);
+
+      kickComposer.remove();
+      lifecycle.dispose();
+    });
+
+    it('returns the chord to the browser when the setting is off', () => {
+      const lifecycle = new Lifecycle();
+      featureFlags.chatSearchHotkey = false;
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+
+      expect(pressCtrlF()).toBe(false);
+      expect(panel.isOpen()).toBe(false);
+      lifecycle.dispose();
     });
   });
 });

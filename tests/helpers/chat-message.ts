@@ -36,7 +36,9 @@ export function archivedMessage(
   return {
     id,
     userId: options.userId ?? 1,
+    username: options.username ?? `user${options.userId ?? 1}`,
     at: options.at ?? Date.parse('2026-08-01T12:00:00.000Z'),
+    addedAt: options.addedAt ?? options.at ?? Date.parse('2026-08-01T12:00:00.000Z'),
     replyTo: options.replyTo ?? null,
     text: options.text ?? id,
     deleted: options.deleted ?? false,

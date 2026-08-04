@@ -3,7 +3,8 @@ import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageE
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
-import { configureUserCardSession, configureUserMessageArchive } from '../../src/content/chat/user-card';
+import { configureUserCardSession } from '../../src/content/chat/user-card';
+import { configureUserMessageArchive } from '../../src/content/chat/archive-session';
 import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
 import {
   HOVER_TOOLTIP_ATTRIBUTE,

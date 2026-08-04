@@ -9,6 +9,37 @@ import type { ChatMessage } from './message-store';
 
 const REPLAY_BUCKET_SECONDS = 5;
 
+/** A message whose own timestamp cannot be read has no place on the playback timeline, so it is
+ * released with the first pass instead of being held back forever. */
+const IMMEDIATE_OFFSET_MS = Number.NEGATIVE_INFINITY;
+
+/** Consecutive buckets overlap, so released ids must be remembered to keep a repeat off the
+ * screen. Kick timestamps are second-granular and a busy second holds many distinct messages, so
+ * a timestamp watermark cannot do this job — only identity can. The set is trimmed to half on
+ * overflow: an id older than the last few thousand can no longer be repeated by any window. */
+const RELEASED_ID_CAP = 4_000;
+
+interface PacedMessage {
+  readonly message: ChatMessage;
+  /** Milliseconds from the VOD's start — the playback position this message belongs to. */
+  readonly offsetMs: number;
+}
+
+/** Splits messages the playhead has already reached from the ones still ahead of it. Pure so the
+ * pacing rule is testable without a video element. Both halves keep their timestamp order. */
+export function partitionDueMessages(
+  pending: readonly PacedMessage[],
+  playbackMs: number,
+): { due: PacedMessage[]; rest: PacedMessage[] } {
+  const due: PacedMessage[] = [];
+  const rest: PacedMessage[] = [];
+  for (const entry of pending) {
+    if (entry.offsetMs <= playbackMs) due.push(entry);
+    else rest.push(entry);
+  }
+  return { due, rest };
+}
+
 export type VodMetadataResult =
   | { status: 'success'; startTimeMs: number }
   | {
@@ -98,6 +129,11 @@ export class VodChatReplayController {
   private seekPending = false;
   private started = false;
   private unavailable = false;
+  /** Fetched but not yet reached by the playhead, oldest first. */
+  private pending: PacedMessage[] = [];
+  private readonly pendingIds = new Set<string>();
+  /** Ids already handed to the renderer, insertion-ordered so the cap can evict the oldest. */
+  private readonly releasedIds = new Set<string>();
 
   constructor(
     private readonly lifecycle: Lifecycle,
@@ -154,10 +190,12 @@ export class VodChatReplayController {
 
   private readonly handleTimeUpdate = (): void => {
     if (this.video?.paused !== false) return;
+    this.releaseDueMessages();
     this.queueCurrentPosition(false);
   };
 
   private readonly handlePlay = (): void => {
+    this.releaseDueMessages();
     this.queueCurrentPosition(false);
   };
 
@@ -177,7 +215,55 @@ export class VodChatReplayController {
     this.epoch += 1;
     this.lastRequestedBucket = null;
     this.queuedRequest = null;
+    this.pending = [];
+    this.pendingIds.clear();
+    this.releasedIds.clear();
     this.callbacks.onReset();
+  }
+
+  /** Buffers a fetched bucket on the playback timeline. Kick returns a whole window at once; the
+   * playhead — not the fetch — decides when each message appears, so replay flows at the rate the
+   * chat actually had instead of arriving in one lump per bucket. */
+  private acceptMessages(messages: readonly ChatMessage[]): void {
+    if (this.startTimeMs === null) return;
+    let added = false;
+    for (const message of messages) {
+      if (this.pendingIds.has(message.id) || this.releasedIds.has(message.id)) continue;
+      const parsedAt = Date.parse(message.createdAt);
+      const offsetMs = Number.isFinite(parsedAt)
+        ? parsedAt - this.startTimeMs
+        : IMMEDIATE_OFFSET_MS;
+      this.pending.push({ message, offsetMs });
+      this.pendingIds.add(message.id);
+      added = true;
+    }
+    if (added) this.pending.sort((left, right) => left.offsetMs - right.offsetMs);
+    this.releaseDueMessages();
+  }
+
+  private releaseDueMessages(): void {
+    if (this.pending.length === 0 || this.startTimeMs === null) return;
+    const currentTime = this.video?.currentTime;
+    if (currentTime === undefined || !Number.isFinite(currentTime)) return;
+
+    const { due, rest } = partitionDueMessages(this.pending, currentTime * 1_000);
+    if (due.length === 0) return;
+    this.pending = rest;
+    for (const entry of due) {
+      this.pendingIds.delete(entry.message.id);
+      this.releasedIds.add(entry.message.id);
+    }
+    this.trimReleasedIds();
+    this.callbacks.onMessages(due.map((entry) => entry.message), this.startTimeMs);
+  }
+
+  private trimReleasedIds(): void {
+    if (this.releasedIds.size <= RELEASED_ID_CAP) return;
+    const target = RELEASED_ID_CAP / 2;
+    for (const id of this.releasedIds) {
+      if (this.releasedIds.size <= target) break;
+      this.releasedIds.delete(id);
+    }
   }
 
   private queueCurrentPosition(force: boolean): void {
@@ -207,8 +293,13 @@ export class VodChatReplayController {
       while (this.queuedRequest && !this.unavailable && !this.lifecycle.isDisposed) {
         const request = this.queuedRequest;
         this.queuedRequest = null;
+        // Kick's history endpoint returns the messages ENDING at `start_time` (measured: asking
+        // for 16:39:19 returns 16:39:15 → 16:39:19). Anchoring at the bucket's START would
+        // therefore only ever return chat the playhead has already passed, which is why the whole
+        // window was due the instant it arrived. Anchoring one bucket AHEAD fetches the next five
+        // seconds, and the pacer releases each message as playback reaches it.
         const startTime = new Date(
-          this.startTimeMs! + request.bucketSeconds * 1_000,
+          this.startTimeMs! + (request.bucketSeconds + REPLAY_BUCKET_SECONDS) * 1_000,
         ).toISOString();
         const result = await this.fetchHistory(this.channelId, startTime);
         if (this.lifecycle.isDisposed || request.epoch !== this.epoch) continue;
@@ -217,7 +308,7 @@ export class VodChatReplayController {
           this.markUnavailable();
           return;
         }
-        this.callbacks.onMessages(result.messages, this.startTimeMs!);
+        this.acceptMessages(result.messages);
         this.callbacks.onReady();
       }
     } finally {
