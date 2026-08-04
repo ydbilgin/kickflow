@@ -6,7 +6,11 @@ const DAILY_REWARD_CTA_SELECTOR = 'video[src*="reward-available-CTA"]';
 const EXCLUDED_REWARD_SURFACE_SELECTOR = '#rewards-panel, #drops-panel';
 const DIALOG_SELECTOR = '[role="dialog"]';
 const FULL_WIDTH_BUTTON_SELECTOR = 'button.w-full';
-const DIALOG_WAIT_TIMEOUT_MS = 3_000;
+/** Two separate bounded waits. The first covers Kick mounting its reward window after the launcher
+ * click; the second covers the window's own entry/"celebrate" phase before the claim control is
+ * clickable. One shared 3 s deadline used to kill an attempt whose dialog had already opened. */
+const DIALOG_WAIT_TIMEOUT_MS = 6_000;
+const CLAIM_WAIT_TIMEOUT_MS = 6_000;
 const OBSERVED_ATTRIBUTE_NAMES = ['class', 'data-state', 'disabled', 'role', 'src'];
 const OBSERVER_OPTIONS: MutationObserverInit = {
   attributes: true,
@@ -163,10 +167,7 @@ export class DailyRewardAutoClaimController {
       dialog: null,
     };
     this.flow = flow;
-    this.waitTimeoutId = window.setTimeout(() => {
-      if (this.flow !== flow) return;
-      this.failAttempt('dialog did not mount before the bounded wait ended');
-    }, DIALOG_WAIT_TIMEOUT_MS);
+    this.restartWait(flow, DIALOG_WAIT_TIMEOUT_MS, 'dialog did not mount before the bounded wait ended');
 
     logger.info('daily-reward-auto-claim: opening Kick’s daily reward window');
     try {
@@ -181,14 +182,15 @@ export class DailyRewardAutoClaimController {
   private advanceFlow(): void {
     const flow = this.flow;
     if (!flow || this.lifecycle.isDisposed || !featureFlags.autoClaimDailyReward) return;
-    if (!findDailyRewardVideo()) {
-      this.failAttempt('the claimable CTA disappeared before the claim step');
-      return;
-    }
 
     if (!flow.dialog) {
+      // The CTA is the TRIGGER, and nothing more. Kick removes it from the navbar in the same tick
+      // the reward window opens, so re-checking it here aborted every attempt before the dialog was
+      // even looked for — measured live 2026-08-04, that check alone killed the whole feature. An
+      // attempt that opens nothing is already bounded by the two waits below.
       flow.dialog = findOpenedDialog(flow.dialogsBeforeOpen);
       if (!flow.dialog) return;
+      this.restartWait(flow, CLAIM_WAIT_TIMEOUT_MS, 'the reward window opened but its claim button never became clickable');
     }
 
     if (!flow.dialog.isConnected) {
@@ -234,6 +236,16 @@ export class DailyRewardAutoClaimController {
 
     logger.info('daily-reward-auto-claim: closing the daily-reward window with its launcher toggle');
     flow.launcher.click();
+  }
+
+  /** Replaces the flow's bounded wait. Each phase gets its own deadline and its own reason, so a
+   * failure names the step that actually stalled. */
+  private restartWait(flow: RewardFlow, timeoutMs: number, reason: string): void {
+    if (this.waitTimeoutId !== null) window.clearTimeout(this.waitTimeoutId);
+    this.waitTimeoutId = window.setTimeout(() => {
+      if (this.flow !== flow) return;
+      this.failAttempt(reason);
+    }, timeoutMs);
   }
 
   private failAttempt(reason: string, error?: unknown): void {

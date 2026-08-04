@@ -206,6 +206,30 @@ describe('Daily reward auto-claim controller', () => {
     }
   });
 
+  it('still claims when Kick drops the navbar CTA as the reward window opens', () => {
+    // Live 2026-08-04: every attempt died on "the claimable CTA disappeared before the claim step".
+    // Kick removes the CTA from the navbar the moment its window opens, so the CTA can only be a
+    // precondition for OPENING the window — never for claiming inside it.
+    const fixture = installRewardFixture();
+    fixture.launcher.addEventListener('click', () => fixture.video.remove(), { once: true });
+    const clicked: string[] = [];
+    const listener = (event: Event): void => {
+      if (event.target === fixture.launcher) clicked.push('launcher');
+      if (event.target === fixture.getClaimButtons()[0]) clicked.push('claim');
+    };
+    document.addEventListener('click', listener, true);
+
+    try {
+      new DailyRewardAutoClaimController(lifecycle);
+
+      expect(fixture.video.isConnected).toBe(false);
+      expect(clicked).toEqual(['launcher', 'claim', 'launcher']);
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+      document.removeEventListener('click', listener, true);
+    }
+  });
+
   it('does not click a disabled final claim button and closes the dialog', () => {
     const fixture = installRewardFixture(true);
     const launcherClick = vi.spyOn(fixture.launcher, 'click');

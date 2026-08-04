@@ -1760,24 +1760,55 @@ function initOwnChatIntegrity(
   let renderQueue: RenderQueue | null = null;
   let pendingCount = 0;
   let scrollFollow: ScrollFollowController;
+  let pillShownAtMs = 0;
+  let pillHideTimerId: number | null = null;
+  const cancelPillHide = (): void => {
+    if (pillHideTimerId === null) return;
+    window.clearTimeout(pillHideTimerId);
+    pillHideTimerId = null;
+  };
+  lifecycle.add(cancelPillHide);
+
+  const hidePendingPill = (): void => {
+    scrollPill.textContent = t('chat.new_messages');
+    scrollPill.style.display = 'none';
+  };
+
+  /** Hides only after the pill has been readable for a moment. On a quiet channel the metered
+   * backlog oscillates 1 → 0 → 1 every release interval, and hiding on each zero made the pill
+   * blink instead of inform. */
+  const schedulePillHide = (): void => {
+    if (pillHideTimerId !== null) return;
+    const remaining = Math.max(0, PILL_MIN_VISIBLE_MS - (Date.now() - pillShownAtMs));
+    pillHideTimerId = window.setTimeout(() => {
+      pillHideTimerId = null;
+      if (pendingCount > 0 && hovered && scrollFollow.isPinned) return;
+      hidePendingPill();
+    }, remaining);
+  };
+
   function updatePendingPill(nextCount: number): void {
     pendingCount = nextCount;
     if (!hoverMeter) return;
-    if (hovered && scrollFollow.isPinned && nextCount > 0) {
+    const pinned = scrollFollow.isPinned;
+    const visible = scrollPill.style.display !== 'none';
+    // A single queued message is not a backlog — it is on screen 250 ms later either way, so the
+    // pill stays out of the way until there is something worth flushing. Once up, it keeps
+    // counting down through 1 rather than vanishing mid-drain.
+    if (pinned && nextCount > 0 && (visible || (hovered && nextCount >= PILL_MIN_PENDING))) {
+      cancelPillHide();
       scrollPill.textContent = t('chat.new_messages_count', {
         n: nextCount,
         count: formatNumber(nextCount),
       });
+      if (!visible) pillShownAtMs = Date.now();
       scrollPill.style.display = '';
       return;
     }
     // Deliberately NOT gated on `hovered`: the pointer leaving is exactly when the backlog drains
     // to zero, and requiring hover here would leave the pill on screen showing the last count it
     // had. Still gated on `isPinned`, because a reader who scrolled up owns the pill.
-    if (nextCount === 0 && scrollFollow.isPinned) {
-      scrollPill.textContent = t('chat.new_messages');
-      scrollPill.style.display = 'none';
-    }
+    if (pinned && visible) schedulePillHide();
   }
   scrollFollow = new ScrollFollowController(ownList, {
     onPinnedChange: (pinned) => {
@@ -2727,6 +2758,12 @@ function installNavigationHooks(): void {
 }
 
 /** Longest we wait for an idle slot before mounting anyway. */
+/** Backlog size before the metered "new messages" pill is worth showing, and how long it stays up
+ * once shown. Kick admits one queued row every 250 ms, so on a quiet channel the pending count
+ * oscillates between 1 and 0 and a naive pill blinks on every release. */
+const PILL_MIN_PENDING = 2;
+const PILL_MIN_VISIBLE_MS = 700;
+
 const PAGE_SETTLE_TIMEOUT_MS = 1_000;
 
 /** Defers the first DOM work until the page has finished loading and the browser goes idle.
