@@ -9,20 +9,21 @@ const CONTROLS_ID = 'kickflow-screenshot-controls';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/** One solid path with an evenodd lens cut-out, matching Kick's own `[&_svg]:fill-current`
+ * player icons. A stroked outline here was the tell that the control was not native. */
 function createCameraIcon(): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
 
   const body = document.createElementNS(SVG_NS, 'path');
-  body.setAttribute('d', 'M3 9a2 2 0 0 1 2-2h2l1.2-1.7a1 1 0 0 1 .8-.4h6a1 1 0 0 1 .8.4L17 7h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
+  body.setAttribute(
+    'd',
+    'M9.1 4h5.8a1 1 0 0 1 .83.45L16.74 6H19a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 19 20H5a2.5 2.5 0 0 1-2.5-2.5v-9A2.5 2.5 0 0 1 5 6h2.26l1.01-1.55A1 1 0 0 1 9.1 4z'
+      + 'M12 9.5a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2z',
+  );
 
-  const lens = document.createElementNS(SVG_NS, 'circle');
-  lens.setAttribute('cx', '12');
-  lens.setAttribute('cy', '13');
-  lens.setAttribute('r', '3.2');
-
-  svg.append(body, lens);
+  svg.append(body);
   return svg;
 }
 

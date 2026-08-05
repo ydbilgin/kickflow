@@ -1395,79 +1395,78 @@ function ensureStyles(): void {
     .kickflow-navbar-settings--active { background: rgba(83,252,24,.13); border-color: rgba(83,252,24,.45); }
     .kickflow-navbar-settings:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
 
-    /* --- Player controls, injected inline into Kick's native control bar. Global classes
-       (not scoped to the chat list): they live inside Kick's dark bar and are styled to sit
-       flush with the native buttons while keeping fixed dimensions across re-renders. --- */
+    /* --- Player controls, injected inline into Kick's native control bar.
+       These are NOT styled to a KickFlow identity: the goal is to be indistinguishable from
+       the buttons Kick puts either side of them. Every value below is Kick's own, read out of
+       its production bundle (2026-08-05) rather than eyeballed —
+       buttonIconVariants base + size:xl + variant:link:
+         size-11        -> 44x44 box
+         rounded        -> 4px radius
+         bg-transparent -> NO chip background; native player buttons are bare icons
+         text-xl + [&_svg]:size-[1em] -> 20px icon, [&_svg]:fill-current -> FILLED, not stroked
+         active:scale-[0.95]
+       and the group's own "flex flex-row items-center gap-2 lg:gap-0" -> no gap on desktop.
+       The permanent translucent chips and the border-left separators this replaced were the
+       whole reason the cluster read as bolted on. Hover keeps a state layer, matching the
+       treatment Kick uses on its non-link icon buttons, so the affordance survives. --- */
     .kickflow-player-group {
-      display: inline-flex; align-items: center; gap: 5px;
-      height: 32px; margin-left: 5px;
-      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
-    }
-    .kickflow-player-group--lead {
-      margin-left: 6px; padding-left: 8px;
-      border-left: 1px solid rgba(255,255,255,0.18);
+      display: inline-flex; align-items: center; gap: 0;
+      height: 44px;
     }
     .kickflow-player-btn,
     .kickflow-speed-btn {
       appearance: none;
       display: inline-flex; align-items: center; justify-content: center;
       margin: 0; border: 0; color: #fff; line-height: 1; white-space: nowrap; cursor: pointer;
-      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
-      transition: background .14s ease, opacity .14s ease, transform .09s ease, color .14s ease;
+      /* Kick's bar owns the type: inheriting is what makes the text sit native. */
+      font: inherit; font-size: 14px; font-weight: 600;
+      transition: background .14s ease, color .14s ease, transform .09s ease;
     }
     .kickflow-player-btn {
-      gap: 3px; height: 32px; min-width: 32px; padding: 0 10px; border-radius: 999px;
-      background: rgba(255,255,255,0.07); opacity: 0.82; font-size: 12px; font-weight: 600;
+      gap: 2px; height: 44px; min-width: 44px; padding: 0 6px; border-radius: 4px;
+      background: transparent;
     }
     .kickflow-player-btn:hover,
     .kickflow-speed-btn:hover {
-      background: rgba(255,255,255,0.16); opacity: 1;
+      background: rgba(255,255,255,0.10);
     }
     .kickflow-player-btn:active,
     .kickflow-speed-btn:active {
-      background: rgba(255,255,255,0.24); transform: scale(0.94);
+      background: rgba(255,255,255,0.16); transform: scale(0.95);
     }
     .kickflow-player-btn:focus-visible,
     .kickflow-speed-btn:focus-visible {
-      outline: 2px solid #53fc18; outline-offset: 1px;
+      outline: 2px solid #53fc18; outline-offset: -2px;
     }
     .kickflow-player-btn svg {
-      width: 15px; height: 15px; display: block;
-      fill: none; stroke: currentColor; stroke-width: 2.3;
-      stroke-linecap: round; stroke-linejoin: round;
+      width: 20px; height: 20px; display: block;
+      fill: currentColor; fill-rule: evenodd; stroke: none;
     }
-    .kickflow-seek-pill {
-      display: inline-flex; align-items: stretch; height: 32px; overflow: hidden;
-      border-radius: 999px; background: rgba(255,255,255,0.07);
+    .kickflow-player-btn__step {
+      font-variant-numeric: tabular-nums; font-size: 13px;
     }
-    .kickflow-seek-pill__btn {
-      height: 32px; min-width: 49px; border-radius: 0; padding: 0 8px;
-      background: transparent;
-    }
-    .kickflow-seek-pill__btn + .kickflow-seek-pill__btn {
-      border-left: 1px solid rgba(255,255,255,0.18);
-    }
-    .kickflow-seek-pill__btn:active { transform: none; }
+    /* The fixed width reserves room for the "-Xsn" suffix so nothing to the right ever shifts
+       when it appears. Content is LEFT-aligned inside that reserved box rather than centred:
+       centring makes the short "CANLI" state float in dead air on both sides, which is the one
+       thing that still read as bolted-on once the chips were gone. */
     .kickflow-player-btn--live {
-      min-width: 112px; font-weight: 700; padding: 0 12px;
+      min-width: 112px; padding: 0 8px; gap: 5px; justify-content: flex-start;
       font-variant-numeric: tabular-nums;
     }
     .kickflow-player-btn--live::before {
-      content: ''; width: 7px; height: 7px; margin-right: 2px; border-radius: 50%;
-      background: #e9113c; box-shadow: 0 0 5px rgba(233,17,60,0.7);
-      transition: background .14s ease, box-shadow .14s ease;
+      content: ''; width: 7px; height: 7px; border-radius: 50%; flex: none;
+      background: #e9113c;
+      transition: background .14s ease;
     }
-    .kickflow-player-btn--behind {
-      background: rgba(255,176,32,0.14); color: #ffb020; opacity: 0.95;
-    }
-    .kickflow-player-btn--behind:hover { background: rgba(255,176,32,0.26); }
-    .kickflow-player-btn--behind::before {
-      background: #ffb020; box-shadow: 0 0 5px rgba(255,176,32,0.7);
-    }
+    /* Behind-live reads as coloured TEXT, not a filled chip: Kick tints type and leaves the
+       button transparent, and a lone amber block in a bar of bare icons is exactly what the
+       owner called crude. */
+    .kickflow-player-btn--behind { color: #ffb020; }
+    .kickflow-player-btn--behind::before { background: #ffb020; }
     .kickflow-speed-btn {
-      height: 32px; min-width: 64px; padding: 0 12px; border-radius: 999px;
-      background: rgba(255,255,255,0.07); opacity: 0.9;
-      font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+      height: 44px; min-width: 52px; padding: 0 8px; border-radius: 4px;
+      background: transparent;
+      font-variant-numeric: tabular-nums;
     }
     .kickflow-speed-menu {
       position: fixed; z-index: 2147483647; min-width: 128px; padding: 6px;

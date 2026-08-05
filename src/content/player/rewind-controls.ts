@@ -180,10 +180,13 @@ function seekBy(video: HTMLVideoElement, delta: number): void {
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const REWIND_PATHS = ['M13 6l-6 6 6 6', 'M19 6l-6 6 6 6'];
-const FORWARD_PATHS = ['M11 6l6 6-6 6', 'M5 6l6 6-6 6'];
+// Solid double triangles rather than stroked chevrons: every icon Kick draws in this bar is
+// `[&_svg]:fill-current`, so an outline shape is the single most visible tell that a control
+// is not native.
+const REWIND_PATHS = ['M11.5 5.4v13.2L2.8 12z', 'M21.2 5.4v13.2L12.5 12z'];
+const FORWARD_PATHS = ['M2.8 5.4v13.2L11.5 12z', 'M12.5 5.4v13.2L21.2 12z'];
 
-function createChevronIcon(paths: string[]): SVGSVGElement {
+function createSeekIcon(paths: string[]): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
@@ -197,6 +200,7 @@ function createChevronIcon(paths: string[]): SVGSVGElement {
 
 function createStepLabel(): HTMLSpanElement {
   const label = document.createElement('span');
+  label.className = 'kickflow-player-btn__step';
   label.textContent = String(STEP_SECONDS);
   return label;
 }
@@ -241,20 +245,17 @@ export function initRewindControls(lifecycle: Lifecycle): void {
 
   mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
     const group = document.createElement('span');
-    group.className = 'kickflow-player-group kickflow-player-group--lead';
-
-    const seekPill = document.createElement('span');
-    seekPill.className = 'kickflow-seek-pill';
+    group.className = 'kickflow-player-group';
 
     const rewind = document.createElement('button');
     rewind.type = 'button';
-    rewind.className = 'kickflow-player-btn kickflow-seek-pill__btn';
-    rewind.append(createChevronIcon(REWIND_PATHS), createStepLabel());
+    rewind.className = 'kickflow-player-btn';
+    rewind.append(createSeekIcon(REWIND_PATHS), createStepLabel());
 
     const forward = document.createElement('button');
     forward.type = 'button';
-    forward.className = 'kickflow-player-btn kickflow-seek-pill__btn';
-    forward.append(createStepLabel(), createChevronIcon(FORWARD_PATHS));
+    forward.className = 'kickflow-player-btn';
+    forward.append(createStepLabel(), createSeekIcon(FORWARD_PATHS));
     rewindButton = rewind;
     forwardButton = forward;
     updateHotkeyTitles();
@@ -274,8 +275,7 @@ export function initRewindControls(lifecycle: Lifecycle): void {
       if (current) seekBy(current, STEP_SECONDS);
     });
 
-    seekPill.append(rewind, forward);
-    group.append(seekPill);
+    group.append(rewind, forward);
     return group;
   });
 }
