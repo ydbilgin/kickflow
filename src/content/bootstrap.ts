@@ -63,6 +63,7 @@ import { initQualityLock } from './player/quality-lock';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
 import { initRewindControls } from './player/rewind-controls';
+import { initSeekBar } from './player/seek-bar';
 import { deactivateSpeedControls, initSpeedControls } from './player/speed-controls';
 import { initScreenshot } from './player/screenshot';
 import { initAutoTheater, syncAutoTheaterFlag } from './player/auto-theater';
@@ -103,6 +104,7 @@ const BOOLEAN_FLAG_KEYS = [
   'autoTheater',
   'captionGuard',
   'rewindControls',
+  'seekBar',
   'liveCatchup',
   'qualityLock',
   'screenshot',
@@ -127,6 +129,7 @@ type HighlightColorFlagKey = (typeof HIGHLIGHT_COLOR_FLAG_KEYS)[number];
 const PLAYER_FEATURE_KEYS = [
   'captionGuard',
   'rewindControls',
+  'seekBar',
   'liveCatchup',
   'qualityLock',
   'screenshot',
@@ -1468,6 +1471,35 @@ function ensureStyles(): void {
       background: transparent;
       font-variant-numeric: tabular-nums;
     }
+
+    /* --- Seek bar. The geometry and colours come from Kick's OWN utility classes, which the
+       element carries; this sheet is adopted and therefore wins the cascade, so it must only
+       declare what Kick does not, or it would defeat the parity it is here to preserve.
+       Declared here: the thumb's placement and hover reveal, and the hover thickening — all of
+       which Kick expresses through variants (group-hover, betterhover) we cannot rely on. --- */
+    .kickflow-seek-bar { cursor: pointer; touch-action: none; }
+    .kickflow-seek-bar[hidden] { display: none; }
+    .kickflow-seek-bar__track { transition: height .12s ease; }
+    .kickflow-seek-bar:hover .kickflow-seek-bar__track { height: 6px; }
+    .kickflow-seek-bar__range { transition: none; }
+    /* 16px thumb centred on the 4px track that sits at the bar's bottom edge:
+       half the thumb (8) minus half the track (2) = 6px below it. */
+    .kickflow-seek-bar__thumb {
+      bottom: -6px; margin-left: -8px; display: none; pointer-events: none;
+    }
+    .kickflow-seek-bar:hover .kickflow-seek-bar__thumb { display: block; }
+    /* Only painted when Kick's utility classes stopped resolving. Values measured from Kick's
+       stylesheet 2026-08-05: bg-subtle/50 #929ea680, bg-green-500 / bg-primary-base #53fc18. */
+    .kickflow-seek-bar--fallback { position: absolute; top: -28px; left: 0; width: 100%; height: 20px; }
+    .kickflow-seek-bar--fallback .kickflow-seek-bar__track {
+      position: absolute; bottom: 0; left: 0; width: 100%; height: 4px; background: #929ea680;
+    }
+    .kickflow-seek-bar--fallback .kickflow-seek-bar__range {
+      position: absolute; height: 100%; background: #53fc18;
+    }
+    .kickflow-seek-bar--fallback .kickflow-seek-bar__thumb {
+      position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #53fc18;
+    }
     .kickflow-speed-menu {
       position: fixed; z-index: 2147483647; min-width: 128px; padding: 6px;
       border: 1px solid rgba(255,255,255,0.16); border-radius: 8px;
@@ -2115,6 +2147,7 @@ export function initChatIntegrity(
 const playerFeatureInitializers: Record<PlayerFeatureFlagKey, (lifecycle: Lifecycle) => void> = {
   captionGuard: initCaptionGuard,
   rewindControls: initRewindControls,
+  seekBar: initSeekBar,
   liveCatchup: initLiveCatchup,
   qualityLock: initQualityLock,
   screenshot: initScreenshot,
@@ -2551,6 +2584,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     autoTheater: featureFlags.autoTheater,
     captionGuard: featureFlags.captionGuard,
     rewindControls: featureFlags.rewindControls,
+    seekBar: featureFlags.seekBar,
     liveCatchup: featureFlags.liveCatchup,
     qualityLock: featureFlags.qualityLock,
     screenshot: featureFlags.screenshot,
@@ -2709,6 +2743,7 @@ export async function applySavedFlags(): Promise<void> {
   if (typeof saved.kf_flag_autoTheater === 'boolean') setFeatureFlag('autoTheater', saved.kf_flag_autoTheater);
   if (typeof saved.kf_flag_captionGuard === 'boolean') setFeatureFlag('captionGuard', saved.kf_flag_captionGuard);
   if (typeof saved.kf_flag_rewindControls === 'boolean') setFeatureFlag('rewindControls', saved.kf_flag_rewindControls);
+  if (typeof saved.kf_flag_seekBar === 'boolean') setFeatureFlag('seekBar', saved.kf_flag_seekBar);
   if (typeof saved.kf_flag_liveCatchup === 'boolean') setFeatureFlag('liveCatchup', saved.kf_flag_liveCatchup);
   if (typeof saved.kf_flag_qualityLock === 'boolean') setFeatureFlag('qualityLock', saved.kf_flag_qualityLock);
   if (typeof saved.kf_flag_screenshot === 'boolean') setFeatureFlag('screenshot', saved.kf_flag_screenshot);

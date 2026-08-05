@@ -171,6 +171,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private autoTheaterCheckbox: HTMLInputElement | null = null;
   private captionGuardCheckbox: HTMLInputElement | null = null;
   private rewindControlsCheckbox: HTMLInputElement | null = null;
+  private seekBarCheckbox: HTMLInputElement | null = null;
   private liveCatchupCheckbox: HTMLInputElement | null = null;
   private qualityLockCheckbox: HTMLInputElement | null = null;
   private screenshotCheckbox: HTMLInputElement | null = null;
@@ -727,6 +728,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.rewindControlsCheckbox = rewindControlsCheckbox;
 
+    const { label: seekBarLabel, checkbox: seekBarCheckbox } = this.buildSettingsToggle(
+      t('setting.seek_bar'), t('setting.seek_bar_desc'), 'seekBar', featureFlags.seekBar,
+    );
+    this.seekBarCheckbox = seekBarCheckbox;
+
     const { label: liveCatchupLabel, checkbox: liveCatchupCheckbox } = this.buildSettingsToggle(
       t('setting.live_catchup'), t('setting.live_catchup_desc'), 'liveCatchup', featureFlags.liveCatchup,
     );
@@ -751,6 +757,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       autoTheaterLabel,
       captionGuardLabel,
       rewindControlsLabel,
+      seekBarLabel,
       liveCatchupLabel,
       qualityLockLabel,
       screenshotLabel,
@@ -1420,6 +1427,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.rewindControlsCheckbox && this.rewindControlsCheckbox.checked !== featureFlags.rewindControls) {
       this.rewindControlsCheckbox.checked = featureFlags.rewindControls;
     }
+    if (this.seekBarCheckbox && this.seekBarCheckbox.checked !== featureFlags.seekBar) {
+      this.seekBarCheckbox.checked = featureFlags.seekBar;
+    }
     if (this.liveCatchupCheckbox && this.liveCatchupCheckbox.checked !== featureFlags.liveCatchup) {
       this.liveCatchupCheckbox.checked = featureFlags.liveCatchup;
     }
@@ -1552,6 +1562,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.autoTheaterCheckbox = null;
     this.captionGuardCheckbox = null;
     this.rewindControlsCheckbox = null;
+    this.seekBarCheckbox = null;
     this.liveCatchupCheckbox = null;
     this.qualityLockCheckbox = null;
     this.screenshotCheckbox = null;

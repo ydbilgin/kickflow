@@ -1,5 +1,5 @@
 import { logger } from '../shared/logger';
-import { findLiveButton, findPlayerWrapper } from '../shared/selectors';
+import { findControlBar, findLiveButton, findPlayerWrapper } from '../shared/selectors';
 import type { Lifecycle } from '../shared/lifecycle';
 
 const OBSERVER_DEBOUNCE_MS = 150;
@@ -31,6 +31,10 @@ const controlOwners = new WeakMap<HTMLElement, NativeBarMountManager>();
 
 class NativeBarMountManager {
   private readonly controls = new Map<string, RegisteredControl>();
+  /** Children of the BAR itself rather than of the button row. The seek bar is absolutely
+   * positioned against the bar's own box, so it cannot live beside the buttons. Same manager,
+   * same observers, same rebuild-survival — only the insertion point differs. */
+  private readonly rootControls = new Map<string, RegisteredControl>();
   private readonly wrapperObserver = new MutationObserver(() => this.handleMutation());
   private readonly wrapperRebindObserver = new MutationObserver(() => this.handleMutation());
   // Kick's theatre-mode layout (fixed positioning + a calc(100vw - var(--chat-width)) bar
@@ -58,10 +62,23 @@ class NativeBarMountManager {
   }
 
   mount(ownerLifecycle: Lifecycle, id: string, build: () => HTMLElement): HTMLElement | null {
-    let control = this.controls.get(id);
+    return this.register(this.controls, ownerLifecycle, id, build);
+  }
+
+  mountRoot(ownerLifecycle: Lifecycle, id: string, build: () => HTMLElement): HTMLElement | null {
+    return this.register(this.rootControls, ownerLifecycle, id, build);
+  }
+
+  private register(
+    registry: Map<string, RegisteredControl>,
+    ownerLifecycle: Lifecycle,
+    id: string,
+    build: () => HTMLElement,
+  ): HTMLElement | null {
+    let control = registry.get(id);
     if (!control) {
       control = { id, build, element: null };
-      this.controls.set(id, control);
+      registry.set(id, control);
       ownerLifecycle.add(() => this.unmount(id));
     }
 
@@ -70,13 +87,14 @@ class NativeBarMountManager {
   }
 
   private unmount(id: string): void {
-    const control = this.controls.get(id);
+    const registry = this.controls.has(id) ? this.controls : this.rootControls;
+    const control = registry.get(id);
     if (!control) return;
     control.element?.remove();
     if (control.element) controlOwners.delete(control.element);
     const existing = document.getElementById(id);
     if (existing instanceof HTMLElement && controlOwners.get(existing) === this) existing.remove();
-    this.controls.delete(id);
+    registry.delete(id);
     this.ensureAll();
   }
 
@@ -106,9 +124,7 @@ class NativeBarMountManager {
   }
 
   private hasMissingControl(): boolean {
-    const orderedControls = Array.from(this.controls.values())
-      .sort((left, right) => controlPriority(left.id) - controlPriority(right.id));
-    for (const control of orderedControls) {
+    for (const control of [...this.controls.values(), ...this.rootControls.values()]) {
       if (!(document.getElementById(control.id) instanceof HTMLElement)) return true;
     }
     return false;
@@ -143,9 +159,12 @@ class NativeBarMountManager {
   /** Restores every registered group after the LIVE button in registry order. Cached elements
    * are moved back into the new bar, preserving listeners and dynamic button state. */
   private ensureAll(): void {
-    if (this.disposed || this.controls.size === 0) return;
+    if (this.disposed || (this.controls.size === 0 && this.rootControls.size === 0)) return;
 
     this.rebindWrapper();
+    this.ensureRootControls();
+
+    if (this.controls.size === 0) return;
     const liveButton = findLiveButton();
     const parent = liveButton?.parentElement;
     if (!liveButton || !parent) {
@@ -183,6 +202,35 @@ class NativeBarMountManager {
     this.clearRetry();
   }
 
+  /** Bar-level children are order-independent (each is absolutely positioned against the bar),
+   * so they only ever need to BE in the bar — never to sit at a particular index. */
+  private ensureRootControls(): void {
+    if (this.rootControls.size === 0) return;
+    const bar = findControlBar();
+    if (!bar) {
+      this.scheduleRetry();
+      return;
+    }
+    for (const control of this.rootControls.values()) {
+      const existing = document.getElementById(control.id);
+      if (existing instanceof HTMLElement && existing !== control.element) {
+        if (controlOwners.get(existing) && controlOwners.get(existing) !== this) {
+          this.scheduleRetry();
+          return;
+        }
+        existing.remove();
+      }
+      let element = control.element;
+      if (!element) {
+        element = control.build();
+        element.id = control.id;
+        control.element = element;
+        controlOwners.set(element, this);
+      }
+      if (element.parentElement !== bar) bar.append(element);
+    }
+  }
+
   private dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -192,7 +240,7 @@ class NativeBarMountManager {
     if (this.trailingEnsureTimer !== null) window.clearTimeout(this.trailingEnsureTimer);
     this.clearRetry();
 
-    for (const control of this.controls.values()) {
+    for (const control of [...this.controls.values(), ...this.rootControls.values()]) {
       control.element?.remove();
       if (control.element) controlOwners.delete(control.element);
       const existing = document.getElementById(control.id);
@@ -200,6 +248,7 @@ class NativeBarMountManager {
       control.element = null;
     }
     this.controls.clear();
+    this.rootControls.clear();
     managers.delete(this.lifecycle);
   }
 }
@@ -215,19 +264,36 @@ class NativeBarMountManager {
  */
 export function mountIntoControlBar(lifecycle: Lifecycle, id: string, build: () => HTMLElement): HTMLElement | null {
   if (lifecycle.isDisposed) return null;
+  const mounted = managerFor(lifecycle).mount(lifecycle, id, build);
+  if (!mounted) {
+    logger.debug('native-bar: control bar/LIVE button not present yet for', id, '- retrying');
+  }
+  return mounted;
+}
 
+/**
+ * Same manager and the same survival guarantees as `mountIntoControlBar`, but the element
+ * becomes a direct child of the control BAR instead of the button row, and needs no LIVE-button
+ * anchor. For chrome that is positioned against the bar's own box rather than sequenced among
+ * the buttons — the seek bar, which Kick itself places at `-top-7` spanning the full width.
+ */
+export function mountIntoControlBarRoot(lifecycle: Lifecycle, id: string, build: () => HTMLElement): HTMLElement | null {
+  if (lifecycle.isDisposed) return null;
+  const mounted = managerFor(lifecycle).mountRoot(lifecycle, id, build);
+  if (!mounted) {
+    logger.debug('native-bar: control bar not present yet for', id, '- retrying');
+  }
+  return mounted;
+}
+
+function managerFor(lifecycle: Lifecycle): NativeBarMountManager {
   const managerLifecycle = managerAliases.get(lifecycle) ?? lifecycle;
   let manager = managers.get(managerLifecycle);
   if (!manager) {
     manager = new NativeBarMountManager(managerLifecycle);
     managers.set(managerLifecycle, manager);
   }
-
-  const mounted = manager.mount(lifecycle, id, build);
-  if (!mounted) {
-    logger.debug('native-bar: control bar/LIVE button not present yet for', id, '- retrying');
-  }
-  return mounted;
+  return manager;
 }
 
 /** Lets independently disposable feature lifecycles share one ordered native-bar manager owned

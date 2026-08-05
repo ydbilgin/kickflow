@@ -45,6 +45,7 @@ export interface FeatureFlags {
   captionGuard: boolean;
   /** Show the 10-second rewind/forward controls and enable their configured hotkeys. */
   rewindControls: boolean;
+  seekBar: boolean;
   /** Show the CANLI/behind-live control and run automatic catch-up. */
   liveCatchup: boolean;
   /** Select the highest currently available stream quality after media loads. */
@@ -101,6 +102,7 @@ export const featureFlags: FeatureFlags = {
   autoTheater: false,
   captionGuard: true,
   rewindControls: true,
+  seekBar: true,
   liveCatchup: true,
   qualityLock: true,
   screenshot: true,

@@ -231,6 +231,8 @@ export const messages = {
   'setting.caption_guard_desc': { en: 'Prevents Kick from silently restoring captions after a reload. You can still turn them on manually for the current session.', tr: 'Kick’in altyazıyı yenilemeden sonra sessizce geri açmasını önler. Geçerli oturumda yine elle açabilirsin.' },
   'setting.seek': { en: 'Seek back / forward', tr: 'Geri / ileri sarma' },
   'setting.seek_desc': { en: 'Adds 10-second seek buttons to the control bar.', tr: 'Kontrol çubuğuna 10 saniyelik sarma düğmeleri ekler.' },
+  'setting.seek_bar': { en: 'Seek bar', tr: 'Sarma çubuğu' },
+  'setting.seek_bar_desc': { en: "Draws the green position bar whenever Kick leaves it out, which it often does on a live stream.", tr: 'Kick canlı yayında sık sık çizmediği yeşil konum çubuğunu, çizmediği zaman bizim çizmemizi sağlar.' },
   'setting.live_catchup': { en: 'Live catch-up', tr: 'Canlıya yetişme' },
   'setting.live_catchup_desc': { en: 'Carefully accelerates playback when the stream falls behind.', tr: 'Geride kalınca yayını kontrollü biçimde hızlandırır.' },
   'setting.quality_lock': { en: 'Highest quality', tr: 'En yüksek kalite' },
