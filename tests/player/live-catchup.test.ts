@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { catchupLiveEdge, decideCatchup, initLiveCatchup, isLiveStream, type CatchupAction } from '../../src/content/player/live-catchup';
+import { catchupLiveEdge, decideCatchup, goLiveTarget, initLiveCatchup, isLiveStream, type CatchupAction } from '../../src/content/player/live-catchup';
 import { setAutoMode, setManualRate } from '../../src/content/player/player-state';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { fakeTimeRanges } from '../helpers/timeRanges';
@@ -269,6 +269,63 @@ describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
     findCanliButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(video.currentTime).toBe(1704); // go-live still targets the seekable DVR endpoint
     lifecycle.dispose();
+  });
+
+  it('closes the gap it advertises in the sentinel regime instead of clicking an inert LIVE badge', () => {
+    // Owner-reported 2026-08-05: the button read "-4sn" but clicking it did nothing. The label
+    // came from buffered (the only sane reading in this regime) while go-live consulted seekable
+    // alone, found the 2^30 sentinel, and fell through to Kick's control — which is a plain LIVE
+    // badge here, because Kick has no DVR source and therefore no go-to-live button.
+    const { video, lifecycle } = mountLivePlayer(42.6, 46.6);
+    setSeekable(video, 0, 2 ** 30);
+
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(findCanliButton().textContent).toBe('CANLI -4sn');
+
+    findCanliButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(video.currentTime).toBeCloseTo(46.1, 5); // buffered end, held clear of the unloaded instant
+    lifecycle.dispose();
+  });
+
+  it('never moves the playhead backwards when already at the sentinel-regime live edge', () => {
+    const { video, lifecycle } = mountLivePlayer(46.5, 46.6);
+    setSeekable(video, 0, 2 ** 30);
+
+    findCanliButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(video.currentTime).toBe(46.5);
+    lifecycle.dispose();
+  });
+
+  it('still delegates to Kick’s own control when nothing addressable exists', () => {
+    const { video, lifecycle, bar } = mountLivePlayer(0, 20, { liveButtonText: 'Canlı Yayına Geç' });
+    setSeekable(video, 0, 2 ** 30);
+    Object.defineProperty(video, 'buffered', { configurable: true, value: fakeTimeRanges([]) });
+    const nativeLive = bar.querySelector('button') as HTMLButtonElement;
+    const clicked = vi.fn();
+    nativeLive.addEventListener('click', clicked);
+
+    findCanliButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(clicked).toHaveBeenCalledTimes(1);
+    lifecycle.dispose();
+  });
+
+  it('resolves the go-live target from seekable first and buffered only as the sentinel fallback', () => {
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      currentTime: { configurable: true, value: 0, writable: true },
+      seekable: { configurable: true, value: fakeTimeRanges([[0, 1704]]), writable: true },
+      buffered: { configurable: true, value: fakeTimeRanges([[1702, 1704]]), writable: true },
+    });
+    expect(goLiveTarget(video)).toBe(1704);
+
+    // Sentinel seekable: the furthest buffered end, minus the unloaded-instant margin. The stale
+    // near-zero preload range must not win over the real one.
+    Object.defineProperty(video, 'seekable', { configurable: true, value: fakeTimeRanges([[0, 2 ** 30]]) });
+    Object.defineProperty(video, 'buffered', { configurable: true, value: fakeTimeRanges([[0, 2], [100, 160]]) });
+    expect(goLiveTarget(video)).toBe(159.5);
+
+    Object.defineProperty(video, 'buffered', { configurable: true, value: fakeTimeRanges([]) });
+    expect(goLiveTarget(video)).toBeNull();
   });
 
   it('re-asserts auto catch-up after Kick resets the rate during a DVR seek, then drops only at the edge', () => {

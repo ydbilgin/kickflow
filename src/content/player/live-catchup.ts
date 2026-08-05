@@ -104,11 +104,39 @@ function bufferedLiveEdge(video: HTMLVideoElement): number | null {
   return furthest;
 }
 
+// Seeking exactly to the buffer's end lands on an instant that is not loaded yet and stalls
+// playback; stop a fraction short so the player resumes from a position it already holds.
+const BUFFERED_EDGE_MARGIN_SECONDS = 0.5;
+
+/**
+ * Where "go live" must seek to.
+ *
+ * Regime A is unchanged and authoritative: `seekable.end` is the true live edge, and buffered
+ * merely trails the playhead there (measured 2026-07-10), so it must never be consulted.
+ *
+ * Regime B (duration Infinity, seekable a 2^30 sentinel) exposes no addressable DVR endpoint at
+ * all, so the furthest loaded buffer position is the only reachable live edge — and it is the
+ * SAME reading `catchupLiveEdge` already puts in the button's "-Xsn" label. Until 2026-08-05 the
+ * label came from buffered while go-live consulted seekable alone, so in regime B the button
+ * advertised a gap and then refused to close it: it fell through to clicking Kick's own control,
+ * which in that regime is an inert LIVE badge rather than a go-to-live button.
+ *
+ * Null means nothing addressable was found, which is the only case where Kick's own control is
+ * still worth delegating to.
+ */
+export function goLiveTarget(video: HTMLVideoElement): number | null {
+  const seekable = seekableLiveEdge(video);
+  if (seekable !== null) return seekable;
+  const buffered = bufferedLiveEdge(video);
+  if (buffered === null) return null;
+  const target = buffered - BUFFERED_EDGE_MARGIN_SECONDS;
+  return target > 0 ? target : null;
+}
+
 /**
  * Kick normally reports both seekable.end and finite duration at the live edge. A DVR reload
  * can shrink seekable to the newly loaded window near currentTime while duration remains the
  * stream's growing media position, so use the furthest sane reading for catch-up only.
- * Go-live remains seekable-based: it must seek to a currently addressable DVR endpoint.
  */
 export function catchupLiveEdge(video: HTMLVideoElement): number | null {
   const seekable = seekableLiveEdge(video);
@@ -213,14 +241,14 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   };
 
   const goLive = (): void => {
-    // The live edge is seekable.end (not buffered.end, which trails the playhead). Seeking the
-    // <video> to seekable.end returns to live; if seekable is unreadable, delegate to Kick's own
-    // "Canlı Yayına Geç" control (owner-confirmed working) as a fallback.
+    // `goLiveTarget` is the same live edge the "-Xsn" label was computed from, so the button can
+    // never advertise a gap it cannot close. Only when there is no addressable position at all do
+    // we delegate to Kick's own "Canlı Yayına Geç" control.
     const current = getVideoElement();
-    const edge = current ? seekableLiveEdge(current) : null;
-    if (current && edge !== null) {
+    const target = current ? goLiveTarget(current) : null;
+    if (current && target !== null) {
       try {
-        current.currentTime = edge;
+        if (target > current.currentTime) current.currentTime = target;
         if (getPlayerState().mode === 'auto') resetAutoPlaybackRate(current);
         if (current.paused) void current.play().catch(() => undefined);
         return;
