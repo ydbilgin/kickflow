@@ -7,6 +7,7 @@ import { Lifecycle } from '../../src/content/shared/lifecycle';
 
 const DAILY_REWARD_CTA_SRC = 'https://static.kick.com/rewards/reward-available-CTA.webm';
 const DIALOG_WAIT_TIMEOUT_MS = 3_000;
+const CLAIM_WAIT_TIMEOUT_MS = 6_000;
 
 interface RewardFixture {
   launcher: HTMLButtonElement;
@@ -230,17 +231,37 @@ describe('Daily reward auto-claim controller', () => {
     }
   });
 
-  it('does not click a disabled final claim button and closes the dialog', () => {
+  it('waits out a claim button that mounts disabled, then clicks it once Kick enables it', () => {
+    // The owner's real reward, 2026-08-06: Kick mounts the window with its claim button disabled
+    // and enables it a moment later. Treating that first reading as a verdict gave up every time.
     const fixture = installRewardFixture(true);
-    const launcherClick = vi.spyOn(fixture.launcher, 'click');
-
     new DailyRewardAutoClaimController(lifecycle);
 
     const claimButton = fixture.getClaimButtons()[0];
     const claimClick = vi.spyOn(claimButton, 'click');
     expect(claimClick).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(launcherClick).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull(); // attempt still alive
+
+    claimButton.disabled = false;
+    claimButton.dispatchEvent(new Event('kickflow-noop')); // observers key off the attribute below
+    document.body.appendChild(document.createComment('mutation'));
+
+    return Promise.resolve().then(() => {
+      expect(claimClick).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('still gives up on a claim button that never becomes clickable, via the bounded wait', () => {
+    vi.useFakeTimers();
+    const fixture = installRewardFixture(true);
+    new DailyRewardAutoClaimController(lifecycle);
+
+    const claimButton = fixture.getClaimButtons()[0];
+    const claimClick = vi.spyOn(claimButton, 'click');
+    vi.advanceTimersByTime(CLAIM_WAIT_TIMEOUT_MS * 2);
+
+    expect(claimClick).not.toHaveBeenCalled();
+    expect(fixture.getClaimButtons().length).toBeGreaterThan(0);
   });
 
   it('gives up after a dialog never mounts without a retry loop', () => {

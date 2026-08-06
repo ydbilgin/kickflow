@@ -200,10 +200,15 @@ export class DailyRewardAutoClaimController {
 
     const claimButton = findFinalClaimButton(flow.dialog);
     if (!claimButton) return;
-    if (claimButton.disabled || claimButton.getAttribute('aria-disabled') === 'true') {
-      this.failAttempt('the final daily-reward claim button is disabled');
-      return;
-    }
+    // Disabled is a PHASE, not a verdict. Kick mounts the reward window with its claim button
+    // disabled and enables it a moment later, so failing here gave up on the first mutation after
+    // the dialog appeared — every time, on the owner's real reward (2026-08-06). The 6 s wait armed
+    // the instant the dialog was found already covers a button that never becomes clickable, and
+    // its message says exactly that. Wait for it instead of pre-empting it.
+    //
+    // This is the SAME shape as the round-92 defect: a check that re-reads a transient state and
+    // treats it as terminal, in front of a bounded wait that was there to decide.
+    if (claimButton.disabled || claimButton.getAttribute('aria-disabled') === 'true') return;
     if (isInsideExcludedRewardSurface(claimButton) || !flow.dialog.contains(claimButton)) {
       this.failAttempt('the claim button was outside the opened daily-reward dialog');
       return;
