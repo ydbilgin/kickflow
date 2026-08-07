@@ -215,11 +215,12 @@ export function decideScrollFollow(
   stickToBottom: boolean,
   appendedCount: number,
   isHovered = false,
+  hoveredBehavior: ScrollFollowBehavior = 'smooth',
 ): ScrollFollowDecision {
   if (stickToBottom) {
     return {
       scrollToBottom: true,
-      scrollBehavior: isHovered ? 'smooth' : 'auto',
+      scrollBehavior: isHovered ? hoveredBehavior : 'auto',
       trimCap: MAX_NON_PRESERVED_NODES,
       showPill: false,
     };
@@ -235,6 +236,8 @@ export function decideScrollFollow(
 export interface ScrollFollowHoverOptions {
   onHoverChange?: (hovered: boolean) => void;
   onPointerLeave?: () => void;
+  /** Behavior used while the pointer is over the list. Defaults to browser smooth. */
+  getHoveredBehavior?: () => ScrollFollowBehavior;
 }
 
 export interface ScrollFollowHoverWiring {
@@ -271,7 +274,12 @@ export function attachScrollFollowHover(
       return hovered;
     },
     decide(appendedCount: number): ScrollFollowDecision {
-      return decideScrollFollow(follow.isPinned, appendedCount, hovered);
+      return decideScrollFollow(
+        follow.isPinned,
+        appendedCount,
+        hovered,
+        options.getHoveredBehavior?.() ?? 'smooth',
+      );
     },
     apply(decision: ScrollFollowDecision): void {
       if (!decision.scrollToBottom) return;

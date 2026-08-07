@@ -19,6 +19,7 @@ const statusResponse = {
   ghostEvicted: 0,
   flags: {
     chatMode: 'own',
+    hoverFollowMode: 'browser-smooth',
     showDeletedMessages: true,
     preserveBansInline: true,
     debugLogging: false,
@@ -118,6 +119,39 @@ describe('popup event display toggles', () => {
     expect(lastBan?.textContent).toBe('—');
     expect(lastBan?.classList.contains('missing')).toBe(true);
     expect(document.getElementById('slug')?.classList.contains('missing')).toBe(false);
+  });
+
+  it('hydrates and sends hoverFollowMode through kickflow:setFlag', async () => {
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+
+    const select = document.getElementById('t-hover-follow-mode') as HTMLSelectElement;
+    expect(select.value).toBe('browser-smooth');
+    expect(Array.from(select.options, (option) => option.value)).toEqual(['browser-smooth', 'instant']);
+    expect(Array.from(select.options, (option) => option.textContent)).toEqual([
+      'Current: browser smooth',
+      'Instant: no animation',
+    ]);
+
+    sendMessage.mockClear();
+    select.value = 'instant';
+    select.dispatchEvent(new Event('change'));
+    await flushAsyncWork();
+    expect(sendMessage).toHaveBeenCalledWith(7, {
+      type: 'kickflow:setFlag',
+      key: 'hoverFollowMode',
+      value: 'instant',
+    });
+
+    sendMessage.mockClear();
+    select.value = 'browser-smooth';
+    select.dispatchEvent(new Event('change'));
+    await flushAsyncWork();
+    expect(sendMessage).toHaveBeenCalledWith(7, {
+      type: 'kickflow:setFlag',
+      key: 'hoverFollowMode',
+      value: 'browser-smooth',
+    });
   });
 
   it('hydrates all event popup checkboxes from the shared status payload', async () => {

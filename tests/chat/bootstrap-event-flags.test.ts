@@ -422,6 +422,41 @@ describe('bootstrap event display flags', () => {
     });
   });
 
+  it('validates, persists, restores, and live-resolves hoverFollowMode without restarting chat', async () => {
+    const { decideScrollFollow } = await import('../../src/content/chat/dom-window');
+    storageSet.mockClear();
+    featureFlags.hoverFollowMode = 'browser-smooth';
+
+    bootstrap.applyFlagChange('hoverFollowMode', 'instant');
+    expect(featureFlags.hoverFollowMode).toBe('instant');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_hoverFollowMode: 'instant' });
+    expect(bootstrap.getPopupFeatureFlags().hoverFollowMode).toBe('instant');
+
+    const resolveHovered = (): 'auto' | 'smooth' =>
+      featureFlags.hoverFollowMode === 'instant' ? 'auto' : 'smooth';
+    expect(decideScrollFollow(true, 1, true, resolveHovered()).scrollBehavior).toBe('auto');
+
+    bootstrap.applyFlagChange('hoverFollowMode', 'browser-smooth');
+    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
+    expect(decideScrollFollow(true, 1, true, resolveHovered()).scrollBehavior).toBe('smooth');
+
+    storageSet.mockClear();
+    bootstrap.applyFlagChange('hoverFollowMode', 'uniform');
+    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
+    expect(storageSet).not.toHaveBeenCalled();
+
+    featureFlags.hoverFollowMode = 'browser-smooth';
+    storageGet.mockResolvedValue({ kf_flag_hoverFollowMode: 'instant' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.hoverFollowMode).toBe('instant');
+    expect(bootstrap.getPopupFeatureFlags().hoverFollowMode).toBe('instant');
+
+    featureFlags.hoverFollowMode = 'browser-smooth';
+    storageGet.mockResolvedValue({ kf_flag_hoverFollowMode: 'uniform' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
+  });
+
   it('starts, stops, and recreates Active Chatters badges through the shared flag mutator', () => {
     const priorFlag = featureFlags.showChattersBadges;
     const lifecycle = new Lifecycle();

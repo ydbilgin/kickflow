@@ -336,6 +336,8 @@ export const messages = {
   'popup.connection_status': { en: 'Connection status', tr: 'Bağlantı durumu' },
   'popup.reading_status': { en: 'Reading status…', tr: 'durum okunuyor…' },
   'popup.mode_desc': { en: 'Kick or KickFlow list', tr: 'Kick veya KickFlow listesi' },
+  'popup.hover_follow': { en: 'Hover follow', tr: 'Hover takip' },
+  'popup.hover_follow_desc': { en: 'Mode A pinned hover scroll', tr: 'Mod A sabit hover kaydırma' },
   'popup.status_stats': { en: 'Status / Statistics', tr: 'Durum / İstatistik' },
   'popup.debug_log': { en: 'Debug log (F12)', tr: 'Debug günlüğü (F12)' },
   'popup.changes_hint': { en: 'Changes apply immediately and persist after reload.', tr: 'Değişiklik anında uygulanır; kanal yeniden yüklenince de korunur.' },

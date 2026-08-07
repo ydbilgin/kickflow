@@ -37,6 +37,7 @@ import {
   attachScrollFollowHover,
   ScrollFollowController,
   trimMessageWindow,
+  type ScrollFollowBehavior,
 } from './chat/dom-window';
 import { ChatHistoryBackfill } from './chat/history';
 import { ChatOverlayMount } from './chat/overlay-mount';
@@ -1801,6 +1802,11 @@ function initOwnChatIntegrity(
   let scrollFollow: ScrollFollowController;
   let pillShownAtMs = 0;
   let pillHideTimerId: number | null = null;
+  /** Mode A pinned follow: not hovered → auto; hovered + browser-smooth → smooth; hovered + instant → auto. */
+  const resolveModeAScrollFollowBehavior = (isHovered: boolean): ScrollFollowBehavior => {
+    if (!isHovered) return 'auto';
+    return featureFlags.hoverFollowMode === 'instant' ? 'auto' : 'smooth';
+  };
   const cancelPillHide = (): void => {
     if (pillHideTimerId === null) return;
     window.clearTimeout(pillHideTimerId);
@@ -1856,10 +1862,11 @@ function initOwnChatIntegrity(
       renderQueue?.wake();
       if (pinned) updatePendingPill(renderQueue?.pendingCount ?? pendingCount);
     },
-    getScrollFollowBehavior: () => hovered ? 'smooth' : 'auto',
+    getScrollFollowBehavior: () => resolveModeAScrollFollowBehavior(hovered),
   });
   lifecycle.add(() => scrollFollow.dispose());
   const hoverFollow = attachScrollFollowHover(ownList, scrollFollow, {
+    getHoveredBehavior: () => resolveModeAScrollFollowBehavior(true),
     onHoverChange: (nextHovered) => {
       hovered = nextHovered;
       hoverMeter?.setMetered(nextHovered && scrollFollow.isPinned);
@@ -2548,6 +2555,9 @@ export function applyFlagChange(key: string, value: boolean | string): void {
       resetStatus(currentSessionContext.slug);
       startSession(currentSessionContext);
     }
+  } else if (key === 'hoverFollowMode' && (value === 'browser-smooth' || value === 'instant')) {
+    setFeatureFlag('hoverFollowMode', value);
+    void safeStorageSet({ kf_flag_hoverFollowMode: value });
   } else if (key === 'mentionHighlightStyle' && (value === 'frame' || value === 'fill' || value === 'both')) {
     setFeatureFlag('mentionHighlightStyle', value);
     void safeStorageSet({ kf_flag_mentionHighlightStyle: value });
@@ -2576,6 +2586,7 @@ export function applyFlagChange(key: string, value: boolean | string): void {
 export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
   return {
     chatMode: featureFlags.chatMode,
+    hoverFollowMode: featureFlags.hoverFollowMode,
     showDeletedMessages: featureFlags.showDeletedMessages,
     preserveBansInline: featureFlags.preserveBansInline,
     debugLogging: featureFlags.debugLogging,
@@ -2689,6 +2700,15 @@ function installStatusBridge(): void {
       sendResponse({ ok: true });
       return;
     }
+    if (
+      msg.type === 'kickflow:setFlag' &&
+      msg.key === 'hoverFollowMode' &&
+      (msg.value === 'browser-smooth' || msg.value === 'instant')
+    ) {
+      applyFlagChange(msg.key, msg.value);
+      sendResponse({ ok: true });
+      return;
+    }
   });
 
   // In-panel gear (removed-panel.ts) dispatches this instead of a chrome.runtime message — same
@@ -2702,6 +2722,7 @@ function installStatusBridge(): void {
 export async function applySavedFlags(): Promise<void> {
   const saved = await safeStorageGet([
     'kf_flag_chatMode',
+    'kf_flag_hoverFollowMode',
     'kf_flag_showDeletedMessages',
     'kf_flag_preserveBansInline',
     'kf_flag_debugLogging',
@@ -2735,6 +2756,9 @@ export async function applySavedFlags(): Promise<void> {
     'kf_flag_manualUsername',
   ]);
   if (saved.kf_flag_chatMode === 'native' || saved.kf_flag_chatMode === 'own') setFeatureFlag('chatMode', saved.kf_flag_chatMode);
+  if (saved.kf_flag_hoverFollowMode === 'browser-smooth' || saved.kf_flag_hoverFollowMode === 'instant') {
+    setFeatureFlag('hoverFollowMode', saved.kf_flag_hoverFollowMode);
+  }
   if (typeof saved.kf_flag_showDeletedMessages === 'boolean') setFeatureFlag('showDeletedMessages', saved.kf_flag_showDeletedMessages);
   if (typeof saved.kf_flag_preserveBansInline === 'boolean') setFeatureFlag('preserveBansInline', saved.kf_flag_preserveBansInline);
   if (typeof saved.kf_flag_debugLogging === 'boolean') setFeatureFlag('debugLogging', saved.kf_flag_debugLogging);

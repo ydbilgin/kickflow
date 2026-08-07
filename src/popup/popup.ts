@@ -13,10 +13,12 @@ import {
 } from '../content/player/hotkey-registry';
 import type { KickFlowStatusSnapshot } from '../content/status';
 import { hotkeyLabel, loadLang, t, type MessageKey } from '../content/shared/i18n';
+import type { HoverFollowMode } from '../content/chat/feature-flags';
 
 interface StatusResponse extends KickFlowStatusSnapshot {
   flags: {
     chatMode: 'native' | 'own';
+    hoverFollowMode: HoverFollowMode;
     showDeletedMessages: boolean;
     preserveBansInline: boolean;
     debugLogging: boolean;
@@ -55,6 +57,9 @@ function applyStaticTranslations(): void {
   setText('.mode-copy strong', 'panel.chat_view');
   setText('.mode-copy span', 'popup.mode_desc');
   $('t-chat-mode').setAttribute('aria-label', t('panel.chat_mode'));
+  setText('.hover-follow-copy strong', 'popup.hover_follow');
+  setText('.hover-follow-copy span', 'popup.hover_follow_desc');
+  $('t-hover-follow-mode').setAttribute('aria-label', t('popup.hover_follow'));
   const sectionTitles = document.querySelectorAll<HTMLElement>('.section-title');
   const titleKeys: MessageKey[] = ['popup.status_stats', 'tab.chat', 'tab.player', 'tab.rewards', 'tab.shortcuts'];
   sectionTitles.forEach((element, index) => { if (titleKeys[index]) element.textContent = t(titleKeys[index]); });
@@ -190,6 +195,7 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-auto-claim-drops') as HTMLInputElement)).checked = res.flags.autoClaimDrops;
   (($('t-auto-claim-daily-reward') as HTMLInputElement)).checked = res.flags.autoClaimDailyReward;
   (($('t-chat-mode') as HTMLSelectElement)).value = res.flags.chatMode;
+  (($('t-hover-follow-mode') as HTMLSelectElement)).value = res.flags.hoverFollowMode;
   renderHotkeys(res.hotkeys ?? createDefaultHotkeyBindings());
 }
 
@@ -210,9 +216,10 @@ async function setFlag(
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
+async function setFlag(key: 'hoverFollowMode', value: HoverFollowMode): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward' | 'chatMode',
-  value: boolean | 'native' | 'own'
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward' | 'chatMode' | 'hoverFollowMode',
+  value: boolean | 'native' | 'own' | HoverFollowMode
 ): Promise<void> {
   const id = await activeTabId();
   if (id === undefined) return;
@@ -265,6 +272,9 @@ $('t-speed-controls').addEventListener('change', (e) => setFlag('speedControls',
 $('t-auto-claim-drops').addEventListener('change', (e) => setFlag('autoClaimDrops', (e.target as HTMLInputElement).checked));
 $('t-auto-claim-daily-reward').addEventListener('change', (e) => setFlag('autoClaimDailyReward', (e.target as HTMLInputElement).checked));
 $('t-chat-mode').addEventListener('change', (e) => setFlag('chatMode', (e.target as HTMLSelectElement).value as 'native' | 'own'));
+$('t-hover-follow-mode').addEventListener('change', (e) => {
+  setFlag('hoverFollowMode', (e.target as HTMLSelectElement).value as HoverFollowMode);
+});
 
 for (const action of HOTKEY_ACTIONS) {
   $(`hk-${action}-enabled`).addEventListener('change', async (event) => {

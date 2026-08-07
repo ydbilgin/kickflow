@@ -6,6 +6,10 @@ describe('feature-flags', () => {
     expect(featureFlags.chatMode).toBe('native');
   });
 
+  it('defaults hoverFollowMode to browser-smooth', () => {
+    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
+  });
+
   it('shows event rows by default', () => {
     expect(featureFlags.showSubscriptions).toBe(true);
     expect(featureFlags.showGiftedSubs).toBe(true);

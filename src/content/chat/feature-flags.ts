@@ -1,8 +1,13 @@
 import type { RoleHighlightStyle } from './message-highlight';
 
+/** Mode A hovered follow policy. Phase 0 exposes browser easing versus instant landing. */
+export type HoverFollowMode = 'browser-smooth' | 'instant';
+
 export interface FeatureFlags {
   /** Chat rendering mode: native augment keeps Kick's chat; own renders KickFlow's overlay list. */
   chatMode: 'native' | 'own';
+  /** Mode A only: how pinned hovered follow lands each append or row resize. */
+  hoverFollowMode: HoverFollowMode;
   /** Gates debug/info logging plus the unknown-Pusher-event logger. Off by default. */
   debugLogging: boolean;
   /** Deleted-message display: preserve deleted messages in place, struck-through, with their
@@ -86,6 +91,7 @@ export interface FeatureFlags {
 
 export const featureFlags: FeatureFlags = {
   chatMode: 'native',
+  hoverFollowMode: 'browser-smooth',
   debugLogging: false,
   showDeletedMessages: true,
   preserveBansInline: true,

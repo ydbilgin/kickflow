@@ -346,6 +346,16 @@ describe('decideScrollFollow', () => {
       showPill: false,
     });
   });
+
+  it('uses the supplied hovered behavior while pinned and hovered', () => {
+    expect(decideScrollFollow(true, 1, true, 'auto')).toEqual({
+      scrollToBottom: true,
+      scrollBehavior: 'auto',
+      trimCap: 200,
+      showPill: false,
+    });
+    expect(decideScrollFollow(true, 1, false, 'auto').scrollBehavior).toBe('auto');
+  });
 });
 
 describe('attachScrollFollowHover', () => {
@@ -394,6 +404,36 @@ describe('attachScrollFollowHover', () => {
       expect(hoverChanges).toEqual([true, false]);
       expect(onPointerLeave).toHaveBeenCalledOnce();
       expect(metrics.scrollTop).toBe(750);
+    } finally {
+      hover.dispose();
+      controller.dispose();
+    }
+  });
+
+  it('reads getHoveredBehavior on each decide while hovered', () => {
+    const container = document.createElement('div');
+    mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
+    Object.defineProperty(container, 'scrollTo', {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions) => {
+        container.scrollTop = options.top ?? 0;
+      }),
+    });
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: () => null,
+      scheduleFrame: () => 1,
+      cancelFrame: vi.fn(),
+    });
+    let hoveredBehavior: 'auto' | 'smooth' = 'smooth';
+    const hover = attachScrollFollowHover(container, controller, {
+      getHoveredBehavior: () => hoveredBehavior,
+    });
+
+    try {
+      container.dispatchEvent(new Event('pointerenter'));
+      expect(hover.decide(1).scrollBehavior).toBe('smooth');
+      hoveredBehavior = 'auto';
+      expect(hover.decide(1).scrollBehavior).toBe('auto');
     } finally {
       hover.dispose();
       controller.dispose();
