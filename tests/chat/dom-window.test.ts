@@ -175,6 +175,96 @@ describe('ScrollFollowController', () => {
     controller.dispose();
   });
 
+  it('suppresses a resize follow that matches an unsettled target and behavior', () => {
+    const container = document.createElement('div');
+    const row = document.createElement('div');
+    container.append(row);
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 500 });
+    const smoothScroll = vi.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: smoothScroll });
+    let notifyResize: (() => void) | undefined;
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: (callback) => {
+        notifyResize = callback;
+        return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+      },
+      getScrollFollowBehavior: () => 'smooth',
+      scheduleFrame: () => 1,
+      cancelFrame: vi.fn(),
+    });
+    controller.observeRows([row]);
+
+    controller.scrollToBottom('smooth');
+    notifyResize?.();
+
+    expect(smoothScroll).toHaveBeenCalledTimes(1);
+    expect(smoothScroll).toHaveBeenCalledWith({ top: 1_000, behavior: 'smooth' });
+
+    metrics.scrollTop = 750;
+    container.dispatchEvent(new Event('scrollend'));
+    notifyResize?.();
+
+    expect(smoothScroll).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
+  it('retains a resize follow when the unsettled bottom target changes', () => {
+    const container = document.createElement('div');
+    const row = document.createElement('div');
+    container.append(row);
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 500 });
+    const smoothScroll = vi.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: smoothScroll });
+    let notifyResize: (() => void) | undefined;
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: (callback) => {
+        notifyResize = callback;
+        return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+      },
+      getScrollFollowBehavior: () => 'smooth',
+      scheduleFrame: () => 1,
+      cancelFrame: vi.fn(),
+    });
+    controller.observeRows([row]);
+
+    controller.scrollToBottom('smooth');
+    metrics.scrollHeight = 1_300;
+    notifyResize?.();
+
+    expect(smoothScroll).toHaveBeenNthCalledWith(1, { top: 1_000, behavior: 'smooth' });
+    expect(smoothScroll).toHaveBeenNthCalledWith(2, { top: 1_300, behavior: 'smooth' });
+    controller.dispose();
+  });
+
+  it('retains a resize follow when the unsettled behavior changes', () => {
+    const container = document.createElement('div');
+    const row = document.createElement('div');
+    container.append(row);
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 500 });
+    const smoothScroll = vi.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: smoothScroll });
+    let notifyResize: (() => void) | undefined;
+    let behavior: 'auto' | 'smooth' = 'smooth';
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: (callback) => {
+        notifyResize = callback;
+        return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+      },
+      getScrollFollowBehavior: () => behavior,
+      scheduleFrame: () => 1,
+      cancelFrame: vi.fn(),
+    });
+    controller.observeRows([row]);
+
+    controller.scrollToBottom('smooth');
+    behavior = 'auto';
+    notifyResize?.();
+
+    expect(smoothScroll).toHaveBeenCalledTimes(1);
+    expect(metrics.scrollTop).toBe(750);
+    controller.dispose();
+  });
+
   it('does not move the reading position when an observed row grows while paused', () => {
     const container = document.createElement('div');
     const row = document.createElement('div');

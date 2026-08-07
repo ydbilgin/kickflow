@@ -14,6 +14,11 @@ const BOTTOM_THRESHOLD_PX = 60;
 
 export type ScrollFollowBehavior = 'auto' | 'smooth';
 
+interface UnsettledFollowRequest {
+  readonly bottomTarget: number;
+  readonly behavior: ScrollFollowBehavior;
+}
+
 export function isNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - container.scrollTop - container.clientHeight <= BOTTOM_THRESHOLD_PX;
 }
@@ -44,6 +49,7 @@ export class ScrollFollowController {
   private programmaticScroll = false;
   private lastScrollTop: number;
   private programmaticClearFrame: number | null = null;
+  private unsettledFollow: UnsettledFollowRequest | null = null;
   private readonly observedRows = new Set<HTMLElement>();
   private readonly resizeObserver: RowResizeObserver | null;
   private readonly scheduleFrame: (callback: FrameRequestCallback) => number;
@@ -61,6 +67,7 @@ export class ScrollFollowController {
     this.resizeObserver = createResizeObserver(this.handleRowsResized);
 
     container.addEventListener('scroll', this.handleScroll);
+    container.addEventListener('scrollend', this.handleScrollEnd);
   }
 
   get isPinned(): boolean {
@@ -75,8 +82,10 @@ export class ScrollFollowController {
     this.programmaticScroll = true;
     const top = this.container.scrollHeight;
     if (behavior === 'smooth' && typeof this.container.scrollTo === 'function') {
+      this.unsettledFollow = { bottomTarget: this.bottomTarget, behavior };
       this.container.scrollTo({ top, behavior });
     } else {
+      this.unsettledFollow = null;
       this.container.scrollTop = top;
     }
     this.lastScrollTop = this.container.scrollTop;
@@ -103,6 +112,7 @@ export class ScrollFollowController {
     if (this.disposed) return;
     this.disposed = true;
     this.container.removeEventListener('scroll', this.handleScroll);
+    this.container.removeEventListener('scrollend', this.handleScrollEnd);
     if (this.programmaticClearFrame !== null) this.cancelFrame(this.programmaticClearFrame);
     this.resizeObserver?.disconnect();
     this.observedRows.clear();
@@ -123,16 +133,31 @@ export class ScrollFollowController {
     if (!movedUp) return;
 
     this.programmaticScroll = false;
+    this.unsettledFollow = null;
     this.setPinned(false);
+  };
+
+  private readonly handleScrollEnd = (): void => {
+    if (this.disposed || !this.unsettledFollow) return;
+    if (this.container.scrollTop >= this.unsettledFollow.bottomTarget) {
+      this.unsettledFollow = null;
+    }
   };
 
   private readonly handleRowsResized = (): void => {
     if (this.disposed) return;
     this.pruneObservedRows();
     if (this.pinned) {
-      this.scrollToBottom(this.options.getScrollFollowBehavior?.() ?? 'auto');
+      const behavior = this.options.getScrollFollowBehavior?.() ?? 'auto';
+      if (this.unsettledFollow?.bottomTarget === this.bottomTarget
+        && this.unsettledFollow.behavior === behavior) return;
+      this.scrollToBottom(behavior);
     }
   };
+
+  private get bottomTarget(): number {
+    return Math.max(0, this.container.scrollHeight - this.container.clientHeight);
+  }
 
   private setPinned(pinned: boolean): void {
     if (this.pinned === pinned) return;
