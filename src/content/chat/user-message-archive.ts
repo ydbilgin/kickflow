@@ -1,4 +1,4 @@
-import { foldSearchText } from '../shared/text-fold';
+import { foldSearchText, parseSearchTerms } from '../shared/text-fold';
 import { EMOTE_TOKEN_RE } from './content-tokens';
 import { normalizeChatIdentity, type ChatMessage } from './message-store';
 
@@ -153,7 +153,7 @@ export class UserMessageArchive {
    * message text or in the sender's name, so "ahmet link" finds Ahmet's message with a link
    * instead of every message containing either word. `total` counts matches before the cap. */
   search(query: string, limit: number = SEARCH_RESULT_LIMIT): ArchiveSearchResult {
-    const terms = foldSearchText(query.trim()).split(/\s+/).filter(Boolean);
+    const terms = parseSearchTerms(query);
     if (terms.length === 0 || limit <= 0) return { matches: [], total: 0 };
 
     const matches: ArchivedMessage[] = [];

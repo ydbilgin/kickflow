@@ -74,6 +74,15 @@ describe('own-mode message row geometry styles', () => {
     expect(content).toContain('line-height: 1.55');
   });
 
+  it('styles search hits without browser-default colors or metric changes', () => {
+    const hit = declarations('.kickflow-search__hit');
+
+    expect(hit).toContain('background: rgba(83,252,24,0.22)');
+    expect(hit).toContain('color: inherit');
+    expect(hit).not.toContain('${');
+    expect(hit).not.toMatch(/(?:^|;)\s*(?:padding|border|font-size|font-weight)\s*:/);
+  });
+
   it('does not let the generic message hover erase semantic system-event tints', () => {
     const hover = declarations('#${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):hover');
 

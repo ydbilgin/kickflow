@@ -1,5 +1,7 @@
 import { getUserMessageArchive } from './archive-session';
 import { t } from '../shared/i18n';
+import { parseSearchTerms } from '../shared/text-fold';
+import { highlightSearchTerms } from './search-highlight';
 import { buildArchivedMessageRow, formatClock } from './user-message-list';
 import { SEARCH_RESULT_LIMIT, type ArchivedMessage } from './user-message-archive';
 
@@ -58,11 +60,14 @@ export function buildMessageSearchResults(model: MessageSearchModel): HTMLElemen
 
   const body = document.createElement('div');
   body.className = 'kickflow-user-messages__body kickflow-search__body';
+  const terms = parseSearchTerms(model.query);
   for (const message of model.matches) {
-    body.appendChild(buildArchivedMessageRow(message, {
+    const row = buildArchivedMessageRow(message, {
       clockLabel: formatClock(message.at),
       showUsername: true,
-    }));
+    });
+    highlightSearchTerms(row, terms);
+    body.appendChild(row);
   }
   root.appendChild(body);
 

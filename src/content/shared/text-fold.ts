@@ -1,9 +1,9 @@
 /**
  * Search-oriented text fold: Turkish letter overrides first, then a generic NFD strip.
  *
- * The fold is 1:1 on code points so a later highlight pass can map folded match offsets
- * back onto the original string. Characters whose folded form is not exactly one code
- * point are left unchanged.
+ * The fold is 1:1 on UTF-16 code units so JavaScript string offsets from indexOf, slice,
+ * and DOM Range map back onto the original string. Characters whose folded form changes
+ * code-unit length are left unchanged, even when both forms are one code point.
  */
 
 /** Turkish letters that must be rewritten before Unicode default lowercasing — otherwise
@@ -36,10 +36,9 @@ function foldGenericCodePoint(char: string, codePoint: number): string {
   if (cached !== undefined) return cached;
 
   const stripped = char.normalize('NFD').replace(COMBINING_MARKS_RE, '').toLowerCase();
-  // Hard invariant: folded form must be exactly one code point, else keep the original so
-  // offsets stay aligned with the source string.
-  const foldedCodePoints = [...stripped];
-  const folded = foldedCodePoints.length === 1 ? foldedCodePoints[0]! : char;
+  // Hard invariant: folded and original forms must occupy the same UTF-16 code units so
+  // JavaScript and DOM offsets stay aligned with the source string.
+  const folded = stripped.length === char.length ? stripped : char;
   genericFoldByCodePoint.set(codePoint, folded);
   return folded;
 }
@@ -55,4 +54,9 @@ export function foldSearchText(value: string): string {
     result += foldGenericCodePoint(char, char.codePointAt(0)!);
   }
   return result;
+}
+
+/** The canonical search-query parser shared by matching and result highlighting. */
+export function parseSearchTerms(query: string): string[] {
+  return foldSearchText(query).split(/\s+/).filter(Boolean);
 }

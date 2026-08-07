@@ -816,6 +816,7 @@ function ensureStyles(): void {
     }
     .kickflow-search__note { padding: 4px 6px; color: #8b8b93; font-size: 11px; line-height: 1.5; }
     .kickflow-search__body { max-height: 46vh; }
+    .kickflow-search__hit { background: rgba(83,252,24,0.22); color: inherit; }
     .kickflow-user-card__link {
       display: inline-block; color: #66bfff; text-decoration: none; font-size: 11px;
       max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

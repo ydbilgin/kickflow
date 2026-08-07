@@ -36,6 +36,7 @@ describe('message search', () => {
     // Newest first, and each row names its sender because results cross users.
     expect(rows[0]?.querySelector('.kickflow-user-messages__name')?.textContent).toBe('user2: ');
     expect(rows[0]?.textContent).toContain('ikinci link');
+    expect(rows[0]?.querySelector('.kickflow-search__hit')?.textContent).toBe('link');
     expect(root.querySelector('.kickflow-search__summary')?.textContent).toBe('2 sonuç');
   });
 
