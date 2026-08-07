@@ -405,4 +405,129 @@ describe('UserMessageArchive', () => {
     expect(result.matches.map((record) => record.id)).toEqual(['new', 'mid']);
     expect(result.matches[0]?.deleted).toBe(true);
   });
+
+  it('finds Turkish İzmir with an ASCII izmir query', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('izmir-msg', { content: 'İzmir güzel' }));
+
+    expect(archive.search('izmir').matches.map((record) => record.id)).toEqual(['izmir-msg']);
+  });
+
+  it('folds ş both ways between query and haystack', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('upper', { content: 'MAŞALLAH' }));
+    archive.add(chatMessage('lower', { content: 'masallah' }));
+
+    expect(archive.search('masallah').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
+    expect(archive.search('MAŞALLAH').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
+  });
+
+  it('folds ışık / IŞIK / isik to the same form', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('isik-upper', { content: 'IŞIK' }));
+    archive.add(chatMessage('isik-lower', { content: 'ışık' }));
+
+    expect(archive.search('ışık').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
+    expect(archive.search('isik').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
+  });
+
+  it('folds güneş and gunes both ways', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('with-diacritic', { content: 'güneş' }));
+    archive.add(chatMessage('ascii', { content: 'gunes' }));
+
+    expect(archive.search('gunes').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
+    expect(archive.search('güneş').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
+  });
+
+  it('folds the sender name in the haystack', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    const base = chatMessage('seyma-msg', { content: 'merhaba' });
+    archive.add({
+      ...base,
+      sender: {
+        ...base.sender,
+        slug: 'seyma',
+        username: 'Şeyma',
+        displayName: 'Şeyma',
+      },
+    });
+
+    expect(archive.search('seyma').matches.map((record) => record.id)).toEqual(['seyma-msg']);
+  });
+
+  it('searches emote tokens by name and ignores the emote wrapper', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('emote-only', { content: '[emote:1234:kekw]' }));
+
+    expect(archive.search('kekw').matches.map((record) => record.id)).toEqual(['emote-only']);
+    expect(archive.search('emote').matches).toEqual([]);
+    // Raw text stays intact for the renderer.
+    expect(archive.getByUserId(1)[0]?.text).toBe('[emote:1234:kekw]');
+  });
+
+  // Two adjacent short-named emotes used to be swallowed by one greedy token match, which left
+  // the literal word `emote` sitting in the haystack and matched a query for it.
+  it('reduces every emote token when a message carries more than one', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('spam', { content: '[emote:39261:KEKW][emote:39261:KEKW]' }));
+    archive.add(chatMessage('around', { content: '[emote:1234:kekw] bak [emote:5678:pog]' }));
+
+    expect(archive.search('kekw').matches.map((record) => record.id)).toEqual(['around', 'spam']);
+    expect(archive.search('pog').matches.map((record) => record.id)).toEqual(['around']);
+    expect(archive.search('bak').matches.map((record) => record.id)).toEqual(['around']);
+    expect(archive.search('emote').matches).toEqual([]);
+  });
+
+  it('keeps plain ASCII search behaviour unchanged', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('ascii-msg', { content: 'Hello World' }));
+
+    expect(archive.search('hello').matches.map((record) => record.id)).toEqual(['ascii-msg']);
+    expect(archive.search('HELLO WORLD').matches.map((record) => record.id)).toEqual(['ascii-msg']);
+    expect(archive.search('missing').matches).toEqual([]);
+  });
+
+  it('keeps the folded haystack map sized to live records across every eviction path', () => {
+    let now = 0;
+    const archive = new UserMessageArchive({
+      maxMessages: 2,
+      maxAgeMs: 5,
+      perUserCap: 2,
+      now: () => now,
+    });
+
+    const expectHaystackTracksLive = () => {
+      expect(archive.internalFoldedHaystackCount).toBe(archive.size);
+    };
+
+    archive.add(chatMessage('age-a', { userId: 1, content: 'one', createdAt: new Date(0).toISOString() }));
+    archive.add(chatMessage('age-b', { userId: 2, content: 'two', createdAt: new Date(0).toISOString() }));
+    expectHaystackTracksLive();
+
+    // Age eviction.
+    now = 6;
+    archive.sweepExpired();
+    expect(archive.size).toBe(0);
+    expectHaystackTracksLive();
+
+    // Global-cap eviction.
+    now = 10;
+    archive.add(chatMessage('global-a', { userId: 1, content: 'ga', createdAt: new Date(10).toISOString() }));
+    archive.add(chatMessage('global-b', { userId: 2, content: 'gb', createdAt: new Date(10).toISOString() }));
+    archive.add(chatMessage('global-c', { userId: 3, content: 'gc', createdAt: new Date(10).toISOString() }));
+    expect(archive.size).toBe(2);
+    expectHaystackTracksLive();
+
+    // Per-user-cap eviction.
+    archive.add(chatMessage('user-a', { userId: 9, content: 'ua', createdAt: new Date(10).toISOString() }));
+    archive.add(chatMessage('user-b', { userId: 9, content: 'ub', createdAt: new Date(10).toISOString() }));
+    archive.add(chatMessage('user-c', { userId: 9, content: 'uc', createdAt: new Date(10).toISOString() }));
+    expect(archive.getByUserId(9)).toHaveLength(2);
+    expectHaystackTracksLive();
+
+    archive.clear();
+    expect(archive.size).toBe(0);
+    expectHaystackTracksLive();
+  });
 });

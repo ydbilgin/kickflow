@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatIntegrityStore, GLOBAL_CAPACITY, mergeIdentityBadges, type ChatMessage } from '../../src/content/chat/message-store';
 import { MAX_NON_PRESERVED_NODES_PAUSED } from '../../src/content/chat/dom-window';
 
+// `preserveMessage` stamps `preservedAt` from the real clock, not from the `now` these tests
+// capture, so a sweep at exactly TTL + 1 ms flakes whenever a millisecond elapses in between.
+// The margin has to outlast that gap rather than sit inside it.
+const PRESERVED_SWEEP_MARGIN_MS = 5_000;
+
 function message(id: string, userId = 1, createdAt = new Date().toISOString()): ChatMessage {
   return {
     id,
@@ -129,7 +134,7 @@ describe('ChatIntegrityStore', () => {
     expect(store.getMessageById('fresh')?.preserved).toBe(true);
     expect(onPreservedEvicted).not.toHaveBeenCalled();
 
-    store.sweepExpiredPreserved(now + 10 * 60 * 1000 + 1);
+    store.sweepExpiredPreserved(now + 10 * 60 * 1000 + PRESERVED_SWEEP_MARGIN_MS);
 
     expect(store.getMessageById('old')).toMatchObject({ preserved: false });
     expect(store.getMessageById('fresh')).toMatchObject({ preserved: false });
@@ -142,7 +147,7 @@ describe('ChatIntegrityStore', () => {
     store.addMessage(message('retain', 1, new Date(now - 20 * 60 * 1000).toISOString()));
     store.markMessageDeleted('retain');
 
-    store.sweepExpiredPreserved(now + 10 * 60 * 1000 + 1);
+    store.sweepExpiredPreserved(now + 10 * 60 * 1000 + PRESERVED_SWEEP_MARGIN_MS);
 
     expect(store.getMessageById('retain')).toMatchObject({ preserved: false });
     store.markUserBanned(1, { permanent: true, bannedBy: 'mod' });

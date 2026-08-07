@@ -5,7 +5,7 @@ import { jumpToMessage } from './message-jump';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
 import { formatDurationMinutes, formatNumber, getLang, t, type MessageKey } from '../shared/i18n';
-import { CONTENT_TOKEN_RE } from './content-tokens';
+import { CONTENT_TOKEN_RE, EMOTE_TOKEN_RE } from './content-tokens';
 import { applyOwnListHighlights } from './message-highlight-apply';
 import { HOVER_TOOLTIP_ATTRIBUTE } from '../shared/hover-tooltip';
 
@@ -306,14 +306,10 @@ export function appendParsedContent(parent: HTMLElement, content: string, opts?:
   }
 }
 
-// Same emote subpattern as CONTENT_TOKEN_RE, kept standalone: a tooltip title has no need for
-// the url/mention alternation, and content outside emote tokens is already plain text.
-const EMOTE_TOKEN_ONLY_RE = /\[emote:\d{1,10}:(.{1,30})\]/g;
-
 /** Tooltip-only text: emote tokens collapse to their bare name (`[emote:5405749:sreactayak]`
  * → `sreactayak`); urls/mentions are left as-is since they're already readable raw text. */
 function contentToPlainText(content: string): string {
-  return content.replace(EMOTE_TOKEN_ONLY_RE, '$1');
+  return content.replace(EMOTE_TOKEN_RE, '$1');
 }
 
 // Kick draws role badges from its own bundled inline SVGs, keyed by `type`. We've captured the

@@ -1,9 +1,12 @@
+import { foldSearchText } from '../shared/text-fold';
+import { EMOTE_TOKEN_RE } from './content-tokens';
 import { normalizeChatIdentity, type ChatMessage } from './message-store';
 
-// 30_000 × 240 B = 7.2 MB heap ceiling. At the measured 3.57 msg/s busy rate the count cap binds
-// first and covers 30_000 / 3.57 = 8,403 s = 2 h 20 min; at 1.00 msg/s the 3-hour age cap binds
-// first at 10,800 records. ARCHIVE_PER_USER_CAP bounds a single spamming account so one user can
-// never occupy the whole archive.
+// 30_000 × 400 B = 12 MB heap ceiling (240 B record + ~160 B folded haystack string). At the
+// measured 3.57 msg/s busy rate the count cap binds first and covers 30_000 / 3.57 = 8,403 s =
+// 2 h 20 min; at 1.00 msg/s the 3-hour age cap binds first at 10,800 records.
+// ARCHIVE_PER_USER_CAP bounds a single spamming account so one user can never occupy the whole
+// archive.
 export const ARCHIVE_MAX_MESSAGES = 30_000;
 export const ARCHIVE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 export const ARCHIVE_PER_USER_CAP = 500;
@@ -44,7 +47,8 @@ export interface ArchivedMessage {
    * archives day-old messages, and ageing those out by their original timestamp evicted every one
    * of them the instant it arrived. Monotonic, so the record array stays ordered by it. */
   readonly addedAt: number;
-  /** Raw content, `[emote:...]` tokens intact — the renderer parses them, the archive never does. */
+  /** Raw content, `[emote:...]` tokens intact — the renderer parses them; the folded haystack
+   * reduces emote tokens to their names without mutating this field. */
   readonly text: string;
   readonly replyTo: ArchivedReply | null;
   /** True once a delete or ban covered this id. Set after insertion; never reverts to false. */
@@ -57,6 +61,14 @@ export interface UserMessageArchiveOptions {
   perUserCap?: number;
   /** Injected clock. Defaults to () => Date.now(). Tests MUST be able to control it. */
   now?: () => number;
+}
+
+/** Emote tokens reduce to their bare name here and only here: `[emote:1234:kekw]` has to be
+ * searchable as `kekw` without a query for `emote` matching every emote-bearing message.
+ * `record.text` keeps the raw token, because the renderer is the one that parses it. */
+function buildFoldedHaystack(text: string, username: string): string {
+  const searchableText = text.replace(EMOTE_TOKEN_RE, '$1');
+  return foldSearchText(`${searchableText}\n${username}`);
 }
 
 /** Both halves are required: a reply quote with no author, or an author with no quoted text, is
@@ -79,6 +91,9 @@ export class UserMessageArchive {
   private liveCount = 0;
   private readonly slotById = new Map<string, number>();
   private readonly recordsById = new Map<string, ArchivedMessage>();
+  /** Folded search haystack per message id. Kept off `ArchivedMessage` so search/DOM copies
+   * never leak the fold into the public shape. */
+  private readonly foldedHaystacks = new Map<string, string>();
   private readonly recordsByUserId = new Map<number, ArchivedMessage[]>();
   private readonly userIdByName = new Map<string, number>();
   private readonly namesByUserId = new Map<number, Set<string>>();
@@ -111,6 +126,7 @@ export class UserMessageArchive {
     this.slotById.set(record.id, this.records.length - 1);
     this.liveCount += 1;
     this.recordsById.set(record.id, record);
+    this.foldedHaystacks.set(record.id, buildFoldedHaystack(record.text, record.username));
     let userRecords = this.recordsByUserId.get(record.userId);
     if (!userRecords) {
       userRecords = [];
@@ -137,7 +153,7 @@ export class UserMessageArchive {
    * message text or in the sender's name, so "ahmet link" finds Ahmet's message with a link
    * instead of every message containing either word. `total` counts matches before the cap. */
   search(query: string, limit: number = SEARCH_RESULT_LIMIT): ArchiveSearchResult {
-    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = foldSearchText(query.trim()).split(/\s+/).filter(Boolean);
     if (terms.length === 0 || limit <= 0) return { matches: [], total: 0 };
 
     const matches: ArchivedMessage[] = [];
@@ -145,8 +161,8 @@ export class UserMessageArchive {
     for (let slot = this.records.length - 1; slot >= this.head; slot -= 1) {
       const record = this.records[slot];
       if (!record) continue;
-      const haystack = `${record.text}\n${record.username}`.toLowerCase();
-      if (!terms.every((term) => haystack.includes(term))) continue;
+      const haystack = this.foldedHaystacks.get(record.id);
+      if (!haystack || !terms.every((term) => haystack.includes(term))) continue;
       total += 1;
       if (matches.length < limit) matches.push({ ...record });
     }
@@ -198,6 +214,11 @@ export class UserMessageArchive {
     return this.records.length;
   }
 
+  /** Test-only getter: folded haystack entries must track live records across every eviction. */
+  get internalFoldedHaystackCount(): number {
+    return this.foldedHaystacks.size;
+  }
+
   /** Full reset, including `truncated`. */
   clear(): void {
     this.records = [];
@@ -205,6 +226,7 @@ export class UserMessageArchive {
     this.liveCount = 0;
     this.slotById.clear();
     this.recordsById.clear();
+    this.foldedHaystacks.clear();
     this.recordsByUserId.clear();
     this.userIdByName.clear();
     this.namesByUserId.clear();
@@ -272,6 +294,7 @@ export class UserMessageArchive {
     this.records[slot] = null;
     this.slotById.delete(record.id);
     this.recordsById.delete(record.id);
+    this.foldedHaystacks.delete(record.id);
 
     const userRecords = this.recordsByUserId.get(record.userId);
     if (userRecords) {
