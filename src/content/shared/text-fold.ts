@@ -56,7 +56,72 @@ export function foldSearchText(value: string): string {
   return result;
 }
 
+export interface ParsedSearchQuery {
+  readonly requiredTerms: readonly string[];
+  readonly excludedTerms: readonly string[];
+  readonly senderFilters: readonly string[];
+}
+
+interface ParsedToken {
+  readonly value: string;
+  readonly nextIndex: number;
+}
+
+const SENDER_FILTER_PREFIX = 'from:';
+
 /** The canonical search-query parser shared by matching and result highlighting. */
-export function parseSearchTerms(query: string): string[] {
-  return foldSearchText(query).split(/\s+/).filter(Boolean);
+export function parseSearchQuery(query: string): ParsedSearchQuery {
+  const requiredTerms: string[] = [];
+  const excludedTerms: string[] = [];
+  const senderFilters: string[] = [];
+  let index = 0;
+
+  while (index < query.length) {
+    while (index < query.length && isWhitespace(query[index]!)) index += 1;
+    if (index >= query.length) break;
+
+    const negated = query[index] === '-'
+      && index + 1 < query.length
+      && !isWhitespace(query[index + 1]!);
+    if (negated) index += 1;
+
+    const hasSenderPrefix = !negated
+      && foldSearchText(query.slice(index, index + SENDER_FILTER_PREFIX.length)) === SENDER_FILTER_PREFIX
+      && index + SENDER_FILTER_PREFIX.length < query.length
+      && !isWhitespace(query[index + SENDER_FILTER_PREFIX.length]!);
+    if (hasSenderPrefix) index += SENDER_FILTER_PREFIX.length;
+
+    const token = readToken(query, index);
+    index = token.nextIndex;
+    const foldedValue = foldSearchText(token.value);
+    if (foldedValue.length === 0) continue;
+
+    if (hasSenderPrefix) {
+      senderFilters.push(foldedValue);
+    } else if (negated) {
+      excludedTerms.push(foldedValue);
+    } else {
+      // A bare `from:` reaches this path because an empty sender filter is plain text.
+      requiredTerms.push(foldedValue);
+    }
+  }
+
+  return { requiredTerms, excludedTerms, senderFilters };
+}
+
+function readToken(query: string, startIndex: number): ParsedToken {
+  if (query[startIndex] === '"') {
+    const phraseStart = startIndex + 1;
+    const closingQuote = query.indexOf('"', phraseStart);
+    if (closingQuote < 0) return { value: query.slice(phraseStart), nextIndex: query.length };
+    return { value: query.slice(phraseStart, closingQuote), nextIndex: closingQuote + 1 };
+  }
+
+  let endIndex = startIndex;
+  while (endIndex < query.length && !isWhitespace(query[endIndex]!)) endIndex += 1;
+  return { value: query.slice(startIndex, endIndex), nextIndex: endIndex };
+}
+
+function isWhitespace(value: string): boolean {
+  return /\s/.test(value);
 }

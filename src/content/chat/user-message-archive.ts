@@ -1,10 +1,11 @@
-import { foldSearchText, parseSearchTerms } from '../shared/text-fold';
+import { foldSearchText, type ParsedSearchQuery } from '../shared/text-fold';
 import { EMOTE_TOKEN_RE } from './content-tokens';
 import { normalizeChatIdentity, type ChatMessage } from './message-store';
 
-// 30_000 × 400 B = 12 MB heap ceiling (240 B record + ~160 B folded haystack string). At the
-// measured 3.57 msg/s busy rate the count cap binds first and covers 30_000 / 3.57 = 8,403 s =
-// 2 h 20 min; at 1.00 msg/s the 3-hour age cap binds first at 10,800 records.
+// The 30_000-record cap bounds archive heap use. Search stores one full folded haystack and one
+// short folded sender name per record. At the measured 3.57 msg/s busy rate the count cap binds
+// first and covers 30_000 / 3.57 = 8,403 s = 2 h 20 min; at 1.00 msg/s the 3-hour age cap binds
+// first at 10,800 records.
 // ARCHIVE_PER_USER_CAP bounds a single spamming account so one user can never occupy the whole
 // archive.
 export const ARCHIVE_MAX_MESSAGES = 30_000;
@@ -23,6 +24,8 @@ export interface ArchiveSearchResult {
   readonly matches: ArchivedMessage[];
   /** Total matches in the archive, which can exceed `matches.length`. */
   readonly total: number;
+  /** True when results come from sender-name subsequence matching after a strict zero. */
+  readonly widened: boolean;
 }
 
 /** The message this one answered. Without it a reply reads as a non-sequitur in the list — the
@@ -94,6 +97,8 @@ export class UserMessageArchive {
   /** Folded search haystack per message id. Kept off `ArchivedMessage` so search/DOM copies
    * never leak the fold into the public shape. */
   private readonly foldedHaystacks = new Map<string, string>();
+  /** Folded sender name per message id. Kept separate so `from:` can never match body text. */
+  private readonly foldedSenderNames = new Map<string, string>();
   private readonly recordsByUserId = new Map<number, ArchivedMessage[]>();
   private readonly userIdByName = new Map<string, number>();
   private readonly namesByUserId = new Map<number, Set<string>>();
@@ -127,6 +132,7 @@ export class UserMessageArchive {
     this.liveCount += 1;
     this.recordsById.set(record.id, record);
     this.foldedHaystacks.set(record.id, buildFoldedHaystack(record.text, record.username));
+    this.foldedSenderNames.set(record.id, foldSearchText(record.username));
     let userRecords = this.recordsByUserId.get(record.userId);
     if (!userRecords) {
       userRecords = [];
@@ -149,24 +155,15 @@ export class UserMessageArchive {
     return this.userIdByName.get(key) ?? null;
   }
 
-  /** Newest → oldest, capped at `limit`. Every whitespace-separated term must appear in the
-   * message text or in the sender's name, so "ahmet link" finds Ahmet's message with a link
-   * instead of every message containing either word. `total` counts matches before the cap. */
-  search(query: string, limit: number = SEARCH_RESULT_LIMIT): ArchiveSearchResult {
-    const terms = parseSearchTerms(query);
-    if (terms.length === 0 || limit <= 0) return { matches: [], total: 0 };
+  /** Newest → oldest, capped at `limit`. `total` counts matches before the cap. */
+  search(query: ParsedSearchQuery, limit: number = SEARCH_RESULT_LIMIT): ArchiveSearchResult {
+    if (!hasQueryTerms(query) || limit <= 0) return { matches: [], total: 0, widened: false };
 
-    const matches: ArchivedMessage[] = [];
-    let total = 0;
-    for (let slot = this.records.length - 1; slot >= this.head; slot -= 1) {
-      const record = this.records[slot];
-      if (!record) continue;
-      const haystack = this.foldedHaystacks.get(record.id);
-      if (!haystack || !terms.every((term) => haystack.includes(term))) continue;
-      total += 1;
-      if (matches.length < limit) matches.push({ ...record });
-    }
-    return { matches, total };
+    const strict = this.collectMatches(query, limit, false);
+    if (strict.total > 0 || !hasPositiveTerms(query)) return { ...strict, widened: false };
+
+    const widened = this.collectMatches(query, limit, true);
+    return { ...widened, widened: widened.total > 0 };
   }
 
   /** Oldest → newest. Returns a fresh array; callers must never mutate internal state. */
@@ -219,6 +216,11 @@ export class UserMessageArchive {
     return this.foldedHaystacks.size;
   }
 
+  /** Test-only getter: folded sender-name entries must track live records across every eviction. */
+  get internalFoldedSenderNameCount(): number {
+    return this.foldedSenderNames.size;
+  }
+
   /** Full reset, including `truncated`. */
   clear(): void {
     this.records = [];
@@ -227,6 +229,7 @@ export class UserMessageArchive {
     this.slotById.clear();
     this.recordsById.clear();
     this.foldedHaystacks.clear();
+    this.foldedSenderNames.clear();
     this.recordsByUserId.clear();
     this.userIdByName.clear();
     this.namesByUserId.clear();
@@ -295,6 +298,7 @@ export class UserMessageArchive {
     this.slotById.delete(record.id);
     this.recordsById.delete(record.id);
     this.foldedHaystacks.delete(record.id);
+    this.foldedSenderNames.delete(record.id);
 
     const userRecords = this.recordsByUserId.get(record.userId);
     if (userRecords) {
@@ -324,4 +328,69 @@ export class UserMessageArchive {
     this.head = 0;
     return oldHead;
   }
+
+  private collectMatches(
+    query: ParsedSearchQuery,
+    limit: number,
+    senderSubsequenceOnly: boolean,
+  ): Pick<ArchiveSearchResult, 'matches' | 'total'> {
+    const matches: ArchivedMessage[] = [];
+    let total = 0;
+    for (let slot = this.records.length - 1; slot >= this.head; slot -= 1) {
+      const record = this.records[slot];
+      if (!record || !this.recordMatches(record, query, senderSubsequenceOnly)) continue;
+      total += 1;
+      if (matches.length < limit) matches.push({ ...record });
+    }
+    return { matches, total };
+  }
+
+  private recordMatches(
+    record: ArchivedMessage,
+    query: ParsedSearchQuery,
+    senderSubsequenceOnly: boolean,
+  ): boolean {
+    const haystack = this.foldedHaystacks.get(record.id);
+    const senderName = this.foldedSenderNames.get(record.id);
+    if (!haystack || !senderName) return false;
+    if (query.excludedTerms.some((term) => haystack.includes(term))) return false;
+
+    if (senderSubsequenceOnly) {
+      // Names are short enough for a safe loose fallback. Message bodies are not: a short query
+      // is a subsequence of almost any sentence and would flood the result list.
+      return query.requiredTerms.every((term) => isSubsequence(term, senderName))
+        && matchesAnySenderFilter(query.senderFilters, senderName, isSubsequence);
+    }
+
+    return query.requiredTerms.every((term) => haystack.includes(term))
+      && matchesAnySenderFilter(query.senderFilters, senderName, (term, name) => name.includes(term));
+  }
+}
+
+function hasQueryTerms(query: ParsedSearchQuery): boolean {
+  return query.requiredTerms.length > 0
+    || query.excludedTerms.length > 0
+    || query.senderFilters.length > 0;
+}
+
+function hasPositiveTerms(query: ParsedSearchQuery): boolean {
+  return query.requiredTerms.length > 0 || query.senderFilters.length > 0;
+}
+
+function matchesAnySenderFilter(
+  senderFilters: readonly string[],
+  senderName: string,
+  matches: (filter: string, name: string) => boolean,
+): boolean {
+  if (senderFilters.length === 0) return true;
+  // Multiple `from:` filters form a union because readers listing names expect either sender.
+  return senderFilters.some((filter) => matches(filter, senderName));
+}
+
+function isSubsequence(needle: string, haystack: string): boolean {
+  let needleIndex = 0;
+  for (let haystackIndex = 0; haystackIndex < haystack.length && needleIndex < needle.length; haystackIndex += 1) {
+    if (haystack[haystackIndex] === needle[needleIndex]) needleIndex += 1;
+  }
+  return needleIndex === needle.length;
 }

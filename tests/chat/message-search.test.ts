@@ -66,6 +66,31 @@ describe('message search', () => {
     expect(notes[0]?.textContent).toBe('Daha eski mesajlar arşivden düşmüştü.');
   });
 
+  it('reports widened loose sender-name results in Turkish and English', () => {
+    const archive = new UserMessageArchive();
+    const message = chatMessage('loose-name', { content: 'ordinary message' });
+    archive.add({
+      ...message,
+      sender: {
+        ...message.sender,
+        slug: 'sercannoder',
+        username: 'SercanNoder',
+        displayName: 'SercanNoder',
+      },
+    });
+    configureUserMessageArchive(archive);
+
+    const model = getMessageSearchModel('srcnod');
+    expect(model.widened).toBe(true);
+    expect(model.matches.map((record) => record.id)).toEqual(['loose-name']);
+    expect(buildMessageSearchResults(model).querySelector('.kickflow-search__note')?.textContent)
+      .toBe('Tam eşleşme yok. Gevşek gönderen adı eşleşmeleri gösteriliyor.');
+
+    setLang('en');
+    expect(buildMessageSearchResults(model).querySelector('.kickflow-search__note')?.textContent)
+      .toBe('No exact match. Showing loose sender-name matches.');
+  });
+
   it('shows the hint before a query and the empty state after a fruitless one', () => {
     configureUserMessageArchive(archiveWith('merhaba'));
 

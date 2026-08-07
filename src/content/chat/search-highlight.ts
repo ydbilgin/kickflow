@@ -1,15 +1,24 @@
-import { foldSearchText } from '../shared/text-fold';
+import { foldSearchText, type ParsedSearchQuery } from '../shared/text-fold';
 
 const SEARCH_HIT_CLASS = 'kickflow-search__hit';
 const EXCLUDED_SUBTREE_SELECTOR = `mark.${SEARCH_HIT_CLASS}, .kickflow-user-messages__time`;
+const SENDER_NAME_SELECTOR = '.kickflow-user-messages__name';
 
 interface MatchRange {
   start: number;
   end: number;
 }
 
-/** Highlights folded query terms without changing the rendered elements around their text. */
-export function highlightSearchTerms(container: HTMLElement, terms: readonly string[]): void {
+/** Highlights positive query matches without changing the rendered elements around their text. */
+export function highlightSearchQuery(container: HTMLElement, query: ParsedSearchQuery): void {
+  highlightTerms(container, query.requiredTerms);
+
+  for (const senderName of container.querySelectorAll<HTMLElement>(SENDER_NAME_SELECTOR)) {
+    highlightTerms(senderName, query.senderFilters);
+  }
+}
+
+function highlightTerms(container: HTMLElement, terms: readonly string[]): void {
   if (terms.length === 0) return;
 
   const textNodes = collectHighlightableTextNodes(container);

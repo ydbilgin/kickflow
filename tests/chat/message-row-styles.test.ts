@@ -79,6 +79,9 @@ describe('own-mode message row geometry styles', () => {
 
     expect(hit).toContain('background: rgba(83,252,24,0.22)');
     expect(hit).toContain('color: inherit');
+    expect(hit).toContain('box-shadow: inset 0 0 0 1px rgba(255,255,255,0.58)');
+    // A wrapped multi-word phrase must keep a complete ring on every fragment, not just the first.
+    expect(hit).toContain('box-decoration-break: clone');
     expect(hit).not.toContain('${');
     expect(hit).not.toMatch(/(?:^|;)\s*(?:padding|border|font-size|font-weight)\s*:/);
   });

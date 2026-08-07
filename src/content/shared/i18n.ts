@@ -112,14 +112,18 @@ export const messages = {
   'tab.about': { en: 'About', tr: 'Hakkında' },
   'search.placeholder': { en: 'Search chat messages…', tr: 'Sohbet mesajlarında ara…' },
   'search.hint': {
-    en: 'Searches every message seen on this channel since the page was opened. Every word must match.',
-    tr: 'Sayfa açıldığından beri bu kanalda görülen tüm mesajlarda arar. Her kelime eşleşmeli.',
+    en: 'Searches every message seen on this channel since the page was opened. Use words, "phrases", from:name, or -excluded terms.',
+    tr: 'Sayfa açıldığından beri bu kanalda görülen tüm mesajlarda arar. Kelimeler, "ifadeler", from:ad veya -hariç terimler kullan.',
   },
   'search.unavailable': {
     en: 'No chat archive on this page — open a channel or a VOD.',
     tr: 'Bu sayfada sohbet arşivi yok — bir kanal veya VOD aç.',
   },
   'search.empty': { en: 'No message matches.', tr: 'Eşleşen mesaj yok.' },
+  'search.widened': {
+    en: 'No exact match. Showing loose sender-name matches.',
+    tr: 'Tam eşleşme yok. Gevşek gönderen adı eşleşmeleri gösteriliyor.',
+  },
   'search.count': {
     en: { one: '{n} match', other: '{n} matches' },
     tr: { one: '{n} sonuç', other: '{n} sonuç' },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { foldSearchText, parseSearchTerms } from '../../src/content/shared/text-fold';
+import { foldSearchText, parseSearchQuery } from '../../src/content/shared/text-fold';
 
 describe('foldSearchText', () => {
   it('folds Turkish İ/I/ı before Unicode default lowercasing', () => {
@@ -38,7 +38,32 @@ describe('foldSearchText', () => {
     expect(foldSearchText('\u0301')).toBe('\u0301');
   });
 
-  it('parses folded non-empty whitespace-separated search terms', () => {
-    expect(parseSearchTerms('  İZMİR\t güzel \n')).toEqual(['izmir', 'guzel']);
+  it('parses folded required terms into a structured query', () => {
+    expect(parseSearchQuery('  İZMİR\t güzel \n')).toEqual({
+      requiredTerms: ['izmir', 'guzel'],
+      excludedTerms: [],
+      senderFilters: [],
+    });
+  });
+
+  it('keeps quoted phrases together and accepts an unterminated phrase', () => {
+    expect(parseSearchQuery('"iyi geceler" sonra')).toEqual({
+      requiredTerms: ['iyi geceler', 'sonra'],
+      excludedTerms: [],
+      senderFilters: [],
+    });
+    expect(parseSearchQuery('before "iyi gece')).toEqual({
+      requiredTerms: ['before', 'iyi gece'],
+      excludedTerms: [],
+      senderFilters: [],
+    });
+  });
+
+  it('separates sender filters and negation from plain hyphenated terms', () => {
+    expect(parseSearchQuery('from:ŞEYMA from:"Ahmet Yılmaz" -şaka well-known -')).toEqual({
+      requiredTerms: ['well-known', '-'],
+      excludedTerms: ['saka'],
+      senderFilters: ['seyma', 'ahmet yilmaz'],
+    });
   });
 });

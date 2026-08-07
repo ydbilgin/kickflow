@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ARCHIVE_MAX_AGE_MS, ARCHIVE_MAX_MESSAGES, ARCHIVE_PER_USER_CAP, UserMessageArchive } from '../../src/content/chat/user-message-archive';
+import { parseSearchQuery } from '../../src/content/shared/text-fold';
 import { chatMessage } from '../helpers/chat-message';
 
 const NOW = Date.parse('2026-08-01T12:00:00.000Z');
@@ -7,6 +8,23 @@ const INDEXED_USER_ID = 61;
 const INDEXED_USER_NAME = 'Cahitc61';
 const OTHER_USER_ID = 62;
 const OTHER_USER_NAME = 'other-user';
+
+function searchArchive(archive: UserMessageArchive, query: string, limit?: number) {
+  return archive.search(parseSearchQuery(query), limit);
+}
+
+function messageFrom(id: string, userId: number, username: string, content: string) {
+  const message = chatMessage(id, { userId, content });
+  return {
+    ...message,
+    sender: {
+      ...message.sender,
+      slug: username.toLowerCase(),
+      username,
+      displayName: username,
+    },
+  };
+}
 
 function indexedMessage(
   id: string,
@@ -374,13 +392,13 @@ describe('UserMessageArchive', () => {
     archive.add(chatMessage('c', { userId: 6, content: 'alakasiz mesaj' }));
 
     // Case-insensitive, and both terms must be present in the same message.
-    expect(archive.search('bak link').matches.map((record) => record.id)).toEqual(['b']);
+    expect(searchArchive(archive, 'bak link').matches.map((record) => record.id)).toEqual(['b']);
     // Newest first: 'b' was archived after 'a'.
-    expect(archive.search('bak').matches.map((record) => record.id)).toEqual(['b', 'a']);
+    expect(searchArchive(archive, 'bak').matches.map((record) => record.id)).toEqual(['b', 'a']);
     // The sender's name is part of the haystack, so a name alone finds that user's messages.
-    expect(archive.search('user6').matches.map((record) => record.id)).toEqual(['c']);
-    expect(archive.search('   ').matches).toEqual([]);
-    expect(archive.search('').total).toBe(0);
+    expect(searchArchive(archive, 'user6').matches.map((record) => record.id)).toEqual(['c']);
+    expect(searchArchive(archive, '   ').matches).toEqual([]);
+    expect(searchArchive(archive, '').total).toBe(0);
   });
 
   it('caps returned rows while still counting every match', () => {
@@ -389,7 +407,7 @@ describe('UserMessageArchive', () => {
       archive.add(chatMessage(`m${index}`, { content: 'tekrar eden mesaj' }));
     }
 
-    const result = archive.search('tekrar', 2);
+    const result = searchArchive(archive, 'tekrar', 2);
     expect(result.matches.map((record) => record.id)).toEqual(['m4', 'm3']);
     expect(result.total).toBe(5);
   });
@@ -401,7 +419,7 @@ describe('UserMessageArchive', () => {
     archive.add(chatMessage('new', { content: 'aranan kelime' }));
     archive.markDeleted('new');
 
-    const result = archive.search('aranan');
+    const result = searchArchive(archive, 'aranan');
     expect(result.matches.map((record) => record.id)).toEqual(['new', 'mid']);
     expect(result.matches[0]?.deleted).toBe(true);
   });
@@ -410,7 +428,7 @@ describe('UserMessageArchive', () => {
     const archive = new UserMessageArchive({ now: () => NOW });
     archive.add(chatMessage('izmir-msg', { content: 'İzmir güzel' }));
 
-    expect(archive.search('izmir').matches.map((record) => record.id)).toEqual(['izmir-msg']);
+    expect(searchArchive(archive, 'izmir').matches.map((record) => record.id)).toEqual(['izmir-msg']);
   });
 
   it('folds ş both ways between query and haystack', () => {
@@ -418,8 +436,8 @@ describe('UserMessageArchive', () => {
     archive.add(chatMessage('upper', { content: 'MAŞALLAH' }));
     archive.add(chatMessage('lower', { content: 'masallah' }));
 
-    expect(archive.search('masallah').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
-    expect(archive.search('MAŞALLAH').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
+    expect(searchArchive(archive, 'masallah').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
+    expect(searchArchive(archive, 'MAŞALLAH').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
   });
 
   it('folds ışık / IŞIK / isik to the same form', () => {
@@ -427,8 +445,8 @@ describe('UserMessageArchive', () => {
     archive.add(chatMessage('isik-upper', { content: 'IŞIK' }));
     archive.add(chatMessage('isik-lower', { content: 'ışık' }));
 
-    expect(archive.search('ışık').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
-    expect(archive.search('isik').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
+    expect(searchArchive(archive, 'ışık').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
+    expect(searchArchive(archive, 'isik').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
   });
 
   it('folds güneş and gunes both ways', () => {
@@ -436,8 +454,8 @@ describe('UserMessageArchive', () => {
     archive.add(chatMessage('with-diacritic', { content: 'güneş' }));
     archive.add(chatMessage('ascii', { content: 'gunes' }));
 
-    expect(archive.search('gunes').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
-    expect(archive.search('güneş').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
+    expect(searchArchive(archive, 'gunes').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
+    expect(searchArchive(archive, 'güneş').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
   });
 
   it('folds the sender name in the haystack', () => {
@@ -453,15 +471,15 @@ describe('UserMessageArchive', () => {
       },
     });
 
-    expect(archive.search('seyma').matches.map((record) => record.id)).toEqual(['seyma-msg']);
+    expect(searchArchive(archive, 'seyma').matches.map((record) => record.id)).toEqual(['seyma-msg']);
   });
 
   it('searches emote tokens by name and ignores the emote wrapper', () => {
     const archive = new UserMessageArchive({ now: () => NOW });
     archive.add(chatMessage('emote-only', { content: '[emote:1234:kekw]' }));
 
-    expect(archive.search('kekw').matches.map((record) => record.id)).toEqual(['emote-only']);
-    expect(archive.search('emote').matches).toEqual([]);
+    expect(searchArchive(archive, 'kekw').matches.map((record) => record.id)).toEqual(['emote-only']);
+    expect(searchArchive(archive, 'emote').matches).toEqual([]);
     // Raw text stays intact for the renderer.
     expect(archive.getByUserId(1)[0]?.text).toBe('[emote:1234:kekw]');
   });
@@ -473,22 +491,103 @@ describe('UserMessageArchive', () => {
     archive.add(chatMessage('spam', { content: '[emote:39261:KEKW][emote:39261:KEKW]' }));
     archive.add(chatMessage('around', { content: '[emote:1234:kekw] bak [emote:5678:pog]' }));
 
-    expect(archive.search('kekw').matches.map((record) => record.id)).toEqual(['around', 'spam']);
-    expect(archive.search('pog').matches.map((record) => record.id)).toEqual(['around']);
-    expect(archive.search('bak').matches.map((record) => record.id)).toEqual(['around']);
-    expect(archive.search('emote').matches).toEqual([]);
+    expect(searchArchive(archive, 'kekw').matches.map((record) => record.id)).toEqual(['around', 'spam']);
+    expect(searchArchive(archive, 'pog').matches.map((record) => record.id)).toEqual(['around']);
+    expect(searchArchive(archive, 'bak').matches.map((record) => record.id)).toEqual(['around']);
+    expect(searchArchive(archive, 'emote').matches).toEqual([]);
   });
 
   it('keeps plain ASCII search behaviour unchanged', () => {
     const archive = new UserMessageArchive({ now: () => NOW });
     archive.add(chatMessage('ascii-msg', { content: 'Hello World' }));
 
-    expect(archive.search('hello').matches.map((record) => record.id)).toEqual(['ascii-msg']);
-    expect(archive.search('HELLO WORLD').matches.map((record) => record.id)).toEqual(['ascii-msg']);
-    expect(archive.search('missing').matches).toEqual([]);
+    expect(searchArchive(archive, 'hello').matches.map((record) => record.id)).toEqual(['ascii-msg']);
+    expect(searchArchive(archive, 'HELLO WORLD').matches.map((record) => record.id)).toEqual(['ascii-msg']);
+    expect(searchArchive(archive, 'missing').matches).toEqual([]);
   });
 
-  it('keeps the folded haystack map sized to live records across every eviction path', () => {
+  it('keeps sender filters isolated from body text while combining them with required terms', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(messageFrom('ahmet-link', 1, 'Ahmet', 'a link is here'));
+    archive.add(messageFrom('body-name', 2, 'Other', 'ahmet link and kekw are here'));
+
+    expect(searchArchive(archive, 'from:ahmet link').matches.map((record) => record.id))
+      .toEqual(['ahmet-link']);
+    expect(searchArchive(archive, 'from:kekw').matches).toEqual([]);
+  });
+
+  it('folds sender filters and treats multiple filters as a union', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(messageFrom('seyma', 1, 'Şeyma', 'first'));
+    archive.add(messageFrom('ahmet', 2, 'Ahmet', 'second'));
+    archive.add(messageFrom('other', 3, 'Other', 'third'));
+
+    expect(searchArchive(archive, 'from:seyma').matches.map((record) => record.id)).toEqual(['seyma']);
+    expect(searchArchive(archive, 'from:seyma from:ahmet').matches.map((record) => record.id))
+      .toEqual(['ahmet', 'seyma']);
+  });
+
+  it('matches quoted and unterminated phrases without splitting their spaces', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('phrase', { content: 'say iyi geceler now' }));
+    archive.add(chatMessage('apart', { content: 'iyi appears here and geceler later' }));
+
+    expect(searchArchive(archive, '"iyi geceler"').matches.map((record) => record.id)).toEqual(['phrase']);
+    expect(searchArchive(archive, '"iyi gece').matches.map((record) => record.id)).toEqual(['phrase']);
+  });
+
+  it('applies folded negation while keeping hyphenated words and a bare hyphen literal', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(chatMessage('spam', { content: 'SAKA spam' }));
+    archive.add(chatMessage('known', { content: 'well-known source' }));
+    archive.add(chatMessage('dash', { content: 'single - marker' }));
+    archive.add(chatMessage('clean', { content: 'ordinary message' }));
+
+    expect(searchArchive(archive, '-spam').matches.map((record) => record.id))
+      .toEqual(['clean', 'dash', 'known']);
+    expect(searchArchive(archive, '-şaka').matches.map((record) => record.id))
+      .toEqual(['clean', 'dash', 'known']);
+    expect(searchArchive(archive, 'well-known').matches.map((record) => record.id)).toEqual(['known']);
+    expect(searchArchive(archive, '-').matches.map((record) => record.id)).toEqual(['dash', 'known']);
+  });
+
+  it('widens a strict zero to sender-name subsequences in newest-first order', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(messageFrom('old', 1, 'SercanNoder', 'first message'));
+    archive.add(messageFrom('new', 1, 'SercanNoder', 'second message'));
+
+    const result = searchArchive(archive, 'srcnod');
+
+    expect(result.widened).toBe(true);
+    expect(result.matches.map((record) => record.id)).toEqual(['new', 'old']);
+  });
+
+  it('does not supplement a strict result with loose sender-name matches', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(messageFrom('loose-name', 1, 'SercanNoder', 'ordinary message'));
+    archive.add(messageFrom('strict-body', 2, 'Alice', 'srcnod appears literally'));
+
+    const result = searchArchive(archive, 'srcnod');
+
+    expect(result.widened).toBe(false);
+    expect(result.matches.map((record) => record.id)).toEqual(['strict-body']);
+  });
+
+  it('never applies subsequence matching to message bodies', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(messageFrom('body-only', 1, 'Alice', 's-r-c-n-o-d'));
+
+    expect(searchArchive(archive, 'srcnod').matches).toEqual([]);
+  });
+
+  it('keeps negated terms authoritative during widened matching', () => {
+    const archive = new UserMessageArchive({ now: () => NOW });
+    archive.add(messageFrom('excluded-loose-name', 1, 'SercanNoder', 'spam'));
+
+    expect(searchArchive(archive, 'srcnod -spam').matches).toEqual([]);
+  });
+
+  it('keeps folded search maps sized to live records across every eviction path', () => {
     let now = 0;
     const archive = new UserMessageArchive({
       maxMessages: 2,
@@ -499,6 +598,7 @@ describe('UserMessageArchive', () => {
 
     const expectHaystackTracksLive = () => {
       expect(archive.internalFoldedHaystackCount).toBe(archive.size);
+      expect(archive.internalFoldedSenderNameCount).toBe(archive.size);
     };
 
     archive.add(chatMessage('age-a', { userId: 1, content: 'one', createdAt: new Date(0).toISOString() }));

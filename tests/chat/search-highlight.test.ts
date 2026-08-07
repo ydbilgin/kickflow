@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { highlightSearchTerms } from '../../src/content/chat/search-highlight';
+import { highlightSearchQuery } from '../../src/content/chat/search-highlight';
 import { buildArchivedMessageRow } from '../../src/content/chat/user-message-list';
-import { parseSearchTerms } from '../../src/content/shared/text-fold';
+import { parseSearchQuery } from '../../src/content/shared/text-fold';
 import { archivedMessage } from '../helpers/chat-message';
 
 function textContainer(text: string): HTMLDivElement {
@@ -10,11 +10,11 @@ function textContainer(text: string): HTMLDivElement {
   return container;
 }
 
-describe('highlightSearchTerms', () => {
+describe('highlightSearchQuery', () => {
   it('preserves the original Turkish spelling inside a folded match', () => {
     const container = textContainer('İzmir güzel');
 
-    highlightSearchTerms(container, parseSearchTerms('izmir'));
+    highlightSearchQuery(container, parseSearchQuery('izmir'));
 
     const marks = container.querySelectorAll('mark.kickflow-search__hit');
     expect(marks).toHaveLength(1);
@@ -24,32 +24,32 @@ describe('highlightSearchTerms', () => {
 
   it('keeps supplementary-character code-unit offsets aligned before a match', () => {
     const emojiContainer = textContainer('😀 İzmir');
-    highlightSearchTerms(emojiContainer, parseSearchTerms('izmir'));
+    highlightSearchQuery(emojiContainer, parseSearchQuery('izmir'));
     expect(emojiContainer.querySelector('mark')?.textContent).toBe('İzmir');
     expect(emojiContainer.textContent).toBe('😀 İzmir');
 
     // U+2F800 canonically normalizes to one BMP code unit. The fold must retain the original
     // two-unit character or the match offset moves left and wraps the preceding space.
     const shrinkingFoldContainer = textContainer('\u{2F800} İzmir');
-    highlightSearchTerms(shrinkingFoldContainer, parseSearchTerms('izmir'));
+    highlightSearchQuery(shrinkingFoldContainer, parseSearchQuery('izmir'));
     expect(shrinkingFoldContainer.querySelector('mark')?.textContent).toBe('İzmir');
     expect(shrinkingFoldContainer.textContent).toBe('\u{2F800} İzmir');
   });
 
   it('marks every term and merges overlapping or adjacent ranges', () => {
     const separate = textContainer('one two');
-    highlightSearchTerms(separate, ['one', 'two']);
+    highlightSearchQuery(separate, parseSearchQuery('one two'));
     expect(Array.from(separate.querySelectorAll('mark'), (mark) => mark.textContent))
       .toEqual(['one', 'two']);
 
     const overlapping = textContainer('ahmet');
-    highlightSearchTerms(overlapping, ['ah', 'ahm']);
+    highlightSearchQuery(overlapping, parseSearchQuery('ah ahm'));
     expect(overlapping.querySelectorAll('mark')).toHaveLength(1);
     expect(overlapping.querySelector('mark')?.textContent).toBe('ahm');
     expect(overlapping.querySelector('mark mark')).toBeNull();
 
     const adjacent = textContainer('ahmet');
-    highlightSearchTerms(adjacent, ['ah', 'met']);
+    highlightSearchQuery(adjacent, parseSearchQuery('ah met'));
     expect(adjacent.querySelectorAll('mark')).toHaveLength(1);
     expect(adjacent.querySelector('mark')?.textContent).toBe('ahmet');
   });
@@ -60,7 +60,7 @@ describe('highlightSearchTerms', () => {
       { clockLabel: '12:34', showUsername: true },
     );
 
-    highlightSearchTerms(row, parseSearchTerms('ahmet'));
+    highlightSearchQuery(row, parseSearchQuery('ahmet'));
 
     expect(row.querySelector('.kickflow-user-messages__name mark')?.textContent).toBe('Ahmet');
   });
@@ -71,7 +71,7 @@ describe('highlightSearchTerms', () => {
       { clockLabel: '12:34', showUsername: true },
     );
 
-    highlightSearchTerms(row, parseSearchTerms('12'));
+    highlightSearchQuery(row, parseSearchQuery('12'));
 
     expect(row.querySelector('.kickflow-user-messages__time')?.textContent).toBe('12:34');
     expect(row.querySelector('.kickflow-user-messages__time mark')).toBeNull();
@@ -96,7 +96,7 @@ describe('highlightSearchTerms', () => {
     link.textContent = 'İzmir link';
     row.appendChild(link);
 
-    highlightSearchTerms(row, parseSearchTerms('izmir güzel link'));
+    highlightSearchQuery(row, parseSearchQuery('izmir güzel link'));
 
     expect(row.querySelector('img')).toBe(image);
     expect(row.querySelector('a')).toBe(link);
@@ -111,7 +111,7 @@ describe('highlightSearchTerms', () => {
     const textNode = container.firstChild;
     const innerHTML = container.innerHTML;
 
-    highlightSearchTerms(container, ['missing']);
+    highlightSearchQuery(container, parseSearchQuery('missing'));
 
     expect(container.childNodes).toHaveLength(childNodeCount);
     expect(container.firstChild).toBe(textNode);
@@ -120,14 +120,44 @@ describe('highlightSearchTerms', () => {
 
   it('is idempotent when called twice with the same terms', () => {
     const container = textContainer('İzmir güzel İzmir');
-    const terms = parseSearchTerms('izmir');
-    highlightSearchTerms(container, terms);
+    const query = parseSearchQuery('izmir');
+    highlightSearchQuery(container, query);
     const once = container.innerHTML;
 
-    highlightSearchTerms(container, terms);
+    highlightSearchQuery(container, query);
 
     expect(container.innerHTML).toBe(once);
     expect(container.querySelectorAll('mark')).toHaveLength(2);
     expect(container.querySelector('mark mark')).toBeNull();
+  });
+
+  it('never highlights an excluded term', () => {
+    const container = textContainer('spam clean');
+
+    highlightSearchQuery(container, parseSearchQuery('-spam clean'));
+
+    expect(Array.from(container.querySelectorAll('mark'), (mark) => mark.textContent)).toEqual(['clean']);
+  });
+
+  it('highlights a sender filter only in the sender name', () => {
+    const row = buildArchivedMessageRow(
+      archivedMessage('sender-filter', { username: 'Ahmet', text: 'from:ahmet ahmet literal body' }),
+      { clockLabel: '12:34', showUsername: true },
+    );
+
+    highlightSearchQuery(row, parseSearchQuery('from:ahmet'));
+
+    expect(row.querySelector('.kickflow-user-messages__name mark')?.textContent).toBe('Ahmet');
+    expect(row.querySelector('.kickflow-user-messages__text > mark')).toBeNull();
+    expect(Array.from(row.querySelectorAll('mark'), (mark) => mark.textContent)).toEqual(['Ahmet']);
+  });
+
+  it('highlights a quoted phrase as one span including its spaces', () => {
+    const container = textContainer('before iyi geceler after');
+
+    highlightSearchQuery(container, parseSearchQuery('"iyi geceler"'));
+
+    expect(container.querySelectorAll('mark')).toHaveLength(1);
+    expect(container.querySelector('mark')?.textContent).toBe('iyi geceler');
   });
 });
