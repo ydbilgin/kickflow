@@ -9,7 +9,11 @@
 > stale. `mirror-of: ~/.claude/CLAUDE.md` · `synced-to C:\Users\ydbil\.claude\CLAUDE.md 2026-08-01`.
 
 - **SECRETS NEVER REACH GIT.** No token, API key, cookie, credential blob, or `.env` value may enter a tracked
- file, stage, commit, push, log, fixture, or release artifact. Revoke a leaked token before deleting it.
+ file, stage, commit, push, log, fixture, or release artifact. Forbidden patterns, never abbreviated:
+ `cred_blob_*.bin`, `cookies_*.txt`, `token*.json`, `.env`, `ya29.*`, `1//0*`, `AIza*`,
+ `ghp_`/`gho_`/`github_pat_*`, `sk-*`, `xox[baprs]-*`. Scan `git status` and `git diff` before every commit, and
+ add every one of those patterns to `.gitignore`. Revoke a leaked token BEFORE deleting it — deleting the file
+ leaves the token public. (Real incident: five Google refresh tokens went public in a repo, 2026-06-19.)
 - **NO AI CO-AUTHOR.** Never add `Co-Authored-By: Claude`, `Co-Authored-By: Codex`, or a generated-by signature
  to a commit, PR, or file. Author and contributor identity remain Yasin Derya Bilgin only.
 - **NEVER KILL A PROCESS BY NAME.** Never use image-name or process-name termination such as `taskkill /IM` or
