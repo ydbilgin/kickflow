@@ -27,3 +27,24 @@ docs/*
 docs/screenshots/*
 !docs/screenshots/*.png
 *.zip
+
+# SECRETS - canonical list, synced-to C:/Users/ydbil/.claude/CLAUDE.md 2026-08-19
+# Added because this repo's list was abbreviated while other carriers called it "never
+# abbreviated". agy_snapshots/ is one of the two patterns that actually leaked on 2026-06-19.
+cred_blob_*.bin
+cred_blob*
+snapshot*_*.json
+agy_snapshots/
+cookies_*.txt
+*_cookies.txt
+*.cred
+token*.json
+.env
+.env.*
+*secret*
+# carve-out: source files legitimately carry "Secret" in their names in this tree
+!*.cs
+!*.py
+!*.ts
+!*.js
+!*.md
