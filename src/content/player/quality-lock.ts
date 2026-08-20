@@ -23,11 +23,19 @@ const MAX_ATTEMPTS = 5;
 // "1080p60Giriş gerekli" when logged out) — so "highest" means highest ACTUALLY selectable.
 const PURE_RESOLUTION = /^(\d{3,4})p(60)?$/i;
 
-// The settings/quality gear is icon-only (no aria-label). Identify it ONLY by its cog SVG
-// path — never a positional/last-button fallback: pressing the wrong control (fullscreen/
-// PiP/theater) is a visible side effect that Escape can't cleanly undo. If the icon ever
-// changes, this silently no-ops (safe) rather than clicking blindly.
-const GEAR_PATH_PREFIX = 'M25.7';
+// The settings/quality gear is icon-only (no aria-label) and carries no data-testid, while
+// every neighbouring Kick control does (video-player-pip/clip/theatre-mode/fullscreen).
+// So it is identified ONLY by its cog SVG path — never a positional/last-button fallback:
+// pressing the wrong control (fullscreen/PiP/theater) is a visible side effect that Escape
+// can't cleanly undo.
+//
+// THIS CONSTANT ROTS, and it already has. Measured live on 2026-08-20 (kick.com/sonalisa,
+// logged out): Kick had redrawn the cog and the shipped 'M25.7' matched no button in the
+// bar, across all 5 attempts and with a 1000 ms settle, so quality-lock gave up on every
+// page load and the player stayed on Auto. Re-measured with 'M16.759': the highest
+// selectable row (720p60) came back aria-checked and Auto did not.
+// Evidence: output/playwright/quality-gear-detector-probe.json + quality-anchor-probe.json.
+export const GEAR_PATH_PREFIX = 'M16.759';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -151,7 +159,13 @@ async function applyWithRetries(isDisposed: () => boolean): Promise<void> {
     }
     await sleep(RETRY_DELAY_MS);
   }
-  logger.debug('quality-lock: highest quality could not be applied (gear/menu unavailable)');
+  // WARN, not debug. This is exactly the "missing player selector" class the logger's own
+  // policy keeps visible without a flag — and it is why the stale GEAR_PATH_PREFIX above
+  // went unnoticed: giving up was logged at a level nobody sees by default.
+  logger.warn(
+    `quality-lock: gave up after ${MAX_ATTEMPTS} attempts — the quality gear was never found. `
+    + `GEAR_PATH_PREFIX (${GEAR_PATH_PREFIX}) probably no longer matches Kick's cog icon.`,
+  );
 }
 
 /** Preference is currently always "highest" — persisted for forward-compat with a future

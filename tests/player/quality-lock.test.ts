@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { initQualityLock } from '../../src/content/player/quality-lock';
+import { GEAR_PATH_PREFIX, initQualityLock } from '../../src/content/player/quality-lock';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 
-function setupPlayer(): HTMLButtonElement {
+// The gear path is DERIVED from the production constant, never copied. A fixture that
+// spells the prefix out keeps passing after Kick redraws the cog and the constant is
+// updated — which is exactly what happened: the shipped 'M25.7' matched nothing on live
+// Kick from some point before 2026-08-20, while this suite stayed green against a fixture
+// that still drew the old icon.
+function setupPlayer(gearPath = `${GEAR_PATH_PREFIX}-test-gear`): HTMLButtonElement {
   const wrapper = document.createElement('div');
   const video = document.createElement('video');
   video.id = 'video-player';
@@ -13,7 +18,7 @@ function setupPlayer(): HTMLButtonElement {
   const gear = document.createElement('button');
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', 'M25.7-test-gear');
+  path.setAttribute('d', gearPath);
   svg.append(path);
   gear.append(svg);
   bar.append(live, gear);
@@ -53,5 +58,30 @@ describe('quality-lock lifecycle', () => {
     await vi.advanceTimersByTimeAsync(260);
 
     expect(selected).not.toHaveBeenCalled();
+  });
+
+  // Regression guard for the 2026-08-20 live finding: Kick redrew its cog, GEAR_PATH_PREFIX
+  // stopped matching, and quality-lock gave up on every load while logging only at debug —
+  // invisible unless the user flips a flag. The give-up MUST be visible by default, or the
+  // next icon change goes unnoticed for weeks again.
+  it('warns visibly when no button in the control bar matches the gear icon', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    vi.stubGlobal('chrome', {
+      runtime: { id: 'kickflow-test' },
+      storage: { local: { get: vi.fn(async () => ({ 'kickflow.qualityPreference': 'highest' })), set: vi.fn() } },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // A fully populated control bar whose cog carries a path the constant does not match.
+    setupPlayer('M99.9-kick-redrew-the-cog');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+
+    // APPLY_DELAY_MS + MAX_ATTEMPTS * (menu settle + RETRY_DELAY_MS), with headroom.
+    await vi.advanceTimersByTimeAsync(1800 + 5 * (60 + 1300) + 500);
+
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('GEAR_PATH_PREFIX');
+    lifecycle.dispose();
   });
 });
