@@ -6,6 +6,8 @@ const BUTTON_ID = 'kickflow-navbar-settings';
 const BUTTON_CLASS = 'kickflow-navbar-settings';
 const ACTIVE_CLASS = 'kickflow-navbar-settings--active';
 const ENSURE_INTERVAL_MS = 1000;
+export const NAVBAR_RIGHT_CLUSTER_INDEX = 2;
+export const NAVBAR_RIGHT_CLUSTER_CLASSES = ['flex', 'items-center', 'gap-2'] as const;
 
 export interface NavbarSettingsPanel {
   showSettings(): void;
@@ -19,12 +21,10 @@ export function findNavbarRightCluster(): HTMLDivElement | null {
   for (const nav of document.querySelectorAll('nav')) {
     const children = Array.from(nav.children);
     if (children.length < 3 || !children.slice(0, 3).every((child) => child instanceof HTMLDivElement)) continue;
-    const right = children[2];
+    const right = children[NAVBAR_RIGHT_CLUSTER_INDEX];
     if (!(right instanceof HTMLDivElement)) continue;
     if (
-      right.classList.contains('flex') &&
-      right.classList.contains('items-center') &&
-      right.classList.contains('gap-2')
+      NAVBAR_RIGHT_CLUSTER_CLASSES.every((className) => right.classList.contains(className))
     ) {
       return right;
     }

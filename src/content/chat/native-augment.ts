@@ -20,9 +20,9 @@ import {
   clearNativeHighlightStyles,
 } from './message-highlight-apply';
 
-const CHAT_ROOT_SELECTOR = '#chatroom-messages';
-const CHAT_LIST_SELECTOR = '#chatroom-messages .no-scrollbar';
-const ROW_SELECTOR = '[data-index]';
+export const CHAT_ROOT_SELECTOR = '#chatroom-messages';
+export const CHAT_LIST_SELECTOR = '#chatroom-messages .no-scrollbar';
+export const ROW_SELECTOR = '[data-index]';
 const AUGMENTED_CLASS = 'kickflow-augmented';
 const ORIGINAL_CONTENT_CLASS = 'kickflow-original-content';
 const DIMMED_NATIVE_CONTENT_CLASS = 'kickflow-native-content-dimmed';
@@ -32,7 +32,8 @@ const MOD_ACTION_BLOCK_CLASS = 'kickflow-modaction-block';
 const MOD_ACTION_ANCHOR_ATTRIBUTE = 'data-kickflow-modaction-anchor';
 const MOD_ACTION_ID_ATTRIBUTE = 'data-kickflow-modaction-id';
 const MOD_ACTION_SIGNATURE_ATTRIBUTE = 'data-kickflow-modaction-signature';
-const NATIVE_CONTENT_SELECTOR = '.break-words, [class*="break-words"]';
+export const NATIVE_CONTENT_SELECTOR = '.break-words, [class*="break-words"]';
+export const NATIVE_ROW_GROUP_CLASS = 'group';
 
 // Bounds so a high-moderation channel (mass bans) can't pile ghosts onto the few visible
 // rows. A banned message only anchors INLINE if its chronological context is still near the
@@ -700,7 +701,7 @@ export class NativeChatAugmenter {
 
   private findGhostHost(row: HTMLElement): HTMLElement {
     return Array.from(row.children).find((child): child is HTMLElement => (
-      child instanceof HTMLElement && child.classList.contains('group')
+      child instanceof HTMLElement && child.classList.contains(NATIVE_ROW_GROUP_CLASS)
     )) ?? row;
   }
 

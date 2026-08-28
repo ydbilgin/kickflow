@@ -2,7 +2,7 @@ import { logger } from '../shared/logger';
 import { normalizeMessage } from './pusher-client';
 import type { ChatMessage } from './message-store';
 
-const historyUrl = (channelId: number, startTime?: string): string => {
+export const historyUrl = (channelId: number, startTime?: string): string => {
   const base = `https://web.kick.com/api/v1/chat/${channelId}/history`;
   if (!startTime) return base;
   return `${base}?${new URLSearchParams({ start_time: startTime }).toString()}`;

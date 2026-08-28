@@ -74,8 +74,8 @@ function normalizeLiveButtonText(value: string): string {
     .trim();
 }
 
-const LIVE_EDGE_LABELS = new Set(['LIVE', 'CANLI']);
-const GO_TO_LIVE_PHRASES = [
+export const LIVE_EDGE_LABELS = new Set(['LIVE', 'CANLI']);
+export const GO_TO_LIVE_PHRASES = [
   'GO TO LIVE',
   'GO LIVE',
   'JUMP TO LIVE',

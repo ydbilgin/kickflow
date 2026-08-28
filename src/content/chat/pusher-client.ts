@@ -5,7 +5,7 @@ import type { ChatBadge, ChatMessage, PinnedMessage, ReplyContext } from './mess
 // Confirmed live 2026-07-04 (Playwright capture on kick.com, channel "allissag"):
 // pusher:subscribe frames carried "auth":"" (empty) — the channel is genuinely public,
 // no signature required for a second, independent, read-only connection.
-const PUSHER_URL = 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.5.0&flash=false';
+export const PUSHER_URL = 'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.5.0&flash=false';
 
 const CHAT_MESSAGE_EVENT = 'App\\Events\\ChatMessageEvent';
 const USER_BANNED_EVENT = 'App\\Events\\UserBannedEvent';

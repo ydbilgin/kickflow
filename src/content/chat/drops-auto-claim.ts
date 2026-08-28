@@ -2,8 +2,8 @@ import { featureFlags } from './feature-flags';
 import type { Lifecycle } from '../shared/lifecycle';
 import { logger } from '../shared/logger';
 
-const DROPS_PANEL_SELECTOR = '#drops-panel';
-const CHANNEL_POINTS_PANEL_SELECTOR = '#rewards-panel';
+export const DROPS_PANEL_SELECTOR = '#drops-panel';
+export const CHANNEL_POINTS_PANEL_SELECTOR = '#rewards-panel';
 const COMPLETE_PROGRESSBAR_SELECTOR = '[role="progressbar"][data-state="complete"]';
 const ANY_PROGRESSBAR_SELECTOR = '[role="progressbar"]';
 const OBSERVED_ATTRIBUTE_NAMES = ['data-state', 'disabled', 'id'];

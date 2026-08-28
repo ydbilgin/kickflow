@@ -1,5 +1,6 @@
-const CHAT_LIST_SELECTOR = '#chatroom-messages .no-scrollbar';
-const ROW_SELECTOR = '[data-index]';
+export const CHAT_LIST_SELECTOR = '#chatroom-messages .no-scrollbar';
+export const ROW_SELECTOR = '[data-index]';
+export const REACT_FIBER_PROPERTY_PREFIX = '__reactFiber';
 const MID_ATTR = 'data-kickflow-mid';
 const DEBUG_SAMPLE_LIMIT = 25;
 
@@ -20,7 +21,7 @@ function debugEnabled(): boolean {
 
 function rawReactKey(el: Element): string | null {
   try {
-    const prop = Object.getOwnPropertyNames(el).find((name) => name.startsWith('__reactFiber'));
+    const prop = Object.getOwnPropertyNames(el).find((name) => name.startsWith(REACT_FIBER_PROPERTY_PREFIX));
     const key = prop ? (el as unknown as Record<string, { key?: unknown } | undefined>)[prop]?.key : null;
     return typeof key === 'string' && key ? key : null;
   } catch {
@@ -28,7 +29,7 @@ function rawReactKey(el: Element): string | null {
   }
 }
 
-const REACT_MESSAGE_KEY = /^(\d+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+export const REACT_MESSAGE_KEY = /^(\d+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 /** React currently keys virtualized rows as `numeric-index-UUID`. Reject unexpected shapes
  * instead of slicing arbitrary text into a plausible-but-wrong message id. */

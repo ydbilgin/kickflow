@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" data-theatre="false">
+<head>
+  <meta charset="utf-8">
+  <title>Kick anchor probe fixture</title>
+</head>
+<body>
+  <nav>
+    <div>left</div>
+    <div>middle</div>
+    <div class="flex items-center gap-2">right</div>
+  </nav>
+
+  <main>
+    <div id="fixture-player-wrapper">
+      <video id="video-player" muted></video>
+      <div class="z-controls relative grid-row-1"></div>
+      <div class="z-controls absolute bottom-0 left-0 flex">
+        <!-- The ordering and first path prefixes below come from the round-101 live capture. -->
+        <button><svg><path d="M6.667 3.333C5.75 3.333 5 4.083 5 5v10c0"></path></svg></button>
+        <button><svg><path d="M9.167 2.567a.83.83 0 0 0-.517.183L5.833"></path></svg></button>
+        <button>LIVE<svg><path d="M10 18.333a8.333 8.333 0 1 0 0-16.666 8."></path></svg></button>
+        <button aria-label="Go live">GO LIVE</button>
+        <button data-testid="video-player-closed-captions" aria-pressed="false">
+          <svg>
+            <path d="M8.99973 7.99921 caption outline"></path>
+            <path d="M12 8 caption outline"></path>
+            <path d="M15 8 caption outline"></path>
+          </svg>
+        </button>
+        <button data-testid="video-player-theatre-mode" aria-label="Theatre Mode (t)">
+          <svg><path d="M17.5 16.667h-15a.836.836 0 0 0-.833.833"></path></svg>
+        </button>
+        <button data-testid="video-player-fullscreen">
+          <svg><path d="M16.667 1.667h-5v1.666h4.166c.459 0"></path></svg>
+        </button>
+        <button>
+          <svg><path d="M17.5 8.333h-.433c-.367 0-.675-.241-.8-.591"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <section id="chatroom-messages">
+      <div class="no-scrollbar">
+        <div data-index="17"
+             data-probe-react-key="17-123e4567-e89b-12d3-a456-426614174000"
+             data-probe-raw-content="hello [emote:39261:KEKW]">
+          <div class="group">
+            <span class="break-words">hello <img src="https://files.kick.com/emotes/39261/fullsize" alt="KEKW"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-surface-base flex size-full min-h-0 flex-col overflow-hidden text-white">
+      <input type="search" class="h-8 pl-11 pr-3">
+      <ul class="flex list-none flex-col overflow-hidden p-0">
+        <li>
+          <button class="flex h-auto w-full">
+            <span class="min-w-0 flex-1 truncate text-base font-normal leading-6">FixtureUser</span>
+          </button>
+        </li>
+      </ul>
+    </section>
+
+    <section id="drops-panel"></section>
+    <section id="rewards-panel"></section>
+    <button type="button" aria-label="Daily reward">
+      <video src="https://files.kick.com/reward-available-CTA.webm" muted></video>
+    </button>
+  </main>
+</body>
+</html>

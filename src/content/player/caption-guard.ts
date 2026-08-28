@@ -14,8 +14,8 @@ const MAX_RETRIES = 20;
 // Current production icons (2026-07-21). Kick's active icon is one filled path; its inactive
 // outline icon starts with the first path below and has three paths. Keep both the path count and
 // prefix checks: an unknown future icon must safely no-op rather than risk turning captions on.
-const ACTIVE_ICON_PATH_PREFIX = 'M20 17.999';
-const INACTIVE_ICON_PATH_PREFIX = 'M8.99973 7.99921';
+export const ACTIVE_ICON_PATH_PREFIX = 'M20 17.999';
+export const INACTIVE_ICON_PATH_PREFIX = 'M8.99973 7.99921';
 
 /** Prefer a semantic toggle signal if Kick adds one. The SVG signatures are the current
  * locale-independent fallback: the tooltip text changes by language and only exists on hover. */

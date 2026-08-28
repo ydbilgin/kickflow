@@ -2,7 +2,7 @@ import { featureFlags } from './chat/feature-flags';
 import type { Lifecycle } from './shared/lifecycle';
 import { logger } from './shared/logger';
 
-const DAILY_REWARD_CTA_SELECTOR = 'video[src*="reward-available-CTA"]';
+export const DAILY_REWARD_CTA_SELECTOR = 'video[src*="reward-available-CTA"]';
 const EXCLUDED_REWARD_SURFACE_SELECTOR = '#rewards-panel, #drops-panel';
 const DIALOG_SELECTOR = '[role="dialog"]';
 const FULL_WIDTH_BUTTON_SELECTOR = 'button.w-full';

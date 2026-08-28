@@ -6,8 +6,9 @@ import { bindVideoElementListener, observeVideoElement } from './video-element';
 
 const RETRY_DELAY_MS = 250;
 const MAX_RETRIES = 20;
-const TECHNICAL_THEATER_TOKEN = /(?:^|[-_:])(theat(?:er|re)|wide)(?:[-_:]|$)/i;
-const THEATER_SHORTCUT = /\(\s*t\s*\)\s*$/i;
+export const TECHNICAL_THEATER_TOKEN = /(?:^|[-_:])(theat(?:er|re)|wide)(?:[-_:]|$)/i;
+export const THEATER_SHORTCUT = /\(\s*t\s*\)\s*$/i;
+export const THEATER_STATE_SELECTOR = '[data-theatre]';
 
 function technicalMetadata(element: Element): string[] {
   const values: string[] = [];
@@ -43,7 +44,7 @@ export function findTheaterButton(): HTMLButtonElement | null {
 /** Kick's page shell owns the locale-independent `data-theatre` layout state. Button state is
  * accepted as a fallback for harnesses and future player revisions that expose a proper toggle. */
 export function isTheaterModeActive(button: HTMLButtonElement | null = findTheaterButton()): boolean {
-  const shell = document.querySelector<HTMLElement>('[data-theatre]');
+  const shell = document.querySelector<HTMLElement>(THEATER_STATE_SELECTOR);
   if (shell?.getAttribute('data-theatre') === 'true') return true;
   if (!button) return false;
   if (button.getAttribute('aria-pressed') === 'true') return true;
