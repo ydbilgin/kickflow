@@ -16,7 +16,7 @@ import { chromium } from 'playwright';
 const repoRoot = path.resolve('.');
 const profileDir = process.env.KICK_PROFILE_DIR
   ?? path.join(repoRoot, 'output', 'playwright', 'kickflow-owner-profile');
-const WAIT_MINUTES = 12;
+const WAIT_MINUTES = Number(process.env.KICK_LOGIN_WAIT_MINUTES ?? 12);
 
 async function resolveChromium() {
   const root = path.join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
@@ -33,9 +33,17 @@ async function resolveChromium() {
 // `Google Chrome`), no Widevine, a build number that never matches a shipped Chrome release. Real
 // Chrome via `channel: 'chrome'` removes that whole class of doubt, and it still runs in OUR OWN
 // profile directory — the owner's tabs, session and scroll position are never touched.
+// The 429 on /mobile/login is IP/browser-scoped (measured 2026-08-20 and again 2026-08-28), so a
+// fresh exit IP clears it. KICK_PROXY takes a SOCKS5 URL — e.g. an SSH dynamic tunnel to the
+// owner's own Frankfurt box: `ssh -i <key> -D 1080 -N ubuntu@<host>` then
+// KICK_PROXY=socks5://127.0.0.1:1080. DNS is resolved through the proxy too, so the browser and
+// its lookups agree on one exit.
+const proxyServer = process.env.KICK_PROXY ?? null;
+
 async function launch() {
   const shared = {
     headless: false,
+    ...(proxyServer ? { proxy: { server: proxyServer } } : {}),
     // `--disable-extensions` and `--enable-automation` are Playwright defaults; the second is the
     // flag that makes Chrome announce itself as automated.
     ignoreDefaultArgs: ['--disable-extensions', '--enable-automation'],
@@ -109,6 +117,17 @@ async function loggedInAs() {
 }
 
 try {
+  // VERIFY THE EXIT IP BEFORE THE OWNER TYPES ANYTHING. A proxy that silently fails open would put
+  // the login back on the rate-limited address and extend the block for nothing, and we would not
+  // know until it failed again.
+  if (proxyServer) {
+    const exitIp = await page.goto('https://ifconfig.me/ip', { waitUntil: 'domcontentloaded', timeout: 45_000 })
+      .then(() => page.evaluate(() => document.body.innerText.trim()))
+      .catch(() => null);
+    if (!exitIp) throw new Error(`Proxy ${proxyServer} did not resolve an exit IP — refusing to continue.`);
+    console.log(`Proxy: ${proxyServer}  ->  exit IP ${exitIp}`);
+  }
+
   await page.goto('https://kick.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
   const existing = await loggedInAs();

@@ -32,15 +32,21 @@ const PURE_RESOLUTION = /^(\d{3,4})p(60)?$/i;
 // The settings/quality gear is icon-only (no aria-label) and carries no data-testid, while
 // every neighbouring Kick control does (video-player-pip/clip/theatre-mode/fullscreen).
 //
-// THESE CONSTANTS ROT, AND THEY HAVE TWICE IN EIGHT DAYS. Measured live: 'M25.7' died some
-// time before 2026-08-20, 'M16.759' died before 2026-08-28 — each time quality-lock gave up
-// on every page load and the player stayed on Auto. So the path prefix is now only a FAST
-// PATH, newest first, never the only way in: findQualityGearCandidates() falls back to the
-// bar's structure and applyHighestQualityOnce() confirms a candidate by what its menu
-// CONTAINS, which is the one property Kick cannot silently redraw.
+// THESE CONSTANTS ROT, AND THEY HAVE THREE TIMES IN EIGHT DAYS — the third time was hours
+// after the structural fallback shipped, which is the clearest evidence that the fallback,
+// not this list, is what keeps the feature alive. Measured live: 'M25.7' died before
+// 2026-08-20, 'M16.759' before 2026-08-28, and 'M17.5 8.333' the same afternoon when Kick
+// re-minified the icon — same cog, new path string ('8.333' → '8.33', cubic `c` segments
+// rewritten as `a`/`q`).
+//
+// THE ENTRY IS DELIBERATELY SHORTER THAN THE PATH IT MATCHES. 'M17.5 8.33' is a prefix of
+// both the old and the re-minified path, so one entry survives a re-minification that only
+// changes trailing precision. A looser prefix is safe HERE and nowhere else: a candidate is
+// still confirmed by what its menu CONTAINS, so a false positive is closed and abandoned
+// rather than clicked. Never loosen a prefix in code that acts on the match alone.
 // Evidence: output/playwright/quality-gear-detector-probe.json (2026-08-20),
-// output/playwright/quality-lock-round101-probe.json (2026-08-28).
-export const KNOWN_GEAR_PATH_PREFIXES = ['M17.5 8.333', 'M16.759', 'M25.7'] as const;
+// output/playwright/quality-lock-round101-probe.json (2026-08-28, both rotations).
+export const KNOWN_GEAR_PATH_PREFIXES = ['M17.5 8.33', 'M16.759', 'M25.7'] as const;
 /** The currently-live cog prefix — the first one tried. */
 export const GEAR_PATH_PREFIX = KNOWN_GEAR_PATH_PREFIXES[0];
 
