@@ -1,5 +1,19 @@
 # kickflow — agent rules
 
+## TESTING — OPEN `TESTING.md` BEFORE DIAGNOSING A DEAD FEATURE OR CUTTING A RELEASE (added 2026-08-28)
+
+- **`F:\Laureth\products\kickflow\TESTING.md`** says which check answers which question: the offline
+  gate (`npm run typecheck` · `npx vitest run` · `npm run build`), the three live probes under
+  `tests/playwright/`, how to read `MATCH` / `MISS` / `NOT_CHECKABLE`, and how to obtain a logged-in
+  session when one is needed.
+- **The offline gate can be fully green while every feature is dead on kick.com.** That is not a
+  hypothetical — the quality lock was dead for weeks behind a green suite, twice. A unit test builds
+  its own DOM, so it can never notice Kick changing a selector, an icon path or a class string. Only
+  a live probe can.
+- **The browser runs `dist/`, not `src/`.** After editing `src/`, `npm run build`, and the owner
+  must press ↻ on `chrome://extensions` — old entries also linger on the extension's error page
+  until "Clear all" is pressed, so a stale warning is not evidence of a live failure.
+
 ## PROJECT FACT THAT MISROUTES WORK IF YOU GET IT WRONG (added 2026-08-19)
 
 > `mirror-of: C:\Users\ydbil\.claude\projects\F--Laureth-products-kickflow\memory\kickflow-owner-runs-mode-a.md`
