@@ -18,6 +18,12 @@ const MENU_RENDER_MS = 260;    // wait for the Radix quality menu to render afte
 const RETRY_DELAY_MS = 1300;
 const MAX_ATTEMPTS = 5;
 
+// How many UNKNOWN (path-prefix didn't match) buttons a single attempt may press. Each such
+// press is a guess, so the count is deliberately small: the trailing icon-only slot is the
+// gear on every bar layout seen so far, and a second candidate only covers Kick appending
+// one more icon-only control beside it.
+const MAX_UNKNOWN_PROBES_PER_ATTEMPT = 2;
+
 // A quality row's label like "1080p60" / "720p60" / "480p". EXACT match deliberately excludes
 // "Auto" AND login-gated rows, whose textContent has a trailing badge (e.g. the observed
 // "1080p60Giriş gerekli" when logged out) — so "highest" means highest ACTUALLY selectable.
@@ -25,19 +31,22 @@ const PURE_RESOLUTION = /^(\d{3,4})p(60)?$/i;
 
 // The settings/quality gear is icon-only (no aria-label) and carries no data-testid, while
 // every neighbouring Kick control does (video-player-pip/clip/theatre-mode/fullscreen).
-// So it is identified ONLY by its cog SVG path — never a positional/last-button fallback:
-// pressing the wrong control (fullscreen/PiP/theater) is a visible side effect that Escape
-// can't cleanly undo.
 //
-// THIS CONSTANT ROTS, and it already has. Measured live on 2026-08-20 (kick.com/sonalisa,
-// logged out): Kick had redrawn the cog and the shipped 'M25.7' matched no button in the
-// bar, across all 5 attempts and with a 1000 ms settle, so quality-lock gave up on every
-// page load and the player stayed on Auto. Re-measured with 'M16.759': the highest
-// selectable row (720p60) came back aria-checked and Auto did not.
-// Evidence: output/playwright/quality-gear-detector-probe.json + quality-anchor-probe.json.
-export const GEAR_PATH_PREFIX = 'M16.759';
+// THESE CONSTANTS ROT, AND THEY HAVE TWICE IN EIGHT DAYS. Measured live: 'M25.7' died some
+// time before 2026-08-20, 'M16.759' died before 2026-08-28 — each time quality-lock gave up
+// on every page load and the player stayed on Auto. So the path prefix is now only a FAST
+// PATH, newest first, never the only way in: findQualityGearCandidates() falls back to the
+// bar's structure and applyHighestQualityOnce() confirms a candidate by what its menu
+// CONTAINS, which is the one property Kick cannot silently redraw.
+// Evidence: output/playwright/quality-gear-detector-probe.json (2026-08-20),
+// output/playwright/quality-lock-round101-probe.json (2026-08-28).
+export const KNOWN_GEAR_PATH_PREFIXES = ['M17.5 8.333', 'M16.759', 'M25.7'] as const;
+/** The currently-live cog prefix — the first one tried. */
+export const GEAR_PATH_PREFIX = KNOWN_GEAR_PATH_PREFIXES[0];
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const firstPathD = (button: Element): string => button.querySelector('svg path')?.getAttribute('d') || '';
 
 function fire(el: Element, type: string, Ctor: typeof PointerEvent | typeof MouseEvent): void {
   el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', pointerId: 1, button: 0 } as PointerEventInit));
@@ -62,13 +71,54 @@ function revealControlBar(): void {
   }
 }
 
-function findQualityGear(): HTMLButtonElement | null {
+type GearCandidate = { button: HTMLButtonElement; via: 'known-path' | 'trailing-icon' };
+
+/** A button that identifies itself — to a human or to a test — and therefore is NOT the
+ * icon-only settings cog: every one of Kick's own side-effect controls (PiP, clip, theatre,
+ * fullscreen, seek, go-live) is labelled or test-id'd, and so is the LIVE badge. */
+function isIdentified(button: HTMLButtonElement): boolean {
+  return button.hasAttribute('data-testid')
+    || (button.getAttribute('aria-label') || '').trim() !== ''
+    || (button.textContent || '').trim() !== '';
+}
+
+/**
+ * Gear candidates in the order they should be tried.
+ *
+ * 1. Any button whose cog path matches a KNOWN prefix — free and side-effect-free.
+ * 2. Otherwise the bar's TRAILING icon-only buttons, right to left. The constraint that makes
+ *    this safe is positional: a candidate must sit AFTER the last identified button in the
+ *    bar. On the live bar that leaves exactly the cog — play/pause and volume are icon-only
+ *    too, but they lead the bar, so they can never be reached. Our own injected controls
+ *    (`[id^="kickflow-"]`, e.g. the AUTO speed menu and the screenshot button) are excluded
+ *    outright: pressing one would open OUR menu and read it as Kick's.
+ */
+export function findQualityGearCandidates(): GearCandidate[] {
   const bar = findControlBar();
-  if (!bar) return null;
-  for (const b of bar.querySelectorAll('button')) {
-    if ((b.querySelector('svg path')?.getAttribute('d') || '').startsWith(GEAR_PATH_PREFIX)) return b;
+  if (!bar) return [];
+  const buttons = Array.from(bar.querySelectorAll('button'))
+    .filter((b) => !b.closest('[id^="kickflow-"]'));
+
+  const candidates: GearCandidate[] = [];
+  const seen = new Set<HTMLButtonElement>();
+  for (const button of buttons) {
+    if (KNOWN_GEAR_PATH_PREFIXES.some((prefix) => firstPathD(button).startsWith(prefix))) {
+      candidates.push({ button, via: 'known-path' });
+      seen.add(button);
+    }
   }
-  return null;
+
+  let lastIdentified = -1;
+  buttons.forEach((button, index) => {
+    if (isIdentified(button)) lastIdentified = index;
+  });
+  for (let i = buttons.length - 1; i > lastIdentified; i--) {
+    const button = buttons[i];
+    if (seen.has(button) || !button.querySelector('svg')) continue;
+    candidates.push({ button, via: 'trailing-icon' });
+    seen.add(button);
+  }
+  return candidates;
 }
 
 function resolutionScore(text: string): number {
@@ -76,73 +126,101 @@ function resolutionScore(text: string): number {
   return m ? parseInt(m[1], 10) * 10 + (m[2] ? 1 : 0) : -1;
 }
 
-function isQualityMenuOpen(): boolean {
-  return document.querySelector('[role="menuitemradio"]') !== null;
+/**
+ * The radio rows THIS press opened — never every `[role="menuitemradio"]` on the page.
+ *
+ * KickFlow's own playback-speed control (`speed-controls.ts`, the `AUTO ▾` item in the same
+ * bar) renders rows with the same role. A document-wide query read those as the quality menu,
+ * scored every row -1 and gave up. Rows that already existed before the press are therefore
+ * excluded, and when the fresh rows sit inside a `[role="menu"]` container the whole menu is
+ * read from that container.
+ */
+function menuRowsOpenedBy(before: ReadonlySet<Element>): HTMLElement[] {
+  const fresh = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'))
+    .filter((row) => !before.has(row));
+  const container = fresh[0]?.closest('[role="menu"]');
+  return container ? Array.from(container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')) : fresh;
 }
 
-/** No-ops when no quality menu is actually open. Every call site here calls this
- * unconditionally (including paths where the gear press may not have opened anything, e.g.
- * a wrong-button press or an early disposal before the menu rendered) — without this guard,
+/** Closes a menu only when the rows we opened are still on the page. Without the guard,
  * dispatch fires a synthetic Escape on `document` with no menu to close, which is
  * indistinguishable from the user's own Escape to any of Kick's own document-level listeners. */
-function closeMenu(): void {
-  if (!isQualityMenuOpen()) return;
+function closeMenu(openedRows: readonly HTMLElement[]): void {
+  if (!openedRows.some((row) => row.isConnected)) return;
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 }
 
 type ApplyResult = 'set' | 'already' | 'skip';
 
-/** One attempt: reveal bar → open the gear menu → if (and only if) real quality radios
- * appeared, click the highest pure-resolution option, else abort with no side effect. */
+let reportedDiscoveredPath: string | null = null;
+
+/** Says, once per page, that the shipped prefixes are stale and what the live cog now draws,
+ * so the fast path can be restored instead of silently relying on the structural fallback. */
+function reportDiscoveredGear(button: HTMLButtonElement): void {
+  const d = firstPathD(button).slice(0, 40);
+  if (!d || reportedDiscoveredPath === d) return;
+  reportedDiscoveredPath = d;
+  logger.warn(
+    `quality-lock: the quality gear was found STRUCTURALLY, not by icon — Kick has redrawn the cog again. `
+    + `Add this prefix to KNOWN_GEAR_PATH_PREFIXES in src/content/player/quality-lock.ts: "${d}"`,
+  );
+}
+
+/** One attempt: reveal bar → press gear candidates until one opens a menu that really holds
+ * resolution rows → click the highest pure-resolution option. A candidate whose menu is not
+ * the quality menu is closed again and abandoned, so a wrong guess has no lasting effect. */
 async function applyHighestQualityOnce(isDisposed: () => boolean): Promise<ApplyResult> {
   if (isDisposed()) return 'skip';
   revealControlBar();
   await sleep(60);
   if (isDisposed()) return 'skip';
-  const gear = findQualityGear();
-  if (!gear) return 'skip';
 
-  press(gear);
-  await sleep(MENU_RENDER_MS);
-  if (isDisposed()) {
-    closeMenu();
-    return 'skip';
-  }
+  const candidates = findQualityGearCandidates();
+  if (candidates.length === 0) return 'skip';
 
-  const radios = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
-  if (radios.length === 0) {
-    // Menu didn't open (or this wasn't the quality gear) — never click on further; just close.
-    closeMenu();
-    return 'skip';
-  }
+  let unknownProbes = 0;
+  for (const { button, via } of candidates) {
+    if (via === 'trailing-icon') {
+      if (unknownProbes >= MAX_UNKNOWN_PROBES_PER_ATTEMPT) break;
+      unknownProbes += 1;
+    }
 
-  let best: HTMLElement | null = null;
-  let bestScore = -1;
-  let bestChecked = false;
-  for (const radio of radios) {
-    const s = resolutionScore((radio.textContent || '').trim());
-    if (s <= bestScore) continue;
-    bestScore = s;
-    best = radio;
-    bestChecked = radio.getAttribute('aria-checked') === 'true';
-  }
+    const before = new Set<Element>(document.querySelectorAll('[role="menuitemradio"]'));
+    press(button);
+    await sleep(MENU_RENDER_MS);
+    const rows = menuRowsOpenedBy(before);
+    if (isDisposed()) {
+      closeMenu(rows);
+      return 'skip';
+    }
 
-  if (!best) {
-    closeMenu();
-    return 'skip';
+    let best: HTMLElement | null = null;
+    let bestScore = -1;
+    let bestChecked = false;
+    for (const row of rows) {
+      const s = resolutionScore((row.textContent || '').trim());
+      if (s <= bestScore) continue;
+      bestScore = s;
+      best = row;
+      bestChecked = row.getAttribute('aria-checked') === 'true';
+    }
+
+    if (!best) {
+      // Not the quality menu (or nothing opened at all) — undo and try the next candidate.
+      closeMenu(rows);
+      continue;
+    }
+    if (via === 'trailing-icon') reportDiscoveredGear(button);
+    if (bestChecked) {
+      closeMenu(rows);
+      return 'already';
+    }
+    press(best);
+    await sleep(60);
+    closeMenu(rows);
+    return 'set';
   }
-  if (bestChecked) {
-    closeMenu();
-    return 'already';
-  }
-  if (isDisposed()) {
-    closeMenu();
-    return 'skip';
-  }
-  press(best);
-  await sleep(60);
-  closeMenu();
-  return 'set';
+  return 'skip';
 }
 
 async function applyWithRetries(isDisposed: () => boolean): Promise<void> {
@@ -160,11 +238,12 @@ async function applyWithRetries(isDisposed: () => boolean): Promise<void> {
     await sleep(RETRY_DELAY_MS);
   }
   // WARN, not debug. This is exactly the "missing player selector" class the logger's own
-  // policy keeps visible without a flag — and it is why the stale GEAR_PATH_PREFIX above
-  // went unnoticed: giving up was logged at a level nobody sees by default.
+  // policy keeps visible without a flag — and it is why a stale icon path went unnoticed for
+  // weeks: giving up was logged at a level nobody sees by default.
   logger.warn(
-    `quality-lock: gave up after ${MAX_ATTEMPTS} attempts — the quality gear was never found. `
-    + `GEAR_PATH_PREFIX (${GEAR_PATH_PREFIX}) probably no longer matches Kick's cog icon.`,
+    `quality-lock: gave up after ${MAX_ATTEMPTS} attempts — no button in the control bar opened a `
+    + `quality menu. Neither KNOWN_GEAR_PATH_PREFIXES (${KNOWN_GEAR_PATH_PREFIXES.join(', ')}) nor the `
+    + `trailing icon-only fallback in src/content/player/quality-lock.ts matched Kick's settings cog.`,
   );
 }
 
