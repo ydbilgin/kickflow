@@ -112,4 +112,21 @@ describe('caption persistence guard', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(replacementClick).not.toHaveBeenCalled();
   });
+
+  it('warns visibly when the native caption anchors remain unavailable after retries', async () => {
+    vi.useFakeTimers();
+    setupPlayer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lifecycle = new Lifecycle();
+
+    initCaptionGuard(lifecycle);
+    await vi.advanceTimersByTimeAsync(5_250);
+
+    expect(warn).toHaveBeenCalledOnce();
+    const message = warn.mock.calls.flat().join(' ');
+    expect(message).toContain('SELECTORS.nativeCaptionButton');
+    expect(message).toContain('ACTIVE_ICON_PATH_PREFIX');
+    expect(message).toContain('INACTIVE_ICON_PATH_PREFIX');
+    lifecycle.dispose();
+  });
 });

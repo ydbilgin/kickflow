@@ -23,6 +23,8 @@ interface RegisteredControl {
   element: HTMLElement | null;
 }
 
+type MissingNativeBarAnchor = 'control-bar' | 'live-button';
+
 /** A lifecycle owns one mount manager, rather than one pair of observers per control.
  * Map insertion order is the native-bar order: rewind, CANLI, speed, screenshot. */
 const managers = new WeakMap<Lifecycle, NativeBarMountManager>();
@@ -47,6 +49,7 @@ class NativeBarMountManager {
   private trailingEnsureTimer: number | null = null;
   private retryTimer: number | null = null;
   private retryAttempts = 0;
+  private readonly warnedMissingAnchors = new Set<MissingNativeBarAnchor>();
   private disposed = false;
 
   constructor(private readonly lifecycle: Lifecycle) {
@@ -138,14 +141,29 @@ class NativeBarMountManager {
     }, OBSERVER_DEBOUNCE_MS);
   }
 
-  private scheduleRetry(): void {
-    if (this.disposed || this.retryTimer !== null || this.retryAttempts >= RETRY_LIMIT) return;
+  private scheduleRetry(missingAnchor?: MissingNativeBarAnchor): void {
+    if (this.disposed || this.retryTimer !== null) return;
+    if (this.retryAttempts >= RETRY_LIMIT) {
+      if (missingAnchor) this.warnMissingAnchor(missingAnchor);
+      return;
+    }
     this.retryTimer = window.setTimeout(() => {
       this.retryTimer = null;
       this.retryAttempts++;
       this.rebindWrapper();
       this.ensureAll();
     }, RETRY_INTERVAL_MS);
+  }
+
+  private warnMissingAnchor(anchor: MissingNativeBarAnchor): void {
+    if (this.warnedMissingAnchors.has(anchor)) return;
+    this.warnedMissingAnchors.add(anchor);
+    const check = anchor === 'control-bar'
+      ? 'SELECTORS.controlBarBottom / SELECTORS.controlBar in src/content/shared/selectors.ts'
+      : 'LIVE_EDGE_LABELS / GO_TO_LIVE_PHRASES in src/content/shared/selectors.ts';
+    logger.warn(
+      `native-bar: gave up after ${RETRY_LIMIT} attempts — ${check} did not match Kick's native player bar.`,
+    );
   }
 
   private clearRetry(): void {
@@ -168,7 +186,7 @@ class NativeBarMountManager {
     const liveButton = findLiveButton();
     const parent = liveButton?.parentElement;
     if (!liveButton || !parent) {
-      this.scheduleRetry();
+      this.scheduleRetry(findControlBar() ? 'live-button' : 'control-bar');
       return;
     }
 
@@ -208,7 +226,7 @@ class NativeBarMountManager {
     if (this.rootControls.size === 0) return;
     const bar = findControlBar();
     if (!bar) {
-      this.scheduleRetry();
+      this.scheduleRetry('control-bar');
       return;
     }
     for (const control of this.rootControls.values()) {

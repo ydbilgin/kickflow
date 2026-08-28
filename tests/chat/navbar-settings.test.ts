@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NavbarSettingsButton, findNavbarRightCluster, type NavbarSettingsPanel } from '../../src/content/chat/navbar-settings';
 import type { Lifecycle } from '../../src/content/shared/lifecycle';
 import { parseChatSessionContext } from '../../src/content/chat/session-context';
@@ -34,7 +34,10 @@ function installNavbar(): HTMLDivElement {
   return document.querySelector('nav')!.children[2] as HTMLDivElement;
 }
 
-afterEach(() => document.body.replaceChildren());
+afterEach(() => {
+  vi.restoreAllMocks();
+  document.body.replaceChildren();
+});
 
 describe('navbar settings button', () => {
   it('anchors to the third direct navbar div and inserts as its first child', () => {
@@ -91,5 +94,25 @@ describe('navbar settings button', () => {
     lifecycle.tick();
 
     expect(cluster.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
+  });
+
+  it('warns once when a rendered navbar no longer matches the third-child class anchor', () => {
+    document.body.innerHTML = `
+      <nav>
+        <div></div>
+        <div></div>
+        <div class="kick-redrew-account-cluster"></div>
+      </nav>`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lifecycle = new FakeLifecycle();
+
+    new NavbarSettingsButton(lifecycle as unknown as Lifecycle, new FakePanel());
+    lifecycle.tick();
+    lifecycle.tick();
+
+    expect(warn).toHaveBeenCalledOnce();
+    const message = warn.mock.calls.flat().join(' ');
+    expect(message).toContain('children[2]');
+    expect(message).toContain('flex items-center gap-2');
   });
 });

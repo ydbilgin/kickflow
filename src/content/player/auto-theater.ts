@@ -1,5 +1,6 @@
 import { featureFlags } from '../chat/feature-flags';
 import type { Lifecycle } from '../shared/lifecycle';
+import { logger } from '../shared/logger';
 import { findControlBar, findPlayerWrapper, getVideoElement } from '../shared/selectors';
 import { bindVideoElementListener, observeVideoElement } from './video-element';
 
@@ -107,9 +108,17 @@ class AutoTheaterController {
     this.retryTimer = null;
   }
 
-  private scheduleRetry(): void {
+  private scheduleRetry(missingAnchor: 'video-player' | 'theater-button'): void {
     if (!featureFlags.autoTheater || this.lifecycle.isDisposed || this.retryTimer !== null) return;
-    if (this.retryCount >= MAX_RETRIES) return;
+    if (this.retryCount >= MAX_RETRIES) {
+      const anchor = missingAnchor === 'video-player'
+        ? 'SELECTORS.videoPlayer (#video-player)'
+        : 'TECHNICAL_THEATER_TOKEN and THEATER_SHORTCUT in src/content/player/auto-theater.ts';
+      logger.warn(
+        `auto-theater: gave up after ${MAX_RETRIES} attempts — ${anchor} did not match Kick's player DOM.`,
+      );
+      return;
+    }
     this.retryCount++;
     this.retryTimer = window.setTimeout(() => {
       this.retryTimer = null;
@@ -121,7 +130,7 @@ class AutoTheaterController {
     if (!featureFlags.autoTheater || this.lifecycle.isDisposed) return;
     const video = getVideoElement();
     if (!video) {
-      this.scheduleRetry();
+      this.scheduleRetry('video-player');
       return;
     }
     if (this.video !== video) {
@@ -139,7 +148,7 @@ class AutoTheaterController {
     }
     if (!button) {
       revealControlBar();
-      this.scheduleRetry();
+      this.scheduleRetry('theater-button');
       return;
     }
 

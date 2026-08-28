@@ -1,5 +1,6 @@
 import type { Lifecycle } from '../shared/lifecycle';
 import { subscribeLang, t } from '../shared/i18n';
+import { logger } from '../shared/logger';
 
 const BUTTON_ID = 'kickflow-navbar-settings';
 const BUTTON_CLASS = 'kickflow-navbar-settings';
@@ -36,6 +37,7 @@ export function findNavbarRightCluster(): HTMLDivElement | null {
  * the same body-level panel instance. */
 export class NavbarSettingsButton {
   private button: HTMLButtonElement | null = null;
+  private warnedMissingCluster = false;
 
   constructor(
     lifecycle: Lifecycle,
@@ -61,7 +63,18 @@ export class NavbarSettingsButton {
     existing?.remove();
 
     const cluster = findNavbarRightCluster();
-    if (!cluster) return;
+    if (!cluster) {
+      const renderedNavbar = Array.from(document.querySelectorAll('nav'))
+        .some((nav) => nav.children.length >= 3);
+      if (renderedNavbar && !this.warnedMissingCluster) {
+        this.warnedMissingCluster = true;
+        logger.warn(
+          'navbar-settings: Kick rendered a navbar, but findNavbarRightCluster could not match '
+          + 'children[2] with classes "flex items-center gap-2". The KickFlow settings button is not mounted.',
+        );
+      }
+      return;
+    }
     const button = this.build();
     cluster.prepend(button);
     this.button = button;

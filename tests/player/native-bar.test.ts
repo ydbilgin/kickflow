@@ -43,6 +43,7 @@ async function flushMutations(): Promise<void> {
 }
 
 afterEach(() => {
+  vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
   document.body.replaceChildren();
@@ -185,6 +186,26 @@ describe('native-bar mounting', () => {
 
     expect(build).not.toHaveBeenCalled();
     expect(document.getElementById('kickflow-test-controls')).toBeNull();
+  });
+
+  it('warns once when the native LIVE text anchor misses across exhausted retry windows', async () => {
+    vi.useFakeTimers();
+    const bar = setupPlayerBar('OFFLINE');
+    const lifecycle = new Lifecycle();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mountIntoControlBar(lifecycle, 'kickflow-test-controls', () => document.createElement('span'));
+    vi.advanceTimersByTime(5_250);
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join(' ')).toContain('LIVE_EDGE_LABELS');
+
+    bar.append(document.createElement('i'));
+    await flushMutations();
+    vi.advanceTimersByTime(5_250);
+    expect(warn).toHaveBeenCalledOnce();
+
+    lifecycle.dispose();
   });
 
   it('keeps one cached group when the video element swaps inside its wrapper', async () => {

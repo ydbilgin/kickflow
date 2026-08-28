@@ -1,5 +1,6 @@
 import type { Lifecycle } from '../shared/lifecycle';
 import { t } from '../shared/i18n';
+import { logger } from '../shared/logger';
 import type { ChatIntegrityStore } from './message-store';
 import type { RemovedMessagesPanel } from './removed-panel';
 import { isSafeKickSlug, openUserCard } from './user-card';
@@ -22,6 +23,7 @@ const USER_CARD_ACTIVATION_KEYS = new Set(['Enter', ' ']);
 export class ActiveChattersBadgesController {
   private observer: MutationObserver | null = null;
   private observedRoot: HTMLElement | null = null;
+  private warnedPanelSelectorMismatch = false;
 
   constructor(
     lifecycle: Lifecycle,
@@ -86,6 +88,13 @@ export class ActiveChattersBadgesController {
   private attachToCurrentPanel(): void {
     const root = this.findCurrentPanel();
     if (!root) {
+      if (!this.warnedPanelSelectorMismatch && document.querySelector(ACTIVE_CHATTERS_SEARCH_SELECTOR)) {
+        this.warnedPanelSelectorMismatch = true;
+        logger.warn(
+          `active-chatters: ${ACTIVE_CHATTERS_SEARCH_SELECTOR} rendered, but ACTIVE_CHATTERS_PANEL_SELECTOR `
+          + `(${ACTIVE_CHATTERS_PANEL_SELECTOR}) matched no ancestor. Badge and user-card attachment is inactive.`,
+        );
+      }
       this.disconnectObserver(true);
       return;
     }

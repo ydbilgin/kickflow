@@ -26,6 +26,8 @@ function setupPlayer(label = 'Tiyatro modu (t)', technicalId = ''): HTMLButtonEl
 
 afterEach(() => {
   featureFlags.autoTheater = false;
+  vi.clearAllTimers();
+  vi.useRealTimers();
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
@@ -92,6 +94,22 @@ describe('auto theater', () => {
     await Promise.resolve();
 
     expect(thirdClick).toHaveBeenCalledOnce();
+    lifecycle.dispose();
+  });
+
+  it('warns visibly when the native theater button anchors miss until retries are exhausted', async () => {
+    vi.useFakeTimers();
+    setupPlayer('Cinema mode');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lifecycle = new Lifecycle();
+    featureFlags.autoTheater = true;
+
+    initAutoTheater(lifecycle);
+    await vi.advanceTimersByTimeAsync(5_250);
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join(' ')).toContain('TECHNICAL_THEATER_TOKEN');
+    expect(warn.mock.calls.flat().join(' ')).toContain('THEATER_SHORTCUT');
     lifecycle.dispose();
   });
 });

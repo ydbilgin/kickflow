@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  ACTIVE_CHATTERS_PANEL_SELECTOR,
   ACTIVE_CHATTERS_ROW_SELECTOR,
   ActiveChattersBadgesController,
 } from '../../src/content/chat/active-chatters-badges';
@@ -84,6 +85,8 @@ describe('ActiveChattersBadgesController', () => {
   afterEach(() => {
     configureUserMessageArchive(null);
     configureUserCardSession(null);
+    vi.clearAllTimers();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     document.body.replaceChildren();
@@ -266,6 +269,26 @@ describe('ActiveChattersBadgesController', () => {
     new ActiveChattersBadgesController(lifecycle, store, removedPanel);
 
     expect(document.querySelector('.kickflow-active-chatters-badge')).toBeNull();
+    lifecycle.dispose();
+  });
+
+  it('warns once when the active-chatters search renders outside the expected panel selector', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <section class="kick-redrew-this-panel">
+        <input type="search" class="h-8 pl-11 pr-3">
+      </section>`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new ChatIntegrityStore();
+    const lifecycle = new Lifecycle();
+    const removedPanel = new RemovedMessagesPanel(lifecycle, store, statusSnapshot);
+
+    new ActiveChattersBadgesController(lifecycle, store, removedPanel);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join(' ')).toContain('ACTIVE_CHATTERS_PANEL_SELECTOR');
+    expect(warn.mock.calls.flat().join(' ')).toContain(ACTIVE_CHATTERS_PANEL_SELECTOR);
     lifecycle.dispose();
   });
 });

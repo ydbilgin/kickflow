@@ -87,7 +87,12 @@ class CaptionGuardController {
   private scheduleRetry(): void {
     if (this.settled || this.lifecycle.isDisposed || this.retryTimer !== null) return;
     if (this.retryCount >= MAX_RETRIES) {
-      logger.debug('caption-guard: native caption state unavailable; persisted preference reset only');
+      logger.warn(
+        `caption-guard: gave up after ${MAX_RETRIES} attempts — SELECTORS.nativeCaptionButton `
+        + `(${SELECTORS.nativeCaptionButton}) or the ACTIVE_ICON_PATH_PREFIX / INACTIVE_ICON_PATH_PREFIX `
+        + `signatures in src/content/player/caption-guard.ts no longer match Kick's caption control. `
+        + 'Only the persisted preference was reset.',
+      );
       return;
     }
     this.retryCount++;
