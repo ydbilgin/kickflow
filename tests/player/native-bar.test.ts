@@ -208,6 +208,68 @@ describe('native-bar mounting', () => {
     lifecycle.dispose();
   });
 
+  // MEASURED LIVE 2026-08-28 (output/playwright/native-bar-hover-probe.json): Kick mounts the
+  // control bar only once a pointer moves over the player. With no pointer interaction the wrapper
+  // holds no bar and none of our controls; after hovering, the bar carries 13 buttons and all four
+  // mount. The retry budget is ~5 s, so a viewer who has not touched the player yet exhausts it on
+  // every page load. Warning there would fire on healthy sessions for a feature that is about to
+  // work, which is how a warning channel stops being read.
+  it('stays silent when Kick has simply not mounted the control bar yet, and still mounts later', async () => {
+    vi.useFakeTimers();
+    document.body.replaceChildren();
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    wrapper.append(video);
+    document.body.append(wrapper);
+    const lifecycle = new Lifecycle();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mountIntoControlBar(lifecycle, 'kickflow-test-controls', () => document.createElement('span'));
+    vi.advanceTimersByTime(5_250);
+
+    expect(warn).not.toHaveBeenCalled();
+
+    // The pointer reaches the player: Kick mounts the bar and the control must appear.
+    const bar = document.createElement('div');
+    bar.className = 'z-controls bottom-0';
+    const live = document.createElement('button');
+    live.textContent = 'LIVE';
+    bar.append(live);
+    wrapper.append(bar);
+    await flushMutations();
+    await flushMountDebounce();
+
+    expect(document.getElementById('kickflow-test-controls')).not.toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    lifecycle.dispose();
+  });
+
+  it('warns when a bar-shaped element is present but the control-bar selector misses it', () => {
+    vi.useFakeTimers();
+    document.body.replaceChildren();
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    // A bar that Kick renamed away from `z-controls` — this IS anchor rot, and it must be loud.
+    const renamedBar = document.createElement('div');
+    renamedBar.className = 'player-controls bottom-0';
+    const live = document.createElement('button');
+    live.textContent = 'LIVE';
+    renamedBar.append(live);
+    wrapper.append(video, renamedBar);
+    document.body.append(wrapper);
+    const lifecycle = new Lifecycle();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mountIntoControlBar(lifecycle, 'kickflow-test-controls', () => document.createElement('span'));
+    vi.advanceTimersByTime(5_250);
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join(' ')).toContain('SELECTORS.controlBarBottom');
+    lifecycle.dispose();
+  });
+
   it('keeps one cached group when the video element swaps inside its wrapper', async () => {
     vi.useFakeTimers();
     const bar = setupPlayerBar();

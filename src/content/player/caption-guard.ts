@@ -84,15 +84,45 @@ class CaptionGuardController {
     this.cancelRetry();
   }
 
+  /**
+   * A stream with no captions has no caption control, and that is not a rotted selector.
+   *
+   * MEASURED LIVE 2026-08-28 (`output/playwright/native-bar-hover-probe.json`): on a channel whose
+   * control bar was fully mounted with 13 buttons, no caption button existed at all. Blaming
+   * `SELECTORS.nativeCaptionButton` there is a false accusation, and repeating it on every
+   * caption-less stream is exactly how a warning channel loses its meaning.
+   *
+   * So warn only when a caption-SHAPED control is present and we still cannot read it — a button
+   * whose test id or accessible name says captions while our own selector misses it.
+   */
+  private captionControlLooksRotted(): boolean {
+    if (document.querySelector(SELECTORS.nativeCaptionButton)) return false;
+    const bar = findControlBar();
+    if (!bar) return false;
+    return Array.from(bar.querySelectorAll('button')).some((button) => {
+      const signals = [
+        button.getAttribute('data-testid') ?? '',
+        button.getAttribute('aria-label') ?? '',
+        button.getAttribute('title') ?? '',
+      ].join(' ');
+      return /caption|subtitle|altyaz/i.test(signals);
+    });
+  }
+
   private scheduleRetry(): void {
     if (this.settled || this.lifecycle.isDisposed || this.retryTimer !== null) return;
     if (this.retryCount >= MAX_RETRIES) {
-      logger.warn(
-        `caption-guard: gave up after ${MAX_RETRIES} attempts — SELECTORS.nativeCaptionButton `
-        + `(${SELECTORS.nativeCaptionButton}) or the ACTIVE_ICON_PATH_PREFIX / INACTIVE_ICON_PATH_PREFIX `
-        + `signatures in src/content/player/caption-guard.ts no longer match Kick's caption control. `
-        + 'Only the persisted preference was reset.',
-      );
+      if (this.captionControlLooksRotted()) {
+        logger.warn(
+          `caption-guard: gave up after ${MAX_RETRIES} attempts — a caption-shaped control is in the `
+          + `bar but SELECTORS.nativeCaptionButton (${SELECTORS.nativeCaptionButton}) or the `
+          + 'ACTIVE_ICON_PATH_PREFIX / INACTIVE_ICON_PATH_PREFIX signatures in '
+          + 'src/content/player/caption-guard.ts no longer match it. Only the persisted preference '
+          + 'was reset.',
+        );
+      } else {
+        logger.debug('caption-guard: this stream exposes no caption control; persisted preference reset only');
+      }
       return;
     }
     this.retryCount++;

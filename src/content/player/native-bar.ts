@@ -155,7 +155,29 @@ class NativeBarMountManager {
     }, RETRY_INTERVAL_MS);
   }
 
+  /**
+   * "The control bar is not there" is NOT evidence that our selector rotted.
+   *
+   * MEASURED LIVE 2026-08-28 (`output/playwright/native-bar-hover-probe.json`): Kick mounts the
+   * control bar only once a pointer moves over the player. With no pointer interaction the
+   * wrapper holds NO bar and none of our four controls; after hovering, the bar carries 13
+   * buttons and all four mount correctly. The retry budget is 20 x 250 ms ~= 5 s, so a viewer
+   * who has not touched the player yet exhausts it on every single page load — and the manager
+   * then recovers on its own through the observer.
+   *
+   * A warning that fires on a healthy session for a feature that is about to work is worse than
+   * no warning at all: it teaches the reader to ignore the channel this whole mechanism exists to
+   * keep credible. So warn only for the case that really is anchor rot — a bar-shaped element IS
+   * in the player wrapper and `findControlBar()` still could not match it.
+   */
+  private controlBarLooksRotted(): boolean {
+    const wrapper = findPlayerWrapper();
+    if (!wrapper || findControlBar()) return false;
+    return Array.from(wrapper.querySelectorAll('div')).some((element) => element.querySelector('button'));
+  }
+
   private warnMissingAnchor(anchor: MissingNativeBarAnchor): void {
+    if (anchor === 'control-bar' && !this.controlBarLooksRotted()) return;
     if (this.warnedMissingAnchors.has(anchor)) return;
     this.warnedMissingAnchors.add(anchor);
     const check = anchor === 'control-bar'

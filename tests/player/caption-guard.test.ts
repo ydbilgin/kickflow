@@ -113,9 +113,15 @@ describe('caption persistence guard', () => {
     expect(replacementClick).not.toHaveBeenCalled();
   });
 
-  it('warns visibly when the native caption anchors remain unavailable after retries', async () => {
+  it('warns visibly when a caption-shaped control is present but its anchors no longer match', async () => {
     vi.useFakeTimers();
-    setupPlayer();
+    const { bar } = setupPlayer();
+    // Kick renamed the test id but the control is plainly still a caption toggle. THIS is the
+    // rot the warning exists for.
+    const renamed = document.createElement('button');
+    renamed.dataset.testid = 'video-player-cc';
+    renamed.setAttribute('aria-label', 'Altyazılar');
+    bar.append(renamed);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const lifecycle = new Lifecycle();
 
@@ -127,6 +133,23 @@ describe('caption persistence guard', () => {
     expect(message).toContain('SELECTORS.nativeCaptionButton');
     expect(message).toContain('ACTIVE_ICON_PATH_PREFIX');
     expect(message).toContain('INACTIVE_ICON_PATH_PREFIX');
+    lifecycle.dispose();
+  });
+
+  // MEASURED LIVE 2026-08-28 (output/playwright/native-bar-hover-probe.json): on a channel whose
+  // control bar was fully mounted with 13 buttons, no caption button existed at all. A stream
+  // without captions has no caption control, and blaming the selector there is a false accusation
+  // repeated on every caption-less stream — which is how a warning channel stops being read.
+  it('stays silent when the stream exposes no caption control at all', async () => {
+    vi.useFakeTimers();
+    setupPlayer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lifecycle = new Lifecycle();
+
+    initCaptionGuard(lifecycle);
+    await vi.advanceTimersByTimeAsync(5_250);
+
+    expect(warn).not.toHaveBeenCalled();
     lifecycle.dispose();
   });
 });
