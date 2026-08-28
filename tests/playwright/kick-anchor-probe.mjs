@@ -13,7 +13,13 @@ import { loadProductionAnchors } from './kick-anchor-loader.mjs';
 
 const repoRoot = path.resolve('.');
 const outputDir = path.join(repoRoot, 'output', 'playwright');
-const profileDir = path.join(outputDir, 'kick-anchor-probe-profile');
+// The profile carries the login, and a login is what makes the session-gated anchors checkable at
+// all (drops, rewards, the daily-reward CTA, chat history). Default stays logged-out and
+// disposable; point KICK_PROFILE_DIR at the owner's durable profile for a logged-in run.
+// ONE Chromium profile directory admits ONE browser process — never run two probes against the
+// same profile concurrently, or the second hangs with no browser at all.
+const profileDir = process.env.KICK_PROFILE_DIR
+  ?? path.join(outputDir, 'kick-anchor-probe-profile');
 const reportPath = path.join(outputDir, 'kick-anchor-probe.json');
 const execFileAsync = promisify(execFile);
 const SLUG_PATTERN = /^[a-zA-Z0-9_-]{1,40}$/;
