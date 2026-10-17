@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KickFlow</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --accent: oklch(0.86 0.24 145);
+      --bg: oklch(0.15 0.012 150);
+      --surface: oklch(0.18 0.012 150);
+      --surface-raised: oklch(0.22 0.012 150);
+      --line: oklch(0.30 0.01 150);
+      --line-soft: oklch(0.26 0.01 150);
+      --text: oklch(0.95 0.006 150);
+      --muted: oklch(0.69 0.01 150);
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      width: 372px; margin: 0; padding: 0 16px 16px;
+      background: var(--bg); color: var(--text);
+      font-family: Inter, 'Segoe UI', system-ui, sans-serif; font-size: 12px; line-height: 1.4;
+    }
+    .head {
+      position: sticky; top: 0; z-index: 2;
+      display: flex; align-items: center; gap: 10px; height: 62px;
+      background: var(--bg); border-bottom: 1px solid var(--line-soft);
+    }
+    .brand-icon { width: 28px; height: 28px; border-radius: 7px; display: block; }
+    .brand-wrap { min-width: 0; }
+    .brand { font-size: 16px; font-weight: 800; letter-spacing: -.03em; }
+    .brand .kf { color: inherit; }
+    .tagline { margin-top: 1px; color: var(--muted); font-size: 10px; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: oklch(0.45 0.01 150); margin-left: auto;
+    }
+    .dot--active { background: var(--accent); }
+    .dot--native, .dot--off { background: oklch(0.45 0.01 150); }
+    .mode-card {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin: 0 0 18px; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line-soft);
+    }
+    .mode-copy strong { display: block; font-size: 12px; font-weight: 600; }
+    .mode-copy span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    select {
+      appearance: none; min-width: 104px; height: 30px; padding: 0 28px 0 10px;
+      border: 1px solid oklch(0.35 0.01 150); border-radius: 7px;
+      background: var(--surface-raised) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%239298a1' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 9px center;
+      color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+    }
+    select:focus-visible, input[type=checkbox]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .section { margin-top: 20px; }
+    .section-title {
+      margin: 0 0 8px; color: oklch(0.80 0.01 150); font-size: 12px; font-weight: 700; letter-spacing: .01em;
+    }
+    .section-intro { margin: 0 0 10px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .status-card { border-top: 1px solid var(--line); }
+    #reason { min-height: 17px; margin: 11px 0 13px; color: oklch(0.75 0.01 150); font-size: 10.5px; }
+    .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
+    .identity-grid, .counter-grid { display: contents; }
+    .stat {
+      min-width: 0; min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .stat .k { overflow: hidden; color: var(--muted); font-size: 9.5px; white-space: nowrap; text-overflow: ellipsis; }
+    .stat .v {
+      overflow: hidden; color: var(--text); font-size: 10.5px; font-weight: 650;
+      font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis;
+    }
+    .stat .v.ember, .stat .v.ochre, .stat .v.green { color: var(--text); }
+    .stat .v.missing { color: var(--muted); font-weight: 500; }
+    .toggles { display: block; }
+    .control-list { border-top: 1px solid var(--line); }
+    .row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      min-height: 40px; padding: 7px 0; border-bottom: 1px solid var(--line-soft);
+      cursor: pointer;
+    }
+    .row:hover { background: var(--surface); }
+    .row > span { color: oklch(0.90 0.007 150); font-size: 11px; font-weight: 500; }
+    input[type=checkbox] {
+      appearance: none; position: relative; flex: 0 0 auto; width: 36px; height: 20px; margin: 0;
+      border: 1px solid oklch(0.38 0.01 150); border-radius: 999px; background: oklch(0.28 0.012 150);
+      cursor: pointer; transition: background-color .16s ease, border-color .16s ease;
+    }
+    input[type=checkbox]::after {
+      content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+      background: oklch(0.72 0.01 150); transition: transform .16s ease, background-color .16s ease;
+    }
+    input[type=checkbox]:checked { border-color: var(--accent); background: var(--accent); }
+    input[type=checkbox]:checked::after { background: oklch(0.18 0.012 150); transform: translateX(16px); }
+    .hint { margin: 14px 0 0; color: oklch(0.57 0.01 150); font-size: 9.5px; text-align: center; }
+    .hotkey-list { border-top: 1px solid var(--line); }
+    .hotkey-row {
+      display: grid; grid-template-columns: 34px minmax(0,1fr) auto auto; align-items: center; gap: 8px;
+      min-height: 43px; border-bottom: 1px solid var(--line-soft);
+    }
+    .hotkey-row > span { overflow: hidden; color: oklch(0.90 0.007 150); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+    .hotkey-enabled { transform: scale(.88); transform-origin: left center; }
+    .key-chip {
+      min-width: 34px; padding: 4px 7px; border: 1px solid oklch(0.86 0.24 145 / .32); border-radius: 6px;
+      background: oklch(0.86 0.24 145 / .08); color: var(--accent);
+      font: 700 10px/1.2 ui-monospace, 'SFMono-Regular', Consolas, monospace; text-align: center;
+    }
+    .hotkey-change, .hotkey-reset {
+      appearance: none; height: 28px; padding: 0 8px; border: 1px solid oklch(0.35 0.01 150); border-radius: 6px;
+      background: transparent; color: oklch(0.72 0.01 150); font: 600 10px/1 Inter, 'Segoe UI', system-ui, sans-serif; cursor: pointer;
+    }
+    .hotkey-change:hover, .hotkey-reset:hover { background: var(--surface-raised); color: var(--text); }
+    .hotkey-change--capturing { border-color: var(--accent); color: var(--accent); }
+    .hotkey-change:focus-visible, .hotkey-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .hotkey-footer { display: flex; align-items: center; gap: 9px; min-height: 32px; margin: 5px 2px 0; }
+    .hotkey-status { min-width: 0; flex: 1; color: var(--muted); font-size: 9.5px; line-height: 1.25; }
+  </style>
+</head>
+<body>
+  <header class="head">
+    <img class="brand-icon" src="icons/icon-32.png" alt="" />
+    <div class="brand-wrap">
+      <div class="brand"><span class="kf">Kick</span>Flow</div>
+      <div class="tagline">A streamlined Kick experience.</div>
+    </div>
+    <span id="dot" class="dot dot--off" title="Connection status"></span>
+  </header>
+
+  <div id="reason">Reading status…</div>
+
+  <div id="toggles" class="toggles">
+    <div class="mode-card">
+      <div class="mode-copy"><strong>Chat view</strong><span>Kick or KickFlow list</span></div>
+      <select id="t-chat-mode" aria-label="Chat mode"><option value="native">Native</option><option value="own">KickFlow</option></select>
+    </div>
+    <div class="mode-card">
+      <div class="mode-copy hover-follow-copy"><strong>Hover follow</strong><span>Mode A pinned hover scroll</span></div>
+      <select id="t-hover-follow-mode" aria-label="Hover follow"><option value="browser-smooth">Current: browser smooth</option><option value="instant">Instant: no animation</option></select>
+    </div>
+
+    <section class="section">
+      <h2 class="section-title">Status / Statistics</h2>
+      <div class="status-card">
+        <div id="stats" class="stats">
+          <div class="identity-grid">
+            <div class="stat"><span class="k">Channel</span><span class="v missing" id="slug">—</span></div>
+            <div class="stat"><span class="k">Chatroom ID</span><span class="v missing" id="chatroomId">—</span></div>
+            <div class="stat"><span class="k">Pusher</span><span class="v missing" id="pusher">—</span></div>
+          </div>
+          <div class="counter-grid">
+            <div class="stat"><span class="k">Messages</span><span class="v missing" id="messages">—</span></div>
+            <div class="stat"><span class="k">Preserved</span><span class="v green missing" id="preserved">—</span></div>
+            <div class="stat"><span class="k">Bans</span><span class="v ember missing" id="banned">—</span></div>
+            <div class="stat"><span class="k">Deletions</span><span class="v ochre missing" id="deleted">—</span></div>
+            <div class="stat"><span class="k">Ghost inline</span><span class="v ember missing" id="ghostAnchored">—</span></div>
+            <div class="stat"><span class="k">Ghost pending</span><span class="v ochre missing" id="ghostPending">—</span></div>
+            <div class="stat"><span class="k">Ghost evicted</span><span class="v missing" id="ghostEvicted">—</span></div>
+            <div class="stat"><span class="k">Last ban</span><span class="v missing" id="lastBan">—</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Chat</h2>
+      <div class="control-list">
+        <label class="row" for="t-deleted"><span>Show deleted messages</span><input type="checkbox" id="t-deleted" /></label>
+        <label class="row" for="t-bans-inline"><span>Preserve bans inline</span><input type="checkbox" id="t-bans-inline" /></label>
+        <label class="row" for="t-subscriptions"><span>Subscriptions</span><input type="checkbox" id="t-subscriptions" /></label>
+        <label class="row" for="t-gifted-subs"><span>Gifted subscriptions</span><input type="checkbox" id="t-gifted-subs" /></label>
+        <label class="row" for="t-kicks"><span>Kicks / donations</span><input type="checkbox" id="t-kicks" /></label>
+        <label class="row" for="t-host-raid"><span>Host / Raid</span><input type="checkbox" id="t-host-raid" /></label>
+        <label class="row" for="t-mode-changes"><span>Mode changes</span><input type="checkbox" id="t-mode-changes" /></label>
+        <label class="row" for="t-chatters-badges"><span>Active chatter badges</span><input type="checkbox" id="t-chatters-badges" /></label>
+        <label class="row" for="t-debug"><span>Debug log (F12)</span><input type="checkbox" id="t-debug" /></label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Player</h2>
+      <div class="control-list">
+        <label class="row" for="t-auto-theater"><span>Automatic theater mode</span><input type="checkbox" id="t-auto-theater" /></label>
+        <label class="row" for="t-rewind-controls"><span>Seek back / forward</span><input type="checkbox" id="t-rewind-controls" /></label>
+        <label class="row" for="t-live-catchup"><span>Live catch-up</span><input type="checkbox" id="t-live-catchup" /></label>
+        <label class="row" for="t-quality-lock"><span>Highest quality</span><input type="checkbox" id="t-quality-lock" /></label>
+        <label class="row" for="t-screenshot"><span>Screenshot</span><input type="checkbox" id="t-screenshot" /></label>
+        <label class="row" for="t-speed-controls"><span>Speed controls</span><input type="checkbox" id="t-speed-controls" /></label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Rewards</h2>
+      <p class="section-intro" id="rewards-intro">Manage Kick Drops and daily rewards from this tab.</p>
+      <div class="control-list">
+        <label class="row" for="t-auto-claim-drops"><span>Auto-claim Drops</span><input type="checkbox" id="t-auto-claim-drops" /></label>
+        <label class="row" for="t-auto-claim-daily-reward"><span>Auto-claim daily reward</span><input type="checkbox" id="t-auto-claim-daily-reward" /></label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Shortcuts</h2>
+      <div class="hotkey-list">
+        <div class="hotkey-row" data-hotkey-action="rewind"><input class="hotkey-enabled" type="checkbox" id="hk-rewind-enabled" aria-label="Enable 10s back shortcut" /><span>10s back</span><kbd class="key-chip" id="hk-rewind-key">←</kbd><button class="hotkey-change" id="hk-rewind-change" type="button" aria-label="Change 10s back shortcut">Change</button></div>
+        <div class="hotkey-row" data-hotkey-action="forward"><input class="hotkey-enabled" type="checkbox" id="hk-forward-enabled" aria-label="Enable 10s forward shortcut" /><span>10s forward</span><kbd class="key-chip" id="hk-forward-key">→</kbd><button class="hotkey-change" id="hk-forward-change" type="button" aria-label="Change 10s forward shortcut">Change</button></div>
+        <div class="hotkey-row" data-hotkey-action="screenshot"><input class="hotkey-enabled" type="checkbox" id="hk-screenshot-enabled" aria-label="Enable Screenshot shortcut" /><span>Screenshot</span><kbd class="key-chip" id="hk-screenshot-key">S</kbd><button class="hotkey-change" id="hk-screenshot-change" type="button" aria-label="Change Screenshot shortcut">Change</button></div>
+        <div class="hotkey-row" data-hotkey-action="goLive"><input class="hotkey-enabled" type="checkbox" id="hk-goLive-enabled" aria-label="Enable Go live shortcut" /><span>Go live</span><kbd class="key-chip" id="hk-goLive-key">L</kbd><button class="hotkey-change" id="hk-goLive-change" type="button" aria-label="Change Go live shortcut">Change</button></div>
+      </div>
+      <div class="hotkey-footer"><span class="hotkey-status" id="hotkey-status" role="status" aria-live="polite"></span><button class="hotkey-reset" id="hotkey-reset" type="button">Reset to defaults</button></div>
+    </section>
+
+    <div class="hint">Changes apply immediately and persist after reload.</div>
+  </div>
+
+  <script src="dist/popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,1247 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { featureFlags } from '../../src/content/chat/feature-flags';
+import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
+import { buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
+import { configureUserCardSession, openUserCard } from '../../src/content/chat/user-card';
+import { Lifecycle } from '../../src/content/shared/lifecycle';
+import { setLang } from '../../src/content/shared/i18n';
+import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
+import { hexToRgb, rgbToHsl } from '../../src/content/chat/message-highlight';
+import { LAYOUT_WATCHDOG_STORAGE_KEY } from '../../src/content/shared/layout-watchdog';
+import { parseChatSessionContext } from '../../src/content/chat/session-context';
+
+type BootstrapModule = typeof import('../../src/content/bootstrap');
+
+const originalFlags = { ...featureFlags };
+const storageGet = vi.fn(async (): Promise<Record<string, unknown>> => ({}));
+const storageSet = vi.fn(async (): Promise<void> => undefined);
+const addMessageListener = vi.fn();
+let bootstrap: BootstrapModule;
+
+beforeAll(async () => {
+  window.history.replaceState({}, '', '/');
+  vi.spyOn(window, 'setInterval').mockReturnValue(1);
+  vi.stubGlobal('chrome', {
+    runtime: {
+      id: 'kickflow-test',
+      onMessage: { addListener: addMessageListener },
+    },
+    storage: {
+      local: {
+        get: storageGet,
+        set: storageSet,
+      },
+    },
+  });
+  setLang('tr');
+
+  bootstrap = await import('../../src/content/bootstrap');
+  await Promise.resolve();
+  await Promise.resolve();
+});
+
+afterAll(() => {
+  Object.assign(featureFlags, originalFlags);
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('bootstrap event display flags', () => {
+  it.each(['chat', 'dashboard'])('gives unknown moderation labels an explicit readable background in %s', (surface) => {
+    bootstrap.initSiteLifecycle();
+    const row = buildMessageElement({
+      id: 'unknown-style', chatroomId: 1, content: 'message', type: 'message', createdAt: '',
+      sender: { id: 1, username: 'alice', slug: 'alice', identity: { color: '', badges: [], badgesV2: [] } },
+      preserved: true, preservedReason: 'banned', preservedMeta: { permanent: null },
+    });
+    const host = document.createElement('div');
+    if (surface === 'dashboard') {
+      host.className = 'kickflow-panel';
+      row.classList.add('kickflow-removed-row');
+    }
+    host.appendChild(row);
+    document.body.appendChild(host);
+    try {
+      const pill = row.querySelector<HTMLElement>('.kickflow-status-label--unknown')!;
+      const style = getComputedStyle(pill);
+      expect(style.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+      const luminance = (color: string): number => {
+        const [r, g, b] = color.match(/\d+/g)!.slice(0, 3).map((value) => {
+          const unit = Number(value) / 255;
+          return unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+      };
+      const background = luminance(style.backgroundColor);
+      const text = luminance(style.color);
+      expect((Math.max(background, text) + 0.05) / (Math.min(background, text) + 0.05)).toBeGreaterThanOrEqual(4.5);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('keeps disabled event types out of the store and enqueues them once re-enabled', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+
+    featureFlags.showSubscriptions = false;
+    featureFlags.showGiftedSubs = false;
+    featureFlags.showHostRaid = false;
+    callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 1 });
+    callbacks.onGiftedSubscriptions({
+      chatroomId: 15250312,
+      correlationId: 'disabled-gift',
+      giftedUsernames: ['one', 'two'],
+      gifterUsername: 'gifter',
+      giftCount: 2,
+    });
+    callbacks.onHost({ chatroomId: 15250312, hostUsername: 'raider', numberViewers: 16, optionalMessage: null });
+    expect(store.getMessagesInArrivalOrder()).toEqual([]);
+
+    featureFlags.showSubscriptions = true;
+    featureFlags.showGiftedSubs = true;
+    featureFlags.showHostRaid = true;
+    callbacks.onSubscription({ chatroomId: 15250312, username: 'subscriber', months: 1 });
+    const capturedRecipients = [
+      'nova_88', 'ayla_k', 'demir42', 'mercan_x', 'luna_sade',
+      'atlas_fake', 'poyraz_demo', 'kiraz_test', 'deniz_mock', 'umut_sample',
+    ];
+    callbacks.onGiftedSubscriptions({
+      chatroomId: 15250312,
+      correlationId: '340002752601361',
+      giftedUsernames: capturedRecipients,
+      gifterUsername: 'cozy_mert',
+      giftCount: 10,
+    });
+    callbacks.onHost({ chatroomId: 15250312, hostUsername: 'raider', numberViewers: 16, optionalMessage: null });
+
+    expect(store.getMessagesInArrivalOrder().map((message) => message.systemEvent?.kind)).toEqual([
+      'subscription',
+      'gifted-subscription',
+      'host',
+    ]);
+    // The recipient list must survive the payload → system-event conversion (it used to be dropped).
+    expect(store.getMessagesInArrivalOrder()[1]?.systemEvent).toEqual({
+      kind: 'gifted-subscription',
+      username: 'cozy_mert',
+      giftCount: 10,
+      giftedUsernames: capturedRecipients,
+    });
+  });
+
+  it('dedupes a repeated modern gift frame by its captured correlation id', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showGiftedSubs = true;
+    const capturedGift = {
+      chatroomId: 5389830,
+      correlationId: '340002752602494',
+      giftedUsernames: [
+        'selin_demo', 'arda_fake', 'masal_test', 'efe_mock', 'duru_sample',
+        'can_demo', 'zeynep_fake', 'emir_test', 'ada_mock', 'bora_sample', 'nehir_demo',
+        'kerem_fake', 'ilay_test', 'mira_mock', 'alp_sample', 'ece_demo', 'kaan_fake',
+        'lara_test', 'mete_mock', 'naz_sample', 'baran_demo', 'peri_fake', 'oyku_test',
+        'oyku_test', 'tuna_mock', 'tuna_mock', 'sena_sample', 'sena_sample',
+      ],
+      gifterUsername: 'cozy_mert',
+      giftCount: 28,
+    };
+
+    callbacks.onGiftedSubscriptions(capturedGift);
+    callbacks.onGiftedSubscriptions(capturedGift);
+
+    expect(store.getMessagesInArrivalOrder()).toHaveLength(1);
+    expect(store.getMessagesInArrivalOrder()[0]?.id).toBe('gift:5389830:340002752602494');
+  });
+
+  it('ingests a moderator-action notice as one deduplicated Mode-A system row', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showModActions = true;
+    const notice = {
+      id: 'mod-action-test-1',
+      kind: 'ban' as const,
+      moderator: 'moderator_one',
+      durationMin: null,
+      victims: [{ name: 'victim_one', messageId: 'message_one' }],
+      count: 1,
+      messageId: 'message_one',
+      firstAt: 1,
+      lastAt: 1,
+    };
+
+    callbacks.onModAction(notice);
+    callbacks.onModAction(notice);
+
+    const rows = store.getMessagesInArrivalOrder();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('mod-action:mod-action-test-1');
+    expect(rows[0]?.systemEvent).toEqual({
+      kind: 'mod-action',
+      actionKind: 'ban',
+      moderator: 'moderator_one',
+      durationMin: null,
+      victims: [{ name: 'victim_one', messageId: 'message_one' }],
+      count: 1,
+    });
+  });
+
+  it('matches native by suppressing the captured renewal SubscriptionEvent', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showSubscriptions = true;
+    featureFlags.showGiftedSubs = true;
+
+    callbacks.onSubscription({ chatroomId: 25951243, username: 's4drazam1', months: 9 });
+
+    const rows = store.getMessagesInArrivalOrder();
+    expect(rows).toHaveLength(0);
+    expect(rows.some((message) => message.systemEvent?.kind === 'gifted-subscription')).toBe(false);
+  });
+
+  it('still creates the native-compatible row for a first-month SubscriptionEvent', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showSubscriptions = true;
+
+    callbacks.onSubscription({ chatroomId: 25951243, username: 'first_month', months: 1 });
+
+    expect(store.getMessagesInArrivalOrder()[0]?.systemEvent).toEqual({
+      kind: 'subscription',
+      username: 'first_month',
+      months: 1,
+    });
+  });
+
+  it('creates one kicks row with the captured sender, amount, and optional fields', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showKicks = true;
+
+    callbacks.onKicksGifted({
+      giftTransactionId: '340003001122334',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: 'gg wp',
+    });
+
+    const rows = store.getMessagesInArrivalOrder();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('kicks:340003001122334');
+    expect(rows[0]?.systemEvent).toEqual({
+      kind: 'kicks',
+      username: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: 'gg wp',
+    });
+  });
+
+  it('dedupes a replayed kicks frame by its gift_transaction_id', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showKicks = true;
+    const captured = {
+      giftTransactionId: '340003001122334',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: 'Rage Quit',
+      senderMessage: null,
+    };
+
+    callbacks.onKicksGifted(captured);
+    callbacks.onKicksGifted(captured);
+
+    expect(store.getMessagesInArrivalOrder()).toHaveLength(1);
+  });
+
+  it('does not ingest kicks rows when showKicks is off', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showKicks = false;
+
+    callbacks.onKicksGifted({
+      giftTransactionId: 'txn-off',
+      senderUsername: 'TallSkydiver',
+      amount: 500,
+      giftName: null,
+      senderMessage: null,
+    });
+
+    expect(store.getMessagesInArrivalOrder()).toEqual([]);
+    featureFlags.showKicks = true;
+  });
+
+  it('keeps the first mode snapshot silent, diffs all changed modes, and dedupes identical state', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    featureFlags.showModeChanges = true;
+
+    callbacks.onChatroomUpdated({
+      chatroomId: 25314085,
+      slowMode: { enabled: false, messageInterval: 0 },
+      followersMode: { enabled: false, minDuration: 0 },
+      subscribersMode: { enabled: false },
+      emotesMode: { enabled: true },
+    });
+    expect(store.getMessagesInArrivalOrder()).toEqual([]);
+
+    const changed = {
+      chatroomId: 25314085,
+      slowMode: { enabled: true, messageInterval: 5 },
+      followersMode: { enabled: true, minDuration: 31 },
+      subscribersMode: { enabled: true },
+      emotesMode: { enabled: false },
+    };
+    callbacks.onChatroomUpdated(changed);
+    callbacks.onChatroomUpdated(changed);
+    callbacks.onChatroomUpdated({
+      chatroomId: 25314085,
+      slowMode: { enabled: false, messageInterval: 0 },
+      followersMode: { enabled: false, minDuration: 0 },
+      subscribersMode: { enabled: false },
+      emotesMode: { enabled: true },
+    });
+
+    expect(store.getMessagesInArrivalOrder().map(({ id, systemEvent }) => ({ id, systemEvent }))).toEqual([
+      {
+        id: 'mode:25314085:slow_mode:1',
+        systemEvent: { kind: 'mode', mode: 'slow_mode', text: 'Yavaş mod açıldı (5sn)' },
+      },
+      {
+        id: 'mode:25314085:followers_mode:2',
+        systemEvent: { kind: 'mode', mode: 'followers_mode', text: 'Sadece takipçi modu açıldı (31dk)' },
+      },
+      {
+        id: 'mode:25314085:subscribers_mode:3',
+        systemEvent: { kind: 'mode', mode: 'subscribers_mode', text: 'Sadece abone modu açıldı' },
+      },
+      {
+        id: 'mode:25314085:emotes_mode:4',
+        systemEvent: { kind: 'mode', mode: 'emotes_mode', text: 'Sadece emote modu kapandı' },
+      },
+      {
+        id: 'mode:25314085:slow_mode:5',
+        systemEvent: { kind: 'mode', mode: 'slow_mode', text: 'Yavaş mod kapandı' },
+      },
+      {
+        id: 'mode:25314085:followers_mode:6',
+        systemEvent: { kind: 'mode', mode: 'followers_mode', text: 'Sadece takipçi modu kapandı' },
+      },
+      {
+        id: 'mode:25314085:subscribers_mode:7',
+        systemEvent: { kind: 'mode', mode: 'subscribers_mode', text: 'Sadece abone modu kapandı' },
+      },
+      {
+        id: 'mode:25314085:emotes_mode:8',
+        systemEvent: { kind: 'mode', mode: 'emotes_mode', text: 'Sadece emote modu açıldı' },
+      },
+    ]);
+  });
+
+  it('updates mode baseline while disabled and only announces later changes after re-enable', () => {
+    const store = new ChatIntegrityStore();
+    const callbacks = bootstrap.createSystemEventCallbacks((message) => {
+      store.addMessage(message);
+    });
+    const state = (slow: boolean, subscribers: boolean) => ({
+      chatroomId: 1,
+      slowMode: { enabled: slow, messageInterval: slow ? 10 : 0 },
+      followersMode: { enabled: false, minDuration: 0 },
+      subscribersMode: { enabled: subscribers },
+      emotesMode: { enabled: false },
+    });
+
+    featureFlags.showModeChanges = false;
+    callbacks.onChatroomUpdated(state(false, false));
+    callbacks.onChatroomUpdated(state(true, false));
+    featureFlags.showModeChanges = true;
+    callbacks.onChatroomUpdated(state(true, false));
+    expect(store.getMessagesInArrivalOrder()).toEqual([]);
+
+    callbacks.onChatroomUpdated(state(true, true));
+    expect(store.getMessagesInArrivalOrder().map((item) => item.systemEvent)).toEqual([
+      { kind: 'mode', mode: 'subscribers_mode', text: 'Sadece abone modu açıldı' },
+    ]);
+  });
+
+  it('applyFlagChange handles and persists all event boolean keys, including reserved native polls', () => {
+    storageSet.mockClear();
+
+    bootstrap.applyFlagChange('showSubscriptions', false);
+    bootstrap.applyFlagChange('showGiftedSubs', false);
+    bootstrap.applyFlagChange('showKicks', false);
+    bootstrap.applyFlagChange('showPolls', false);
+    bootstrap.applyFlagChange('showHostRaid', false);
+    bootstrap.applyFlagChange('showModeChanges', false);
+
+    expect(featureFlags.showSubscriptions).toBe(false);
+    expect(featureFlags.showGiftedSubs).toBe(false);
+    expect(featureFlags.showKicks).toBe(false);
+    expect(featureFlags.showPolls).toBe(false);
+    expect(featureFlags.showHostRaid).toBe(false);
+    expect(featureFlags.showModeChanges).toBe(false);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showSubscriptions: false });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showGiftedSubs: false });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showKicks: false });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showPolls: false });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showHostRaid: false });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_showModeChanges: false });
+  });
+
+  it('loads all persisted event boolean overrides', async () => {
+    storageGet.mockResolvedValue({
+      kf_flag_showSubscriptions: false,
+      kf_flag_showGiftedSubs: true,
+      kf_flag_showKicks: false,
+      kf_flag_showPolls: false,
+      kf_flag_showHostRaid: false,
+      kf_flag_showModeChanges: true,
+      kf_flag_showChattersBadges: false,
+    });
+    featureFlags.showSubscriptions = true;
+    featureFlags.showGiftedSubs = false;
+    featureFlags.showKicks = true;
+    featureFlags.showPolls = true;
+    featureFlags.showHostRaid = true;
+    featureFlags.showModeChanges = false;
+    featureFlags.showChattersBadges = true;
+
+    await bootstrap.applySavedFlags();
+
+    expect(featureFlags.showSubscriptions).toBe(false);
+    expect(featureFlags.showGiftedSubs).toBe(true);
+    expect(featureFlags.showKicks).toBe(false);
+    expect(featureFlags.showPolls).toBe(false);
+    expect(featureFlags.showHostRaid).toBe(false);
+    expect(featureFlags.showModeChanges).toBe(true);
+    expect(featureFlags.showChattersBadges).toBe(false);
+  });
+
+  it('includes all event values in the popup status flag payload', () => {
+    featureFlags.showSubscriptions = false;
+    featureFlags.showGiftedSubs = true;
+    featureFlags.showKicks = false;
+    featureFlags.showPolls = true;
+    featureFlags.showHostRaid = false;
+    featureFlags.showModeChanges = false;
+
+    expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
+      showSubscriptions: false,
+      showGiftedSubs: true,
+      showKicks: false,
+      showPolls: true,
+      showHostRaid: false,
+      showModeChanges: false,
+    });
+  });
+
+  it('validates, persists, restores, and live-resolves hoverFollowMode without restarting chat', async () => {
+    const { decideScrollFollow } = await import('../../src/content/chat/dom-window');
+    storageSet.mockClear();
+    featureFlags.hoverFollowMode = 'browser-smooth';
+
+    bootstrap.applyFlagChange('hoverFollowMode', 'instant');
+    expect(featureFlags.hoverFollowMode).toBe('instant');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_hoverFollowMode: 'instant' });
+    expect(bootstrap.getPopupFeatureFlags().hoverFollowMode).toBe('instant');
+
+    const resolveHovered = (): 'auto' | 'smooth' =>
+      featureFlags.hoverFollowMode === 'instant' ? 'auto' : 'smooth';
+    expect(decideScrollFollow(true, 1, true, resolveHovered()).scrollBehavior).toBe('auto');
+
+    bootstrap.applyFlagChange('hoverFollowMode', 'browser-smooth');
+    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
+    expect(decideScrollFollow(true, 1, true, resolveHovered()).scrollBehavior).toBe('smooth');
+
+    storageSet.mockClear();
+    bootstrap.applyFlagChange('hoverFollowMode', 'uniform');
+    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
+    expect(storageSet).not.toHaveBeenCalled();
+
+    featureFlags.hoverFollowMode = 'browser-smooth';
+    storageGet.mockResolvedValue({ kf_flag_hoverFollowMode: 'instant' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.hoverFollowMode).toBe('instant');
+    expect(bootstrap.getPopupFeatureFlags().hoverFollowMode).toBe('instant');
+
+    featureFlags.hoverFollowMode = 'browser-smooth';
+    storageGet.mockResolvedValue({ kf_flag_hoverFollowMode: 'uniform' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
+  });
+
+  it('starts, stops, and recreates Active Chatters badges through the shared flag mutator', () => {
+    const priorFlag = featureFlags.showChattersBadges;
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    const preserved: ChatMessage = {
+      id: 'chatter-removed', chatroomId: 1, content: 'removed evidence', type: 'message', createdAt: '',
+      sender: {
+        id: 42, username: 'Session_User', slug: 'session-user',
+        identity: { color: '', badges: [], badgesV2: [] },
+      },
+      preserved: false,
+    };
+    store.addMessage(preserved);
+    store.markMessageDeleted(preserved.id);
+    document.body.innerHTML = `
+      <div class="absolute inset-0 z-popover">
+        <section class="bg-surface-base flex size-full min-h-0 flex-col overflow-hidden text-white">
+          <header class="border-outline-decorative flex h-[50px] shrink-0 items-center border-b p-1.5">
+            <h2 class="min-w-0 flex-1 text-center text-base font-bold leading-6">Active chatters</h2>
+          </header>
+          <div class="shrink-0 p-3"><label class="relative block min-w-0">
+            <span class="sr-only">Search active chatters</span>
+            <input aria-label="Search active chatters" class="h-8 pl-11 pr-3 text-base" type="search">
+          </label></div>
+          <div class="min-h-0 flex-1" data-radix-scroll-area-root=""><div class="pb-6">
+            <div class="border-outline-decorative divide-outline-decorative flex flex-col divide-y border-t">
+              <div class="accordion-item" data-state="open"><div data-state="open">
+                <ul class="flex list-none flex-col overflow-hidden p-0">
+                  <li class="block"><button class="betterhover:hover:bg-surface-highest flex h-auto w-full justify-start gap-4 p-2 text-left font-normal text-white" type="button">
+                    <div class="relative size-6 shrink-0 rounded-full"><img alt="" class="size-full rounded-full" src="https://files.kick.com/avatar.webp"></div>
+                    <span class="min-w-0 flex-1 truncate text-base font-normal leading-6">Session_User</span>
+                  </button></li>
+                </ul>
+              </div></div>
+            </div>
+          </div></div>
+        </section>
+      </div>`;
+    const panel = new RemovedMessagesPanel(lifecycle, store, () => ({
+      slug: 'channel', chatroomId: 1, active: true, reason: 'test', pusherConnected: true,
+      lastBanAt: null, messageCount: 1, preservedCount: 1, bannedCount: 0, deletedCount: 1,
+      ghostAnchored: 0, ghostPendingNoAnchor: 0, ghostStrip: 0, ghostEvicted: 0,
+    }));
+
+    try {
+      bootstrap.applyFlagChange('showChattersBadges', false);
+      bootstrap.initActiveChattersBadgesSession(lifecycle, store, panel);
+      expect(document.querySelector('.kickflow-active-chatters-badge')).toBeNull();
+
+      bootstrap.applyFlagChange('showChattersBadges', true);
+      expect(document.querySelector('.kickflow-active-chatters-badge')?.textContent).toContain('kaldırıldı');
+      expect(storageSet).toHaveBeenCalledWith({ kf_flag_showChattersBadges: true });
+      expect(bootstrap.getPopupFeatureFlags().showChattersBadges).toBe(true);
+
+      bootstrap.applyFlagChange('showChattersBadges', false);
+      expect(document.querySelector('.kickflow-active-chatters-badge')).toBeNull();
+
+      bootstrap.applyFlagChange('showChattersBadges', true);
+      expect(document.querySelector('.kickflow-active-chatters-badge')).not.toBeNull();
+    } finally {
+      lifecycle.dispose();
+      featureFlags.showChattersBadges = priorFlag;
+      document.body.replaceChildren();
+    }
+  });
+
+  it('persists, loads, and reports the auto-theater flag through the shared flag path', async () => {
+    storageSet.mockClear();
+    featureFlags.autoTheater = false;
+
+    bootstrap.applyFlagChange('autoTheater', true);
+    expect(featureFlags.autoTheater).toBe(true);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_autoTheater: true });
+    expect(bootstrap.getPopupFeatureFlags().autoTheater).toBe(true);
+
+    storageGet.mockResolvedValue({ kf_flag_autoTheater: false });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.autoTheater).toBe(false);
+  });
+
+  it('persists, loads, and reports the navbar daily-reward flag through the site flag path', async () => {
+    storageSet.mockClear();
+    featureFlags.autoClaimDailyReward = false;
+
+    bootstrap.applyFlagChange('autoClaimDailyReward', true);
+    expect(featureFlags.autoClaimDailyReward).toBe(true);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_autoClaimDailyReward: true });
+    expect(bootstrap.getPopupFeatureFlags().autoClaimDailyReward).toBe(true);
+
+    storageGet.mockResolvedValue({ kf_flag_autoClaimDailyReward: false });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.autoClaimDailyReward).toBe(false);
+  });
+
+  it('persists, loads, and reports every newly toggleable player feature', async () => {
+    storageSet.mockClear();
+    for (const key of ['captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
+      bootstrap.applyFlagChange(key, false);
+      expect(featureFlags[key]).toBe(false);
+      expect(storageSet).toHaveBeenCalledWith({ [`kf_flag_${key}`]: false });
+      expect(bootstrap.getPopupFeatureFlags()[key]).toBe(false);
+    }
+
+    storageGet.mockResolvedValue({
+      kf_flag_captionGuard: true,
+      kf_flag_rewindControls: true,
+      kf_flag_liveCatchup: true,
+      kf_flag_qualityLock: true,
+      kf_flag_screenshot: true,
+      kf_flag_speedControls: true,
+    });
+    await bootstrap.applySavedFlags();
+    expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
+      captionGuard: true,
+      rewindControls: true,
+      liveCatchup: true,
+      qualityLock: true,
+      screenshot: true,
+      speedControls: true,
+    });
+  });
+
+  it('restores every persisted boolean setting after an extension reload', async () => {
+    const initial = { ...featureFlags };
+    const persisted: Record<string, unknown> = {};
+    storageSet.mockImplementation(async (items: Record<string, unknown>) => { Object.assign(persisted, items); });
+    try {
+      for (const [key, value] of Object.entries(bootstrap.getPopupFeatureFlags())) {
+        if (typeof value === 'boolean') await bootstrap.applyFlagChange(key, !value);
+      }
+      Object.assign(featureFlags, initial);
+      storageGet.mockImplementationOnce(async (keys: string[]) => Object.fromEntries(keys.map((key) => [key, persisted[key]])));
+      await bootstrap.applySavedFlags();
+      for (const [key, value] of Object.entries(initial)) {
+        if (typeof value === 'boolean' && key !== 'modLogPanel') expect(featureFlags[key as keyof typeof featureFlags]).toBe(!value);
+      }
+    } finally {
+      Object.assign(featureFlags, initial);
+      storageSet.mockImplementation(async () => undefined);
+    }
+  });
+
+  it('restores every persisted string setting and rejects the same bad values live and on reload', async () => {
+    const initial = { ...featureFlags };
+    const valid: Record<string, string> = {
+      chatMode: 'own',
+      hoverFollowMode: 'instant',
+      mentionHighlightStyle: 'fill',
+      roleHighlightStyle: 'both',
+      mentionHighlightColor: '#3366FF',
+      modFrameColor: '#33CC66',
+      vipFrameColor: '#CC33CC',
+      manualUsername: '  Alice  ',
+    };
+    const enumBad: Record<string, string> = {
+      chatMode: 'mixed',
+      hoverFollowMode: 'uniform',
+      mentionHighlightStyle: 'glow',
+      roleHighlightStyle: 'fill',
+    };
+    const stringKeys = Object.entries(initial).filter(([, value]) => typeof value === 'string').map(([key]) => key);
+    expect(Object.keys(valid).sort()).toEqual(stringKeys.sort());
+    const persisted: Record<string, unknown> = {};
+    storageSet.mockImplementation(async (items: Record<string, unknown>) => { Object.assign(persisted, items); });
+    try {
+      const live: Record<string, unknown> = {};
+      for (const key of stringKeys) {
+        await bootstrap.applyFlagChange(key, valid[key]!);
+        live[key] = featureFlags[key as keyof typeof featureFlags];
+        expect(persisted[`kf_flag_${key}`]).toBe(live[key]);
+      }
+      expect(live.manualUsername).toBe('Alice');
+      Object.assign(featureFlags, initial);
+      storageGet.mockImplementationOnce(async (keys: string[]) => Object.fromEntries(keys.map((key) => [key, persisted[key]])));
+      await bootstrap.applySavedFlags();
+      for (const key of stringKeys) expect(featureFlags[key as keyof typeof featureFlags]).toBe(live[key]);
+
+      Object.assign(featureFlags, initial);
+      for (const key of stringKeys) {
+        await expect(bootstrap.applyFlagChange(key, true)).resolves.toBe(false);
+        if (enumBad[key]) await expect(bootstrap.applyFlagChange(key, enumBad[key]!)).resolves.toBe(false);
+        expect(featureFlags[key as keyof typeof featureFlags]).toBe(initial[key as keyof typeof initial]);
+      }
+      storageGet.mockImplementationOnce(async (keys: string[]) => Object.fromEntries(
+        keys.map((key) => [key, enumBad[key.replace('kf_flag_', '')] ?? 42]),
+      ));
+      await bootstrap.applySavedFlags();
+      for (const key of stringKeys) expect(featureFlags[key as keyof typeof featureFlags]).toBe(initial[key as keyof typeof initial]);
+    } finally {
+      Object.assign(featureFlags, initial);
+      storageSet.mockImplementation(async () => undefined);
+    }
+  });
+
+  it('round-trips the seek bar flag through storage', async () => {
+    featureFlags.seekBar = true;
+    bootstrap.applyFlagChange('seekBar', false);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_seekBar: false });
+    featureFlags.seekBar = true;
+    storageGet.mockResolvedValue({ kf_flag_seekBar: false });
+    await bootstrap.applySavedFlags();
+    expect(storageGet.mock.lastCall?.[0]).toContain('kf_flag_seekBar');
+    expect(featureFlags.seekBar).toBe(false);
+  });
+
+  it('reports a failed flag write through the popup bridge after storage settles', async () => {
+    const listener = addMessageListener.mock.calls[0]?.[0] as (
+      message: { type: string; key: string; value: boolean },
+      sender: chrome.runtime.MessageSender,
+      sendResponse: (response: unknown) => void,
+    ) => boolean;
+    storageSet.mockRejectedValueOnce(new Error('storage unavailable'));
+    const sendResponse = vi.fn();
+    const keepChannelOpen = listener(
+      { type: 'kickflow:setFlag', key: 'showSubscriptions', value: false },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+    expect(keepChannelOpen).toBe(true);
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: false }));
+  });
+
+  it.each([['chatMode', 'native'], ['hoverFollowMode', 'instant']] as const)(
+    'reports a failed %s write through the popup bridge after storage settles', async (key, value) => {
+      const listener = addMessageListener.mock.calls[0][0];
+      let fail!: (error: Error) => void;
+      storageSet.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+      const sendResponse = vi.fn();
+      expect(listener({ type: 'kickflow:setFlag', key, value }, {}, sendResponse)).toBe(true);
+      expect(sendResponse).not.toHaveBeenCalled();
+      fail(new Error('storage unavailable'));
+      await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: false }));
+    },
+  );
+
+  it('shows failed saves from the dashboard gear and clears the error after success', async () => {
+    const lifecycle = new Lifecycle();
+    const panel = new RemovedMessagesPanel(lifecycle, null, bootstrap.getLiveStatusSnapshot);
+    panel.showSettings();
+    try {
+      const checkbox = document.querySelector<HTMLInputElement>('.kickflow-panel input[type="checkbox"]')!;
+      storageSet.mockRejectedValueOnce(new Error('storage unavailable'));
+      checkbox.dispatchEvent(new Event('change'));
+      await vi.waitFor(() => {
+        const status = document.querySelector<HTMLElement>('.kickflow-panel__save-status');
+        expect(status?.hidden).toBe(false);
+        expect(status?.textContent).toBe('Ayar bu sekmede değişti ancak kaydedilemedi.');
+      });
+      checkbox.dispatchEvent(new Event('change'));
+      await vi.waitFor(() => expect(document.querySelector<HTMLElement>('.kickflow-panel__save-status')?.hidden).toBe(true));
+    } finally {
+      lifecycle.dispose();
+    }
+  });
+
+  it('sanitizes, persists, restores, and reports moderator and VIP frame colors', async () => {
+    storageSet.mockClear();
+
+    bootstrap.applyFlagChange('modFrameColor', '#53FC18');
+    bootstrap.applyFlagChange('vipFrameColor', '#000080');
+
+    const modRgb = hexToRgb(featureFlags.modFrameColor)!;
+    const modHsl = rgbToHsl(modRgb.r, modRgb.g, modRgb.b);
+    const vipRgb = hexToRgb(featureFlags.vipFrameColor)!;
+    const vipHsl = rgbToHsl(vipRgb.r, vipRgb.g, vipRgb.b);
+    expect(modHsl.h < 90 || modHsl.h > 120).toBe(true);
+    expect(vipHsl.l).toBeGreaterThanOrEqual(55);
+    expect(vipHsl.l).toBeLessThanOrEqual(82);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_modFrameColor: featureFlags.modFrameColor });
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_vipFrameColor: featureFlags.vipFrameColor });
+    expect(bootstrap.getPopupFeatureFlags()).toMatchObject({
+      modFrameColor: featureFlags.modFrameColor,
+      vipFrameColor: featureFlags.vipFrameColor,
+    });
+
+    storageGet.mockResolvedValue({
+      kf_flag_modFrameColor: '#000080',
+      kf_flag_vipFrameColor: '#53FC18',
+    });
+    await bootstrap.applySavedFlags();
+
+    const restoredModRgb = hexToRgb(featureFlags.modFrameColor)!;
+    const restoredModHsl = rgbToHsl(restoredModRgb.r, restoredModRgb.g, restoredModRgb.b);
+    const restoredVipRgb = hexToRgb(featureFlags.vipFrameColor)!;
+    const restoredVipHsl = rgbToHsl(restoredVipRgb.r, restoredVipRgb.g, restoredVipRgb.b);
+    expect(restoredModHsl.l).toBeGreaterThanOrEqual(55);
+    expect(restoredModHsl.l).toBeLessThanOrEqual(82);
+    expect(restoredVipHsl.h < 90 || restoredVipHsl.h > 120).toBe(true);
+  });
+
+  it('persists, loads, and reports roleHighlightStyle; missing/invalid keep frame', async () => {
+    storageSet.mockClear();
+    featureFlags.roleHighlightStyle = 'frame';
+
+    bootstrap.applyFlagChange('roleHighlightStyle', 'both');
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_roleHighlightStyle: 'both' });
+    expect(bootstrap.getPopupFeatureFlags().roleHighlightStyle).toBe('both');
+
+    bootstrap.applyFlagChange('roleHighlightStyle', 'frame');
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_roleHighlightStyle: 'frame' });
+
+    storageSet.mockClear();
+    bootstrap.applyFlagChange('roleHighlightStyle', 'fill');
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+    expect(storageSet).not.toHaveBeenCalled();
+
+    featureFlags.roleHighlightStyle = 'frame';
+    storageGet.mockResolvedValue({});
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+
+    featureFlags.roleHighlightStyle = 'both';
+    storageGet.mockResolvedValue({});
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+
+    featureFlags.roleHighlightStyle = 'frame';
+    storageGet.mockResolvedValue({ kf_flag_roleHighlightStyle: 'both' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+    expect(bootstrap.getPopupFeatureFlags().roleHighlightStyle).toBe('both');
+
+    featureFlags.roleHighlightStyle = 'frame';
+    storageGet.mockResolvedValue({ kf_flag_roleHighlightStyle: 'fill' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('frame');
+
+    featureFlags.roleHighlightStyle = 'both';
+    storageGet.mockResolvedValue({ kf_flag_roleHighlightStyle: 'nope' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.roleHighlightStyle).toBe('both');
+  });
+
+  it('live OFF tears down each mounted player surface and ON remounts it without restarting chat', () => {
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    const bar = document.createElement('div');
+    bar.className = 'z-controls bottom-0';
+    const nativeLive = document.createElement('button');
+    nativeLive.textContent = 'LIVE';
+    bar.append(nativeLive);
+    wrapper.append(video, bar);
+    document.body.append(wrapper);
+    for (const key of ['captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls'] as const) {
+      featureFlags[key] = true;
+    }
+    const lifecycle = new Lifecycle();
+    bootstrap.initPlayerQolSession(lifecycle);
+
+    expect(document.getElementById('kickflow-rewind-controls')).not.toBeNull();
+    expect(document.getElementById('kickflow-catchup-controls')).not.toBeNull();
+    expect(document.getElementById('kickflow-speed-controls')).not.toBeNull();
+    expect(document.getElementById('kickflow-screenshot-controls')).not.toBeNull();
+
+    bootstrap.applyFlagChange('rewindControls', false);
+    bootstrap.applyFlagChange('liveCatchup', false);
+    bootstrap.applyFlagChange('captionGuard', false);
+    bootstrap.applyFlagChange('screenshot', false);
+    bootstrap.applyFlagChange('speedControls', false);
+    bootstrap.applyFlagChange('qualityLock', false);
+    expect(document.querySelector('[id^="kickflow-"][id$="-controls"]')).toBeNull();
+
+    bootstrap.applyFlagChange('rewindControls', true);
+    expect(document.getElementById('kickflow-rewind-controls')).not.toBeNull();
+
+    lifecycle.dispose();
+    document.body.replaceChildren();
+  });
+
+  it('keeps live catch-up disabled on recordings while other player controls mount', () => {
+    document.body.innerHTML = `<div><video id="video-player"></video>
+      <div class="z-controls bottom-0 flex"><div class="flex items-center">
+        <button>Play</button><button>Volume</button><span>00:05 / 05:30:35</span>
+      </div><div><button data-testid="video-player-fullscreen"></button></div></div></div>`;
+    featureFlags.liveCatchup = true;
+    featureFlags.rewindControls = true;
+    featureFlags.screenshot = true;
+    const lifecycle = new Lifecycle();
+    window.history.replaceState({}, '', '/fixture/videos/recording');
+    try {
+      bootstrap.initPlayerQolSession(lifecycle);
+      expect(document.getElementById('kickflow-rewind-controls')).not.toBeNull();
+      expect(document.getElementById('kickflow-screenshot-controls')).not.toBeNull();
+      expect(document.getElementById('kickflow-catchup-controls')).toBeNull();
+      bootstrap.applyFlagChange('liveCatchup', false);
+      bootstrap.applyFlagChange('liveCatchup', true);
+      expect(document.getElementById('kickflow-catchup-controls')).toBeNull();
+    } finally {
+      lifecycle.dispose();
+      document.body.replaceChildren();
+      window.history.replaceState({}, '', '/');
+    }
+  });
+
+  it('uses one deduplicated live snapshot for the popup bridge and dashboard provider', () => {
+    document.body.innerHTML = `
+      <div id="chatroom-messages"><div data-index="1"></div><div data-index="2"></div></div>
+      <div class="kickflow-preserved kickflow-banned" data-message-id="same"></div>
+      <div class="kickflow-preserved kickflow-banned" data-kickflow-mid="same"></div>
+      <div class="kickflow-preserved kickflow-banned" data-kickflow-ghost-mid="same"></div>
+      <div class="kickflow-preserved kickflow-banned" data-kickflow-removed-mid="same"></div>
+      <div class="kickflow-preserved kickflow-deleted" data-kickflow-ghost-mid="deleted"></div>
+      <div class="kickflow-preserved kickflow-deleted" data-kickflow-removed-mid="deleted"></div>
+    `;
+
+    expect(bootstrap.countUniqueStatusMessages('.kickflow-preserved')).toBe(2);
+    expect(bootstrap.countUniqueStatusMessages('.kickflow-banned')).toBe(1);
+    expect(bootstrap.countUniqueStatusMessages('.kickflow-deleted')).toBe(1);
+    const snapshot = bootstrap.getLiveStatusSnapshot();
+    expect(snapshot).toMatchObject({
+      messageCount: 2,
+      preservedCount: 2,
+      bannedCount: 1,
+      deletedCount: 1,
+      ghostAnchored: 0,
+      ghostPendingNoAnchor: 0,
+      ghostEvicted: 0,
+    });
+
+    const listener = addMessageListener.mock.calls[0]?.[0] as (
+      message: { type: string },
+      sender: chrome.runtime.MessageSender,
+      sendResponse: (response: unknown) => void,
+    ) => void;
+    expect(listener).toBeTypeOf('function');
+    let bridgeResponse: unknown;
+    listener(
+      { type: 'kickflow:getStatus' },
+      {} as chrome.runtime.MessageSender,
+      (response) => { bridgeResponse = response; },
+    );
+    expect(bridgeResponse).toMatchObject(snapshot);
+    document.body.replaceChildren();
+  });
+
+  it('keeps the site-owned layout watchdog stopped and storage untouched while debug logging is off', () => {
+    const services = bootstrap.initSiteLifecycle();
+    bootstrap.applyFlagChange('debugLogging', false);
+    const before = localStorage.getItem(LAYOUT_WATCHDOG_STORAGE_KEY);
+
+    expect(services.layoutWatchdog?.isRunning ?? false).toBe(false);
+
+    bootstrap.applyFlagChange('debugLogging', true);
+    expect(services.layoutWatchdog?.isRunning).toBe(true);
+    bootstrap.applyFlagChange('debugLogging', false);
+
+    expect(services.layoutWatchdog?.isRunning).toBe(false);
+    expect(localStorage.getItem(LAYOUT_WATCHDOG_STORAGE_KEY)).toBe(before);
+  });
+
+  it('keeps a normally retained Mode-A row when its preservation expires', () => {
+    const registry = new ChatDomRegistry();
+    let store!: ChatIntegrityStore;
+    store = new ChatIntegrityStore({
+      onPreservedEvicted: (message) => bootstrap.reconcileOwnPreservedEviction(message, store, registry),
+    });
+    const message: ChatMessage = {
+      id: 'ttl-row', chatroomId: 1, content: 'still retained', type: 'message', createdAt: '',
+      sender: { id: 7, username: 'alice', slug: 'alice', identity: { color: '', badges: [], badgesV2: [] } },
+      preserved: false,
+    };
+    store.addMessage(message);
+    store.markMessageDeleted(message.id, { deletedBy: 'mod' });
+    const row = buildMessageElement(message);
+    registry.register(row, message);
+    document.body.append(row);
+
+    store.sweepExpiredPreserved(Date.now() + 10 * 60 * 1000 + 1);
+
+    expect(store.getMessageById(message.id)).toBe(message);
+    expect(row.isConnected).toBe(true);
+    expect(row.classList.contains('kickflow-preserved')).toBe(false);
+    expect(row.querySelector('.kickflow-status-label, .kickflow-mod-label')).toBeNull();
+    expect(registry.getElementForMessageId(message.id)).toBe(row);
+    row.remove();
+  });
+
+  it('configures user cards and clears prior subscriber-badge assets in native mode', async () => {
+    const priorMode = featureFlags.chatMode;
+    featureFlags.chatMode = 'native';
+    document.body.innerHTML = '<div id="chatroom-messages"><div class="no-scrollbar"></div></div>';
+    setSubscriberBadges([{ months: 1, src: 'https://files.kick.com/old-channel-badge.png' }]);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 404 } as Response);
+    const lifecycle = new Lifecycle();
+
+    try {
+      bootstrap.initChatIntegrity({
+        kind: 'live',
+        slug: 'current-channel',
+        sessionKey: 'live:current-channel',
+      }, lifecycle);
+      const subscriber = buildMessageElement({
+        id: 'subscriber', chatroomId: 1, content: 'hello', type: 'message', createdAt: '',
+        sender: {
+          id: 8, username: 'subscriber', slug: 'subscriber',
+          identity: { color: '', badges: [{ type: 'subscriber', count: 12 }], badgesV2: [] },
+        },
+        preserved: false,
+      });
+      expect(subscriber.querySelector('.kickflow-badge-icon')).toBeNull();
+      expect(subscriber.querySelector('.kickflow-badge-role')).not.toBeNull();
+
+      await openUserCard('alice', 'Alice', 10, 10, null);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://kick.com/api/v2/channels/current-channel/users/alice',
+        { headers: { accept: 'application/json' } },
+      );
+    } finally {
+      lifecycle.dispose();
+      configureUserCardSession(null);
+      setSubscriberBadges([]);
+      featureFlags.chatMode = priorMode;
+      fetchSpy.mockRestore();
+      document.body.replaceChildren();
+    }
+  });
+
+  it('uses timestamped replay history in own VOD mode without opening a live WebSocket', async () => {
+    const priorMode = featureFlags.chatMode;
+    featureFlags.chatMode = 'own';
+    const lifecycle = new Lifecycle();
+    const anchor = document.createElement('div');
+    anchor.id = 'chatroom-messages';
+    vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, right: 320, bottom: 480, left: 0,
+      width: 320, height: 480, toJSON: () => ({}),
+    });
+    const chatParent = document.createElement('div');
+    chatParent.append(anchor);
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    video.currentTime = 25_990;
+    document.body.replaceChildren(chatParent, video);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === 'https://kick.com/api/v2/channels/current-channel') {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue({
+            id: 24783370,
+            chatroom: { id: 24495088, channel_id: 24783370 },
+            subscriber_badges: [],
+          }),
+        } as unknown as Response;
+      }
+      if (url === 'https://web.kick.com/api/v1/channels/24783370/videos') {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue({
+            data: [{
+              id: 'vod-id',
+              start_time: '2026-07-25T18:12:38Z',
+            }],
+          }),
+        } as unknown as Response;
+      }
+      if (
+        url
+        === 'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A53.000Z'
+      ) {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn().mockResolvedValue({
+            data: {
+              messages: [{
+                id: '18cf655b-4eab-4bb0-9c07-87c23f746410',
+                chatroom_id: 24495088,
+                content: 'yardımcı fulle',
+                type: 'message',
+                created_at: '2026-07-26T01:25:48Z',
+                sender: {
+                  id: 17,
+                  username: 'omercanturk',
+                  slug: 'omercanturk',
+                  identity: { color: '#53FC18', badges: [], badges_v2: [] },
+                },
+              }],
+            },
+          }),
+        } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const websocketConstructed = vi.fn();
+    class GuardWebSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly readyState = 0;
+      constructor(url: string | URL) {
+        super();
+        websocketConstructed(String(url));
+      }
+      send(): void {}
+      close(): void {}
+    }
+    class NoopResizeObserver {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    const websocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+    const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+    const animationFrameDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame');
+    Object.defineProperty(globalThis, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: GuardWebSocket,
+    });
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      writable: true,
+      value: NoopResizeObserver,
+    });
+
+    try {
+      vi.useFakeTimers();
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        callback(0);
+        return 0;
+      });
+      bootstrap.initChatIntegrity({
+        kind: 'vod',
+        slug: 'current-channel',
+        videoId: 'vod-id',
+        sessionKey: 'vod:current-channel:vod-id',
+      }, lifecycle);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(250);
+
+      // Anchored one bucket ahead: Kick returns the window ENDING at start_time.
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://web.kick.com/api/v1/chat/24783370/history?start_time=2026-07-26T01%3A25%3A53.000Z',
+        expect.objectContaining({ headers: { accept: 'application/json' } }),
+      );
+      expect(
+        document.querySelector('[data-message-id="18cf655b-4eab-4bb0-9c07-87c23f746410"] .kickflow-message__time')
+          ?.textContent,
+      ).toBe('07:13:10');
+      expect(websocketConstructed).not.toHaveBeenCalled();
+    } finally {
+      lifecycle.dispose();
+      vi.useRealTimers();
+      featureFlags.chatMode = priorMode;
+      fetchSpy.mockRestore();
+      if (websocketDescriptor) Object.defineProperty(globalThis, 'WebSocket', websocketDescriptor);
+      else Reflect.deleteProperty(globalThis, 'WebSocket');
+      if (resizeObserverDescriptor) {
+        Object.defineProperty(globalThis, 'ResizeObserver', resizeObserverDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, 'ResizeObserver');
+      }
+      if (animationFrameDescriptor) {
+        Object.defineProperty(globalThis, 'requestAnimationFrame', animationFrameDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
+      }
+      document.body.replaceChildren();
+      document.documentElement.classList.remove('kickflow-chat-active');
+    }
+  });
+
+  it('bounds and aborts every hung channel-resolution attempt before returning native fallback', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      }));
+
+    try {
+      const pending = bootstrap.resolveChannel('hung-channel');
+      await vi.advanceTimersByTimeAsync(6_000 + 800 + 6_000 + 1_600 + 6_000);
+
+      await expect(pending).resolves.toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true);
+    } finally {
+      fetchMock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps Drops claiming site-owned on non-channel routes and disposes it with the site', async () => {
+    const previousHref = window.location.href;
+    const previousFlag = featureFlags.autoClaimDrops;
+    bootstrap.initSiteLifecycle().lifecycle.dispose();
+    document.body.innerHTML = '<div id="drops-panel"><div><div role="progressbar" data-state="complete"></div><button>Claim</button></div></div>';
+    const button = document.querySelector<HTMLButtonElement>('#drops-panel button')!;
+    const click = vi.spyOn(button, 'click').mockImplementation(() => undefined);
+    featureFlags.autoClaimDrops = true;
+    window.history.replaceState({}, '', '/drops/campaigns');
+    const services = bootstrap.initSiteLifecycle();
+    try {
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(bootstrap.initSiteLifecycle()).toBe(services);
+      expect(click).toHaveBeenCalledTimes(1);
+      services.lifecycle.dispose();
+      const replacement = button.cloneNode(true) as HTMLButtonElement;
+      const replacementClick = vi.spyOn(replacement, 'click').mockImplementation(() => undefined);
+      button.replaceWith(replacement);
+      await Promise.resolve();
+      expect(replacementClick).not.toHaveBeenCalled();
+    } finally {
+      services.lifecycle.dispose();
+      featureFlags.autoClaimDrops = previousFlag;
+      click.mockRestore();
+      document.body.replaceChildren();
+      window.history.replaceState({}, '', previousHref);
+    }
+  });
+
+  it('keeps one site panel and one navbar button across channel and non-channel navigation', () => {
+    const previousBody = document.body.innerHTML;
+    const previousHref = window.location.href;
+    const navbarMarkup = `
+      <nav>
+        <div></div>
+        <div></div>
+        <div class="flex items-center gap-2"><button>avatar</button></div>
+      </nav>
+    `;
+
+    try {
+      bootstrap.initSiteLifecycle().lifecycle.dispose();
+      document.body.innerHTML = navbarMarkup;
+      const services = bootstrap.initSiteLifecycle();
+      expect(document.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
+      expect(document.querySelectorAll('.kickflow-panel')).toHaveLength(1);
+
+      window.history.replaceState({}, '', '/channel-a');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+      window.history.replaceState({}, '', '/following');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+      expect(parseChatSessionContext('/following')).toBeNull();
+      window.history.replaceState({}, '', '/channel-b');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+
+      expect(document.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
+      expect(document.querySelectorAll('.kickflow-panel')).toHaveLength(1);
+
+      window.history.replaceState({}, '', '/following');
+      window.dispatchEvent(new Event('kickflow:locationchange'));
+      services.lifecycle.dispose();
+    } finally {
+      document.body.innerHTML = previousBody;
+      window.history.replaceState({}, '', previousHref);
+    }
+  });
+});

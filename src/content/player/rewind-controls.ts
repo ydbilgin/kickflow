@@ -1,0 +1,281 @@
+import { logger } from '../shared/logger';
+import { getVideoElement } from '../shared/selectors';
+import { mountIntoControlBar } from './native-bar';
+import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
+import type { Lifecycle } from '../shared/lifecycle';
+import { subscribeLang, t } from '../shared/i18n';
+
+const CONTROLS_ID = 'kickflow-rewind-controls';
+const STEP_SECONDS = 10;
+const MAX_CROSS_RANGE_GAP_SECONDS = 30;
+
+// A media-time boundary (from `seekable`/`buffered`) is only trustworthy if finite and within
+// a sane range. Kick's HLS `seekable.end` can report a sentinel (~2^30 ≈ 34 years) or Infinity
+// during rebuffering (same root cause as live-catchup.ts's "-1073741819sn" bug). Feeding that
+// into a seek target would catapult currentTime to garbage and break playback — the "CANLI"
+// (go-live) button was exposed to exactly this. 24h exceeds any real Kick stream / DVR window.
+const MAX_REASONABLE_MEDIA_SECONDS = 24 * 60 * 60;
+
+function saneBoundary(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 && value <= MAX_REASONABLE_MEDIA_SECONDS ? value : null;
+}
+
+interface MediaRange {
+  start: number;
+  end: number;
+}
+
+function saneRanges(ranges: TimeRanges): MediaRange[] {
+  const result: MediaRange[] = [];
+  for (let index = 0; index < ranges.length; index++) {
+    const start = saneBoundary(ranges.start(index));
+    const end = saneBoundary(ranges.end(index));
+    if (start === null || end === null || end < start) continue;
+    result.push({ start, end });
+  }
+  return result;
+}
+
+function firstFiniteStartWithFiniteEnd(ranges: TimeRanges): number | null {
+  for (let index = 0; index < ranges.length; index++) {
+    const start = saneBoundary(ranges.start(index));
+    const end = saneBoundary(ranges.end(index));
+    if (start !== null && end !== null) return start;
+  }
+  return null;
+}
+
+/** Live edge = the furthest BUFFERED (actually playable) position — mirrors Mo'Kick's player,
+ * which clamps forward/"go live" to `buffered.end`, never `seekable.end`. Always a sane finite
+ * value near currentTime, so it is immune to the bogus `seekable.end` sentinel. */
+export function liveEdge(video: HTMLVideoElement): number | null {
+  const ranges = saneRanges(video.buffered);
+  return ranges.length > 0 ? ranges[ranges.length - 1].end : null;
+}
+
+/** How far BACK a seek may go. Kick reports `seekable.start(0) === 0` even when that is
+ * only a bogus sentinel below the playable buffer; `buffered.start(0)` is the real floor
+ * that keeps rewind targets inside media the player can actually decode. */
+export function seekFloor(video: HTMLVideoElement): number {
+  const bufferedStart = saneRanges(video.buffered)[0]?.start;
+  if (bufferedStart !== undefined) return bufferedStart;
+
+  const invertedBufferedStart = firstFiniteStartWithFiniteEnd(video.buffered);
+  if (invertedBufferedStart !== null) return invertedBufferedStart;
+
+  const seekableStart = saneRanges(video.seekable)[0]?.start;
+  if (seekableStart !== undefined) return seekableStart;
+
+  return 0;
+}
+
+/** Shared by this file's inline buttons and rewind-hotkeys.ts's arrow keys. Clamps to
+ * [seekFloor, liveEdge]: both ends prefer the playable buffered range, avoiding Kick's
+ * bogus `seekable` sentinels so seeks can't catapult outside media the player can decode.
+ *
+ * Displacement invariant (added 2026-07-16): a single ±STEP_SECONDS step must never move the
+ * playhead by more than |delta| + one cross-range gap-snap. A larger jump means the media is in
+ * a mid-reload transient — the playhead sits outside every buffered range while `seekable` is
+ * momentarily unusable — where the buffered-fallback branches below would otherwise return a far
+ * boundary (`first.start` / `last.end` / `previous.end` = broadcast start), catapulting a rewind
+ * forward to near-live or back to the stream's beginning. In that state the honest action is to
+ * stay put; the user presses again once the picture resumes. This bounds every catapult while
+ * leaving the owner-requested deep-DVR rewind (the `dvr` seekable branch, whose result is always
+ * within [dvr.start, currentTime] ⇒ displacement ≤ |delta|) completely untouched. */
+export function clampSeekTarget(video: HTMLVideoElement, delta: number): number {
+  const result = computeSeekTarget(video, delta);
+  // Direction invariant: a rewind may never move the playhead FORWARD, a forward-seek never
+  // BACKWARD. A wrong-direction result is always a transient artifact (playhead momentarily
+  // outside the buffered range) — e.g. a −10 that would otherwise clamp up to a near-live buffer
+  // start, which the owner sees as "canlıya atlıyor". No-op rather than re-interpret the state;
+  // the user presses again once the picture resumes. Kills the forward catapult at ANY magnitude,
+  // including the ≤(|delta|+gap) slip-through the magnitude guard below cannot see.
+  if (delta < 0 && result > video.currentTime) return video.currentTime;
+  if (delta > 0 && result < video.currentTime) return video.currentTime;
+  // Magnitude invariant (H1): a ±STEP step may never teleport — covers the BACKWARD catapult
+  // (rewind to a stale-preload range near t≈2), which is direction-clean but displacement-huge.
+  if (Math.abs(result - video.currentTime) > Math.abs(delta) + MAX_CROSS_RANGE_GAP_SECONDS) {
+    logger.debug('rewind-controls: suppressed transient catapult seek', {
+      currentTime: video.currentTime,
+      wouldSeekTo: result,
+      delta,
+    });
+    return video.currentTime;
+  }
+  return result;
+}
+
+function computeSeekTarget(video: HTMLVideoElement, delta: number): number {
+  const target = video.currentTime + delta;
+
+  // Prefer the SEEKABLE range as the clamp bounds. Measured on Kick's current player
+  // (2026-07-10): `seekable` is the real DVR window (seekable.end ≈ live edge, accurate) and
+  // the server re-loads ANY seekable position even if not yet buffered — so ⏪10 must be able
+  // to cross PAST buffered.start into the DVR window (owner request). `saneRanges` filters the
+  // old 2^30 sentinel, so a player that still reports a bogus `seekable` falls through to the
+  // buffered-range logic below (the pre-2026-07-10 safe behavior — no catapult).
+  const seekableRanges = saneRanges(video.seekable);
+  // A fresh live join may initially expose only a short (including exactly 10s) DVR window.
+  // It remains authoritative when it contains the current playhead, and seeking its start asks
+  // Kick to reload that unbuffered DVR position. Requiring a window wider than one step made
+  // both the pill and Left-arrow fall back to buffered.start without rewinding. 2026-10-16.
+  // Requiring the current playhead to be in the range rejects stale preload ranges elsewhere.
+  const dvr = seekableRanges.find(
+    (range) => video.currentTime >= range.start && video.currentTime <= range.end,
+  );
+  if (dvr) {
+    return Math.min(Math.max(target, dvr.start), dvr.end);
+  }
+
+  const bufferedRanges = saneRanges(video.buffered);
+  if (bufferedRanges.length > 0) {
+    for (const range of bufferedRanges) {
+      if (target >= range.start && target <= range.end) return target;
+    }
+
+    const first = bufferedRanges[0];
+    const last = bufferedRanges[bufferedRanges.length - 1];
+    // Floor a below-buffer rewind at buffered.start. A regime-B attempt to reach BELOW this into
+    // Kick's server-retained pre-join window (edge-anchored floor) was implemented and REVERTED
+    // 2026-07-16: owner live-tested and a currentTime write below the join point does NOT fetch
+    // pre-join content — it clamps to the join point (unlike Kick's native seek-bar, which reaches
+    // it by some other mechanism). Clamp this currentTime write to buffered content. 2026-10-16.
+    if (target < first.start) return first.start;
+    if (target > last.end) return last.end;
+
+    const currentRange = bufferedRanges.find(
+      (range) => video.currentTime >= range.start && video.currentTime <= range.end,
+    );
+    for (let index = 1; index < bufferedRanges.length; index++) {
+      const previous = bufferedRanges[index - 1];
+      const next = bufferedRanges[index];
+      if (target <= previous.end || target >= next.start) continue;
+      // Joining a live stream can briefly leave a tiny preload range near zero alongside the
+      // actual DVR range. A short seek into that large discontinuity must stay at the edge of
+      // the range being played, never jump across the stale range to the broadcast start.
+      if (next.start - previous.end > MAX_CROSS_RANGE_GAP_SECONDS) {
+        if (delta < 0 && currentRange === next) return next.start;
+        if (delta > 0 && currentRange === previous) return previous.end;
+      }
+      if (delta < 0) return previous.end;
+      if (delta > 0) return next.start;
+      return target - previous.end <= next.start - target ? previous.end : next.start;
+    }
+  }
+
+  const floor = seekFloor(video);
+  const edge = liveEdge(video) ?? target;
+  const ceil = Math.max(floor, edge); // guard against inversion if edge somehow < floor
+  return Math.min(Math.max(target, floor), ceil);
+}
+
+function seekBy(video: HTMLVideoElement, delta: number): void {
+  try {
+    const target = clampSeekTarget(video, delta);
+    video.currentTime = target;
+    logger.debug('rewind-controls: seek', delta, '-> currentTime', target);
+  } catch (error) {
+    logger.warn('rewind-controls: seek failed', error);
+  }
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+// Solid double triangles rather than stroked chevrons: every icon Kick draws in this bar is
+// `[&_svg]:fill-current`, so an outline shape is the single most visible tell that a control
+// is not native.
+const REWIND_PATHS = ['M11.5 5.4v13.2L2.8 12z', 'M21.2 5.4v13.2L12.5 12z'];
+const FORWARD_PATHS = ['M2.8 5.4v13.2L11.5 12z', 'M12.5 5.4v13.2L21.2 12z'];
+
+function createSeekIcon(paths: string[]): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const pathData of paths) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', pathData);
+    svg.append(path);
+  }
+  return svg;
+}
+
+function createStepLabel(): HTMLSpanElement {
+  const label = document.createElement('span');
+  label.className = 'kickflow-player-btn__step';
+  label.textContent = String(STEP_SECONDS);
+  return label;
+}
+
+/** Injected inline into Kick's native control bar, right after the LIVE button
+ * (MoKick-style) — deliberately NOT a floating overlay. A floating overlay was tried
+ * first and rejected: it sits outside the bar Kick itself re-renders and manages (e.g.
+ * on fullscreen toggle), so it either gets left behind/misplaced or has to duplicate
+ * Kick's own re-render handling anyway — inline injection into the real bar (via
+ * native-bar.ts) sidesteps that entirely and gets Kick's own hover/fullscreen behavior
+ * "for free" since the buttons are genuine bar children.
+ *
+ * Seeks via #video-player's own currentTime, clamped to [seekFloor, liveEdge] — confirmed
+ * live to work on Kick (seeking -30s kept the stream playing). Both clamp ends come from
+ * buffered, NOT seekable: Kick's seekable can report a bogus sentinel (~2^30) that would
+ * otherwise catapult the seek. No need to touch Kick's own (unconfirmed) native seek-bar
+ * DOM at all. The go-live button lives in live-catchup.ts (merged with the behind-live
+ * indicator); this group is only the ⏪10|10⏩ seek pill. */
+export function initRewindControls(lifecycle: Lifecycle): void {
+  const video = getVideoElement();
+  if (!video) {
+    logger.debug('rewind-controls: #video-player not found, skipping');
+    return;
+  }
+
+  let rewindButton: HTMLButtonElement | null = null;
+  let forwardButton: HTMLButtonElement | null = null;
+  const updateHotkeyTitles = (): void => {
+    const rewindHotkey = getHotkeyBinding('rewind');
+    const forwardHotkey = getHotkeyBinding('forward');
+    if (rewindButton) {
+      rewindButton.title = `${t('player.seek_back_title', { n: STEP_SECONDS })}${rewindHotkey.enabled ? ` (${formatHotkeyKey(rewindHotkey.key)})` : ''}`;
+      rewindButton.setAttribute('aria-label', t('player.seek_back_aria', { n: STEP_SECONDS }));
+    }
+    if (forwardButton) {
+      forwardButton.title = `${t('player.seek_forward_title', { n: STEP_SECONDS })}${forwardHotkey.enabled ? ` (${formatHotkeyKey(forwardHotkey.key)})` : ''}`;
+      forwardButton.setAttribute('aria-label', t('player.seek_forward_aria', { n: STEP_SECONDS }));
+    }
+  };
+  lifecycle.add(subscribeHotkeyBindings(updateHotkeyTitles));
+  lifecycle.add(subscribeLang(updateHotkeyTitles));
+
+  mountIntoControlBar(lifecycle, CONTROLS_ID, () => {
+    const group = document.createElement('span');
+    group.className = 'kickflow-player-group';
+
+    const rewind = document.createElement('button');
+    rewind.type = 'button';
+    rewind.className = 'kickflow-player-btn';
+    rewind.append(createSeekIcon(REWIND_PATHS), createStepLabel());
+
+    const forward = document.createElement('button');
+    forward.type = 'button';
+    forward.className = 'kickflow-player-btn';
+    forward.append(createStepLabel(), createSeekIcon(FORWARD_PATHS));
+    rewindButton = rewind;
+    forwardButton = forward;
+    updateHotkeyTitles();
+
+    // Attached directly to the button (not routed through Lifecycle): these buttons get
+    // rebuilt by native-bar.ts's ensure() whenever Kick's control bar re-renders and drops
+    // them, and a Lifecycle-routed listener would keep the OLD button + closure alive
+    // (referenced by a disposer) until the whole session tears down, accumulating across
+    // repeated re-renders. A plain listener is GC'd along with the button node itself the
+    // moment it's removed (by Kick or by us on remount/teardown) — nothing accumulates.
+    rewind.addEventListener('click', () => {
+      const current = getVideoElement();
+      if (current) seekBy(current, -STEP_SECONDS);
+    });
+    forward.addEventListener('click', () => {
+      const current = getVideoElement();
+      if (current) seekBy(current, STEP_SECONDS);
+    });
+
+    group.append(rewind, forward);
+    return group;
+  });
+}
