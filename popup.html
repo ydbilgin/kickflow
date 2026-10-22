@@ -85,6 +85,8 @@
       position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
     }
     .section[data-panel] > .mode-card { margin-bottom: 0; border-top: 0; }
+    .section[data-panel] > .mode-card + .control-list { border-top: 0; }
+    .toggles > .mode-card { margin-bottom: 4px; }
     .summary { margin: 0 0 16px; }
     .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .sum {
@@ -104,7 +106,7 @@
     .control-list { border-top: 1px solid var(--line); }
     .row {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      min-height: 40px; padding: 7px 0; border-bottom: 1px solid var(--line-soft);
+      min-height: 37px; padding: 6px 0; border-bottom: 1px solid var(--line-soft);
       cursor: pointer;
     }
     .row:hover { background: var(--surface); }
@@ -129,9 +131,9 @@
     .hotkey-row > span { overflow: hidden; color: oklch(0.90 0.007 150); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
     .hotkey-enabled { transform: scale(.88); transform-origin: left center; }
     .key-chip {
-      min-width: 34px; padding: 4px 7px; border: 1px solid oklch(0.86 0.24 145 / .32); border-radius: 6px;
+      min-width: 40px; padding: 5px 9px; border: 1px solid oklch(0.86 0.24 145 / .32); border-radius: 6px;
       background: oklch(0.86 0.24 145 / .08); color: var(--accent);
-      font: 700 10px/1.2 ui-monospace, 'SFMono-Regular', Consolas, monospace; text-align: center;
+      font: 700 12px/1.2 ui-monospace, 'SFMono-Regular', Consolas, monospace; text-align: center;
     }
     .hotkey-change, .hotkey-reset {
       appearance: none; height: 28px; padding: 0 8px; border: 1px solid oklch(0.35 0.01 150); border-radius: 6px;

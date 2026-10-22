@@ -103,6 +103,17 @@ describe('popup layout refresh', () => {
     expect(text('#reason')).toBe('KickFlow active · Kick chat');
   });
 
+  it('K5: one divider under the hover setting and larger shortcut key chips', async () => {
+    await openPopup('en');
+    const list = document.querySelector<HTMLElement>('#panel-chat > .mode-card + .control-list');
+    expect(list).not.toBeNull();
+    expect(getComputedStyle(list!).borderTopWidth === '0px' || getComputedStyle(list!).borderTopStyle === 'none'
+      || getComputedStyle(list!).borderTop === '0px').toBe(true);
+    const chip = document.getElementById('hk-rewind-key') as HTMLElement;
+    expect(getComputedStyle(chip).minWidth).toBe('40px');
+    expect(getComputedStyle(chip).fontSize).toBe('12px');
+  });
+
   it('K1: shows one of four tabs at a time and moves between them by click and arrow keys', async () => {
     await openPopup('tr');
     const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
