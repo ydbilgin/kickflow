@@ -1,0 +1,188 @@
+<!doctype html>
+<!--
+  KickFlow demo film. Rendered to ../demo.gif by render.mjs (see README-demo.md).
+  Change words, chat lines and timing in the TIMELINE block of the script below. The chat rows and player bar
+  are drawn here in KickFlow's own style (see docs/media/chat-context.png and overview.png, which come from
+  the real renderer); the popup is the real popup picture docs/media/popup-en.png. All names are invented.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #0b0d0e; --card: #15181a; --line: #262b2e; --text: #eef1f0; --muted: #9aa3a0; --kick: #53fc18;
+    --amber: #f2b552; --pill: #5a4a16; --timeout: #7a4a1c; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 800px; height: 450px; overflow: hidden; background: var(--bg); }
+  body { font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text); position: relative; }
+  .layer { position: absolute; inset: 0; }
+  header { position: absolute; left: 22px; top: 14px; display: flex; align-items: baseline; gap: 12px; }
+  header b { font-size: 24px; font-weight: 700; color: var(--kick); }
+  header span { font-size: 14px; color: var(--muted); }
+  #player { position: absolute; left: 20px; top: 58px; width: 470px; height: 264px; border-radius: 10px; overflow: hidden;
+    background: linear-gradient(160deg, #12303f, #0d1d27 60%, #0a1218); }
+  #player svg.waves { position: absolute; inset: 0; }
+  #player .title { position: absolute; left: 22px; top: 18px; font-size: 22px; color: #dfe9ee; }
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 52px; background: linear-gradient(transparent, #000c 40%); }
+  #track { position: absolute; left: 0; right: 0; bottom: 40px; height: 4px; background: #ffffff22; }
+  #fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--kick); }
+  #knob { position: absolute; top: -4px; width: 12px; height: 12px; border-radius: 50%; background: var(--kick); }
+  .ctl { position: absolute; bottom: 10px; font-size: 14px; font-weight: 600; color: #fff; white-space: nowrap; }
+  .ctl.btn { padding: 2px 6px; border-radius: 5px; }
+  .ctl.btn.hot { background: #ffffff2e; }
+  #behind { color: var(--amber); }
+  #chat { position: absolute; left: 504px; top: 58px; width: 278px; height: 374px; border-radius: 10px; background: var(--card);
+    border: 1px solid var(--line); overflow: hidden; }
+  #chat h4 { font-size: 14px; font-weight: 600; padding: 12px 14px 6px; }
+  #rows { position: absolute; left: 0; right: 0; bottom: 8px; padding: 0 10px; }
+  .row { font-size: 13.5px; line-height: 1.45; padding: 5px 6px; border-radius: 7px; margin-top: 4px; }
+  .row .u { font-weight: 700; }
+  .row.mention { border: 1.5px solid #e9b949; background: #2a2414; }
+  .row.gone .t { text-decoration: line-through; color: var(--muted); }
+  .row.gone .u { opacity: .7; }
+  .pill { display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .4px; border-radius: 8px; padding: 1px 7px; margin-left: 4px; vertical-align: 1px; }
+  .pill.del { background: var(--pill); color: #e3d9a8; }
+  .pill.to { background: var(--timeout); color: #f3c99b; }
+  .by { font-size: 11px; color: var(--muted); }
+  .caption { position: absolute; left: 22px; top: 338px; width: 466px; font-size: 22px; font-weight: 600; line-height: 1.25; }
+  .caption small { display: block; font-size: 14.5px; font-weight: 400; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+  #cursor { position: absolute; left: 0; top: 0; width: 20px; height: 27px; filter: drop-shadow(0 1px 2px #000a); }
+  #popupShot { position: absolute; left: 56px; top: 20px; width: 372px; height: 410px; overflow: hidden; border-radius: 10px;
+    border: 1px solid var(--line); box-shadow: 0 10px 30px #000a; }
+  #popupShot img { width: 372px; }
+  #popupNote { position: absolute; left: 468px; top: 120px; width: 300px; font-size: 17px; line-height: 1.5; color: var(--muted); }
+  #popupNote h3 { font-size: 24px; color: var(--text); font-weight: 600; margin-bottom: 12px; line-height: 1.25; }
+  #popupNote b { color: var(--kick); font-weight: 600; }
+  #end { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  #end img { width: 76px; height: 76px; border-radius: 14px; }
+  #end h1 { font-size: 34px; font-weight: 700; color: var(--kick); }
+  #end p { font-size: 17px; color: var(--muted); }
+  #end code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 16px; color: var(--kick); background: #12200c; padding: 5px 12px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="layer" id="stage">
+  <header><b>KickFlow</b><span>chat context and player controls for Kick, in Chrome</span></header>
+  <div id="player">
+    <svg class="waves" viewBox="0 0 470 264" preserveAspectRatio="none"><g id="waves" fill="none" stroke="#6fb6c4" stroke-opacity=".45" stroke-width="1.2"></g></svg>
+    <div class="title">Synthetic stream</div>
+    <div id="bar">
+      <div id="track"><div id="fill"></div><div id="knob"></div></div>
+      <span class="ctl" style="left:14px">&#10074;&#10074;</span>
+      <span class="ctl" id="clock" style="left:46px">04:51:14</span>
+      <span class="ctl btn" id="live" style="left:122px">LIVE</span>
+      <span class="ctl btn" id="rew" style="left:168px">&#9664;&#9664; 10</span>
+      <span class="ctl btn" id="fwd" style="left:222px">10 &#9654;&#9654;</span>
+      <span class="ctl" id="behind" style="left:282px"></span>
+      <span class="ctl" style="left:372px">1x</span>
+      <svg class="ctl" style="left:414px; bottom:12px" width="20" height="16" viewBox="0 0 20 16"><path d="M2 4h4l2-3h4l2 3h4v11H2z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><circle cx="10" cy="9" r="3.2" fill="none" stroke="#fff" stroke-width="1.8"/></svg>
+    </div>
+  </div>
+  <div id="chat"><h4>Chat</h4><div id="rows"></div></div>
+  <div class="caption" id="cap"></div>
+  <svg id="cursor" viewBox="0 0 22 30"><path d="M2 2 L2 24 L8 18.5 L12 28 L16 26.3 L12 17 L20 17 Z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg>
+</div>
+<div class="layer" id="popup">
+  <div id="popupShot"><img src="../media/popup-en.png" alt=""></div>
+  <div id="popupNote"><h3>Switch any feature in the popup</h3>Session numbers at a glance, four tabs: <b>Chat</b>, <b>Player</b>, <b>Rewards</b>, <b>Shortcuts</b>. English and Turkish.</div>
+</div>
+<div class="layer" id="end">
+  <img src="../../icons/icon-128.png" alt="">
+  <h1>KickFlow</h1>
+  <p>Free Chrome extension &middot; MIT licence</p>
+  <code>github.com/ydbilgin/kickflow</code>
+</div>
+
+<script>
+// ---------------------------------------------------------------- TIMELINE (edit here)
+window.DEMO = { width: 800, height: 450, fps: 12, duration: 15 };
+
+// Captions: [start, end, title, small line]. Times in seconds.
+const CAPTIONS = [
+  [0.2, 3.9, 'Removed messages stay readable', 'When a moderator deletes a message, KickFlow keeps the text you already saw and marks it.'],
+  [3.9, 6.6, 'Timeouts and bans get a label, not a blank', 'The context stays, so the chat still makes sense.'],
+  [6.6, 10.4, 'Missed something? Go back 10 seconds', 'Then one click returns to live. Keyboard: Left, Right and L.'],
+];
+// Chat rows: [appears at, user, colour, text, extra]. extra: {mention}, {deleted: t, by}, {timeout: t, by}.
+const ROWS = [
+  [0, 'user1', '#6ec6ff', 'Welcome in, starting soon'],
+  [0, 'user2', '#c79bff', '@user1 the rewind buttons are handy', { mention: true }],
+  [0, 'user3', '#53fc18', 'Please keep it friendly'],
+  [0, 'user4', '#f0a35e', 'this one is about to be removed', { deleted: 2.0, by: 'user3' }],
+  [0.8, 'user5', '#5fc8d4', 'the original context stays here', { timeout: 4.4, by: 'user3' }],
+  [3.0, 'user6', '#ffd75e', 'wait, what did they say?'],
+  [5.6, 'user7', '#ff8fb1', 'still readable, nice'],
+];
+// Player: clicks on the rewind button, then on LIVE. Seconds behind live after each click.
+const CLICKS = [[7.4, 'rew', 10], [8.3, 'rew', 20], [9.5, 'live', 0]];
+const CURSOR = [[6.6, 330, 300], [7.2, 204, 312], [8.6, 204, 312], [9.3, 140, 312], [10.4, 160, 300]];
+const BEATS = { stage: [0, 10.4], popup: [10.4, 13.3], end: [13.3, 15] };
+// ---------------------------------------------------------------- end of TIMELINE
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = (p) => (p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2);
+const on = (t, [a, b], fade = 0.25) => clamp(Math.min((t - a) / fade, (b - t) / fade));
+
+function pathAt(points, t) {
+  if (t <= points[0][0]) return points[0].slice(1);
+  for (let i = 1; i < points.length; i += 1) {
+    const [t1, x1, y1] = points[i]; const [t0, x0, y0] = points[i - 1];
+    if (t <= t1) { const p = ease((t - t0) / (t1 - t0)); return [x0 + (x1 - x0) * p, y0 + (y1 - y0) * p]; }
+  }
+  return points[points.length - 1].slice(1);
+}
+
+function renderChat(t) {
+  $('rows').innerHTML = ROWS.filter(([at]) => t >= at).map(([at, user, colour, text, extra = {}]) => {
+    const deleted = extra.deleted !== undefined && t >= extra.deleted;
+    const timedOut = extra.timeout !== undefined && t >= extra.timeout;
+    const gone = deleted || timedOut;
+    const pill = deleted ? '<span class="pill del">DELETED</span>' : timedOut ? '<span class="pill to">TIMEOUT 10M</span>' : '';
+    const by = gone ? `<div class="by">&middot; ${extra.by}</div>` : '';
+    const fresh = clamp((t - at) / 0.3);
+    const cls = ['row', extra.mention ? 'mention' : '', gone ? 'gone' : ''].join(' ');
+    return `<div class="${cls}" style="opacity:${at === 0 ? 1 : fresh}"><span class="u" style="color:${colour}">${user}:</span> <span class="t">${text}</span> ${pill}${by}</div>`;
+  }).join('');
+}
+
+function renderPlayer(t) {
+  const waves = [];
+  for (let i = 0; i < 9; i += 1) {
+    const phase = t * 0.9 + i * 0.35; const amp = 18 + i * 7;
+    let d = '';
+    for (let x = 0; x <= 470; x += 10) {
+      const y = 150 + Math.sin(x / 70 + phase) * amp * Math.sin(x / 470 * Math.PI);
+      d += `${x === 0 ? 'M' : 'L'}${x} ${y.toFixed(1)}`;
+    }
+    waves.push(`<path d="${d}"/>`);
+  }
+  $('waves').innerHTML = waves.join('');
+  let behind = 0; let hot = null;
+  for (const [at, button, value] of CLICKS) { if (t >= at) behind = value; if (t >= at && t < at + 0.35) hot = button; }
+  $('rew').classList.toggle('hot', hot === 'rew');
+  $('live').classList.toggle('hot', hot === 'live');
+  $('behind').textContent = behind ? `● LIVE -${behind}s` : '';
+  $('live').style.color = behind ? '#fff' : 'var(--kick)';
+  const width = 470 - behind * 5;
+  $('fill').style.width = `${width}px`;
+  $('knob').style.left = `${width - 6}px`;
+  $('knob').style.opacity = behind ? 1 : 0;
+  const secs = 4 * 3600 + 51 * 60 + 14 + Math.floor(t) - behind;
+  $('clock').textContent = new Date(secs * 1000).toISOString().slice(11, 19);
+}
+
+window.renderAt = (t) => {
+  for (const [id, span] of Object.entries(BEATS)) $(id).style.opacity = on(t, span, span[0] === 0 ? 0.01 : 0.3);
+  renderChat(t);
+  renderPlayer(t);
+  const [x, y] = pathAt(CURSOR, t);
+  $('cursor').style.transform = `translate(${x}px, ${y}px)`;
+  $('cursor').style.opacity = on(t, [6.6, 10.4], 0.2);
+  const cap = CAPTIONS.find(([a, b]) => t >= a && t < b);
+  $('cap').innerHTML = cap ? `${cap[2]}<small>${cap[3]}</small>` : '';
+  $('cap').style.opacity = cap ? on(t, [cap[0], cap[1]], 0.2) : 0;
+};
+window.renderAt(0);
+</script>
+</body>
+</html>
