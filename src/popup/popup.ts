@@ -184,7 +184,9 @@ function render(res: StatusResponse | null, error?: string): void {
   $('toggles').style.display = '';
   setDot(res.active ? 'active' : (res.slug ? 'native' : 'off'));
   $('reason').textContent = activeReasonNotice()
-    ?? (res.active ? t('popup.active', { mode: res.flags.chatMode }) : res.reason.split('\u2014').join('·'));
+    ?? (res.active
+      ? t('popup.active', { mode: t(res.flags.chatMode === 'own' ? 'popup.mode_own' : 'popup.mode_native') })
+      :res.reason.split('\u2014').join('·'));
 
   setStatValue('slug', res.slug);
   setStatValue('chatroomId', res.chatroomId);

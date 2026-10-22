@@ -547,10 +547,10 @@ describe('RemovedMessagesPanel', () => {
       expect(requiredStatValue(general, 'Korunmuş').textContent).toBe('7');
       expect(requiredStatValue(general, 'Ban').textContent).toBe('4');
       expect(requiredStatValue(general, 'Silme').textContent).toBe('3');
-      expect(requiredStatValue(general, 'Ghost inline').textContent).toBe('2');
-      expect(requiredStatValue(general, 'Ghost bekleyen').textContent).toBe('5');
-      expect(requiredStatValue(general, 'Ghost evict').textContent).toBe('9');
-      const missingChatroom = requiredStatValue(general, 'Chatroom ID');
+      expect(requiredStatValue(general, 'Ghost (satır içi)').textContent).toBe('2');
+      expect(requiredStatValue(general, 'Ghost (bekleyen)').textContent).toBe('5');
+      expect(requiredStatValue(general, 'Ghost (atılan)').textContent).toBe('9');
+      const missingChatroom = requiredStatValue(general, 'Sohbet odası no.');
       expect(missingChatroom.textContent).toBe('—');
       expect(missingChatroom.classList.contains('kickflow-panel__stat-value--missing')).toBe(true);
       lifecycle.dispose();
@@ -710,7 +710,7 @@ describe('RemovedMessagesPanel', () => {
 
         const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
         const general = openDashboardSection(panel, 'general').pane;
-        const modeSelect = requiredSettingsControl<HTMLSelectElement>(general, 'Chat modu');
+        const modeSelect = requiredSettingsControl<HTMLSelectElement>(general, 'Sohbet modu');
         const chat = openDashboardSection(panel, 'chat').pane;
         const deletedCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Silinenleri göster');
         const banCheckbox = requiredSettingsControl<HTMLInputElement>(chat, 'Ban satır-içi');
@@ -999,7 +999,7 @@ describe('RemovedMessagesPanel', () => {
 
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
       const general = openDashboardSection(panel, 'general').pane;
-      const select = requiredSettingsControl<HTMLSelectElement>(general, 'Chat modu');
+      const select = requiredSettingsControl<HTMLSelectElement>(general, 'Sohbet modu');
 
       let received: { key: string; value: unknown } | null = null;
       const listener = (event: Event) => {

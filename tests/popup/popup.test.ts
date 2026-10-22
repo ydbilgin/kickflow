@@ -118,7 +118,7 @@ describe('popup event display toggles', () => {
     }
     await vi.advanceTimersByTimeAsync(2000);
     await flushAsyncWork();
-    expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · own chat');
+    expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · KickFlow listesi');
   });
 
   it('clears the failed-save text as soon as a later change saves', async () => {
@@ -130,7 +130,7 @@ describe('popup event display toggles', () => {
     await vi.waitFor(() => expect(document.getElementById('reason')?.textContent).toBe('Ayar bu sekmede değişti ancak kaydedilemedi.'));
     sendMessage.mockImplementation(async (_id, message) => message.type === 'kickflow:getStatus' ? statusResponse : { ok: true });
     checkbox.dispatchEvent(new Event('change'));
-    await vi.waitFor(() => expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · own chat'));
+    await vi.waitFor(() => expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · KickFlow listesi'));
   });
 
   it('ignores an older failed save after the latest change succeeds', async () => {
@@ -151,7 +151,7 @@ describe('popup event display toggles', () => {
     await flushAsyncWork();
     finishOld({ ok: false });
     await flushAsyncWork();
-    expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · own chat');
+    expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · KickFlow listesi');
     expect(checkbox.checked).toBe(false);
   });
 

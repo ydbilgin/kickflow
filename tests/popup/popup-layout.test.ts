@@ -86,6 +86,23 @@ describe('popup layout refresh', () => {
     expect(document.body.textContent).not.toMatch(/Mode A|Mod A|browser smooth/);
   });
 
+  it('K4: the Turkish popup has no English leftovers, and the status line names the chat view', async () => {
+    await openPopup('tr');
+    expect(text('#reason')).toBe('KickFlow aktif · Kick sohbeti');
+    const options = Array.from((document.getElementById('t-chat-mode') as HTMLSelectElement).options, (option) => option.textContent);
+    expect(options).toEqual(['Kick sohbeti', 'KickFlow listesi']);
+    const all = document.body.textContent ?? '';
+    for (const leftover of ['native', 'Native', 'Current:', 'Chatroom', 'Ghost inline', 'Ghost evict', 'Hover', 'Status / Statistics']) {
+      expect(all, leftover).not.toContain(leftover);
+    }
+    expect(text('#pusher')).toBe('bağlı');
+  });
+
+  it('K4: the English status line names the chat view in words', async () => {
+    await openPopup('en');
+    expect(text('#reason')).toBe('KickFlow active · Kick chat');
+  });
+
   it('K1: shows one of four tabs at a time and moves between them by click and arrow keys', async () => {
     await openPopup('tr');
     const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
