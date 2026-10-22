@@ -77,6 +77,15 @@ describe('popup layout refresh', () => {
     expect(document.querySelector('.section #t-debug')).toBeNull();
   });
 
+  it('K3: names the hover scrolling setting and its two choices in plain words', async () => {
+    await openPopup('tr');
+    expect(text('.hover-follow-copy strong')).toBe('İmleç altındaki kaydırma');
+    const options = Array.from((document.getElementById('t-hover-follow-mode') as HTMLSelectElement).options,
+      (option) => [option.value, option.textContent]);
+    expect(options).toEqual([['browser-smooth', 'Yumuşak'], ['instant', 'Anında']]);
+    expect(document.body.textContent).not.toMatch(/Mode A|Mod A|browser smooth/);
+  });
+
   it('K1: shows one of four tabs at a time and moves between them by click and arrow keys', async () => {
     await openPopup('tr');
     const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));

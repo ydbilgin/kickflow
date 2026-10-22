@@ -200,8 +200,8 @@ describe('popup event display toggles', () => {
     expect(select.value).toBe('browser-smooth');
     expect(Array.from(select.options, (option) => option.value)).toEqual(['browser-smooth', 'instant']);
     expect(Array.from(select.options, (option) => option.textContent)).toEqual([
-      'Current: browser smooth',
-      'Instant: no animation',
+      'Yumuşak',
+      'Anında',
     ]);
 
     sendMessage.mockClear();
