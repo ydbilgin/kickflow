@@ -57,7 +57,7 @@ The manifest requests no background worker, optional permissions, or separate ho
 
 ## Privacy
 
-I include no telemetry, analytics, advertising, or remote collection service. Chat messages, moderation evidence, and the searchable archive stay in memory for the channel session. The archive is bounded to 30,000 messages, three hours of retention, and 500 messages per person; results display up to 100 matches. This is not a permanent chat backup.
+I include no telemetry, analytics, advertising, or remote collection service. KickFlow can hand short diagnostic codes (for example `quality-lock-gave-up`) to a separate, optional "Extension Helper" extension on the same computer; a report holds only the code, its level and the page origin such as `https://kick.com`, never message text, page content or account data. Without that helper installed, the attempt simply fails and nothing is sent anywhere. Chat messages, moderation evidence, and the searchable archive stay in memory for the channel session. The archive is bounded to 30,000 messages, three hours of retention, and 500 messages per person; results display up to 100 matches. This is not a permanent chat backup.
 
 Preferences are saved through `chrome.storage.local`. The caption guard also changes Kick's caption preference in the site's local storage. The layout watchdog can keep a bounded local diagnostic record of the page URL, timestamp, layout measurements, and element geometry in site local storage; it is not uploaded. Saved screenshots go to the browser's download destination. Removing the extension clears its extension storage; site local storage is managed separately through Chrome's site-data controls.
 

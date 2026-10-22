@@ -29,7 +29,7 @@
     },
     {
       "matches": ["https://kick.com/*"],
-      "js": ["dist/content.js"],
+      "js": ["dist/extension-helper.js", "dist/content.js"],
       "run_at": "document_idle"
     },
     {
