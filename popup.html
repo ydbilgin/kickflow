@@ -56,10 +56,8 @@
       margin: 0 0 8px; color: oklch(0.80 0.01 150); font-size: 12px; font-weight: 700; letter-spacing: .01em;
     }
     .section-intro { margin: 0 0 10px; color: var(--muted); font-size: 10px; line-height: 1.45; }
-    .status-card { border-top: 1px solid var(--line); }
     #reason { min-height: 17px; margin: 11px 0 13px; color: oklch(0.75 0.01 150); font-size: 10.5px; }
     .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
-    .identity-grid, .counter-grid { display: contents; }
     .stat {
       min-width: 0; min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
       border-bottom: 1px solid var(--line-soft);
@@ -71,6 +69,21 @@
     }
     .stat .v.ember, .stat .v.ochre, .stat .v.green { color: var(--text); }
     .stat .v.missing { color: var(--muted); font-weight: 500; }
+    .summary { margin: 0 0 16px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .sum {
+      display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 9px 10px;
+      border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface);
+    }
+    .sum .v { color: var(--text); font-size: 17px; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1.15; }
+    .sum .v.missing { color: var(--muted); font-weight: 500; }
+    .sum .k { overflow: hidden; color: var(--muted); font-size: 9.5px; white-space: nowrap; text-overflow: ellipsis; }
+    .diagnostics { margin-top: 20px; border-top: 1px solid var(--line); }
+    .diagnostics > summary {
+      padding: 11px 0 9px; color: oklch(0.80 0.01 150); font-size: 12px; font-weight: 700; cursor: pointer; list-style-position: inside;
+    }
+    .diagnostics > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .diagnostics .control-list { margin-top: 10px; }
     .toggles { display: block; }
     .control-list { border-top: 1px solid var(--line); }
     .row {
@@ -137,31 +150,16 @@
       <select id="t-hover-follow-mode" aria-label="Hover follow"><option value="browser-smooth">Current: browser smooth</option><option value="instant">Instant: no animation</option></select>
     </div>
 
-    <section class="section">
-      <h2 class="section-title">Status / Statistics</h2>
-      <div class="status-card">
-        <div id="stats" class="stats">
-          <div class="identity-grid">
-            <div class="stat"><span class="k">Channel</span><span class="v missing" id="slug">—</span></div>
-            <div class="stat"><span class="k">Chatroom ID</span><span class="v missing" id="chatroomId">—</span></div>
-            <div class="stat"><span class="k">Pusher</span><span class="v missing" id="pusher">—</span></div>
-          </div>
-          <div class="counter-grid">
-            <div class="stat"><span class="k">Messages</span><span class="v missing" id="messages">—</span></div>
-            <div class="stat"><span class="k">Preserved</span><span class="v green missing" id="preserved">—</span></div>
-            <div class="stat"><span class="k">Bans</span><span class="v ember missing" id="banned">—</span></div>
-            <div class="stat"><span class="k">Deletions</span><span class="v ochre missing" id="deleted">—</span></div>
-            <div class="stat"><span class="k">Ghost inline</span><span class="v ember missing" id="ghostAnchored">—</span></div>
-            <div class="stat"><span class="k">Ghost pending</span><span class="v ochre missing" id="ghostPending">—</span></div>
-            <div class="stat"><span class="k">Ghost evicted</span><span class="v missing" id="ghostEvicted">—</span></div>
-            <div class="stat"><span class="k">Last ban</span><span class="v missing" id="lastBan">—</span></div>
-          </div>
-        </div>
+    <section class="summary" aria-label="This session">
+      <div id="stats" class="summary-grid">
+        <div class="sum"><span class="v missing" id="messages">—</span><span class="k">Messages seen</span></div>
+        <div class="sum"><span class="v missing" id="preserved">—</span><span class="k">Kept after removal</span></div>
+        <div class="sum"><span class="v missing" id="banned">—</span><span class="k">Kept from bans</span></div>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Chat</h2>
+      <h2 class="section-title" data-i18n="tab.chat">Chat</h2>
       <div class="control-list">
         <label class="row" for="t-deleted"><span>Show deleted messages</span><input type="checkbox" id="t-deleted" /></label>
         <label class="row" for="t-bans-inline"><span>Preserve bans inline</span><input type="checkbox" id="t-bans-inline" /></label>
@@ -171,12 +169,11 @@
         <label class="row" for="t-host-raid"><span>Host / Raid</span><input type="checkbox" id="t-host-raid" /></label>
         <label class="row" for="t-mode-changes"><span>Mode changes</span><input type="checkbox" id="t-mode-changes" /></label>
         <label class="row" for="t-chatters-badges"><span>Active chatter badges</span><input type="checkbox" id="t-chatters-badges" /></label>
-        <label class="row" for="t-debug"><span>Debug log (F12)</span><input type="checkbox" id="t-debug" /></label>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Player</h2>
+      <h2 class="section-title" data-i18n="tab.player">Player</h2>
       <div class="control-list">
         <label class="row" for="t-auto-theater"><span>Automatic theater mode</span><input type="checkbox" id="t-auto-theater" /></label>
         <label class="row" for="t-rewind-controls"><span>Seek back / forward</span><input type="checkbox" id="t-rewind-controls" /></label>
@@ -188,7 +185,7 @@
     </section>
 
     <section class="section">
-      <h2 class="section-title">Rewards</h2>
+      <h2 class="section-title" data-i18n="tab.rewards">Rewards</h2>
       <p class="section-intro" id="rewards-intro">Manage Kick Drops and daily rewards from this tab.</p>
       <div class="control-list">
         <label class="row" for="t-auto-claim-drops"><span>Auto-claim Drops</span><input type="checkbox" id="t-auto-claim-drops" /></label>
@@ -197,7 +194,7 @@
     </section>
 
     <section class="section">
-      <h2 class="section-title">Shortcuts</h2>
+      <h2 class="section-title" data-i18n="tab.shortcuts">Shortcuts</h2>
       <div class="hotkey-list">
         <div class="hotkey-row" data-hotkey-action="rewind"><input class="hotkey-enabled" type="checkbox" id="hk-rewind-enabled" aria-label="Enable 10s back shortcut" /><span>10s back</span><kbd class="key-chip" id="hk-rewind-key">←</kbd><button class="hotkey-change" id="hk-rewind-change" type="button" aria-label="Change 10s back shortcut">Change</button></div>
         <div class="hotkey-row" data-hotkey-action="forward"><input class="hotkey-enabled" type="checkbox" id="hk-forward-enabled" aria-label="Enable 10s forward shortcut" /><span>10s forward</span><kbd class="key-chip" id="hk-forward-key">→</kbd><button class="hotkey-change" id="hk-forward-change" type="button" aria-label="Change 10s forward shortcut">Change</button></div>
@@ -206,6 +203,24 @@
       </div>
       <div class="hotkey-footer"><span class="hotkey-status" id="hotkey-status" role="status" aria-live="polite"></span><button class="hotkey-reset" id="hotkey-reset" type="button">Reset to defaults</button></div>
     </section>
+
+    <details class="diagnostics" id="diagnostics">
+      <summary data-i18n="popup.diagnostics">Diagnostics</summary>
+      <p class="section-intro" data-i18n="popup.diagnostics_desc">Technical details for bug reports.</p>
+      <div class="stats">
+        <div class="stat"><span class="k">Channel</span><span class="v missing" id="slug">—</span></div>
+        <div class="stat"><span class="k">Chatroom ID</span><span class="v missing" id="chatroomId">—</span></div>
+        <div class="stat"><span class="k">Pusher</span><span class="v missing" id="pusher">—</span></div>
+        <div class="stat"><span class="k">Deletions</span><span class="v missing" id="deleted">—</span></div>
+        <div class="stat"><span class="k">Ghost inline</span><span class="v missing" id="ghostAnchored">—</span></div>
+        <div class="stat"><span class="k">Ghost pending</span><span class="v missing" id="ghostPending">—</span></div>
+        <div class="stat"><span class="k">Ghost evicted</span><span class="v missing" id="ghostEvicted">—</span></div>
+        <div class="stat"><span class="k">Last ban</span><span class="v missing" id="lastBan">—</span></div>
+      </div>
+      <div class="control-list">
+        <label class="row" for="t-debug"><span>Debug log (F12)</span><input type="checkbox" id="t-debug" /></label>
+      </div>
+    </details>
 
     <div class="hint">Changes apply immediately and persist after reload.</div>
   </div>

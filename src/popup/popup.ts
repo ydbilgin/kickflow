@@ -77,14 +77,17 @@ function applyStaticTranslations(): void {
   setText('.hover-follow-copy strong', 'popup.hover_follow');
   setText('.hover-follow-copy span', 'popup.hover_follow_desc');
   $('t-hover-follow-mode').setAttribute('aria-label', t('popup.hover_follow'));
-  const sectionTitles = document.querySelectorAll<HTMLElement>('.section-title');
-  const titleKeys: MessageKey[] = ['popup.status_stats', 'tab.chat', 'tab.player', 'tab.rewards', 'tab.shortcuts'];
-  sectionTitles.forEach((element, index) => { if (titleKeys[index]) element.textContent = t(titleKeys[index]); });
+  // Static labels name their own key, so moving a section never shifts a translation.
+  document.querySelectorAll<HTMLElement>('[data-i18n]').forEach((element) => {
+    element.textContent = t(element.dataset.i18n as MessageKey);
+  });
+  const summary = $('stats').closest<HTMLElement>('.summary');
+  summary?.setAttribute('aria-label', t('popup.summary'));
   const rewardsIntro = document.getElementById('rewards-intro');
   if (rewardsIntro) rewardsIntro.textContent = t('panel.rewards_intro');
   const statKeys: Array<[string, MessageKey]> = [
     ['slug', 'stat.channel'], ['chatroomId', 'stat.chatroom_id'], ['pusher', 'stat.pusher'],
-    ['messages', 'stat.messages'], ['preserved', 'stat.preserved'], ['banned', 'stat.bans'],
+    ['messages', 'popup.sum_messages'], ['preserved', 'popup.sum_preserved'], ['banned', 'popup.sum_bans'],
     ['deleted', 'stat.deletions'], ['ghostAnchored', 'stat.ghost_inline'],
     ['ghostPending', 'stat.ghost_pending'], ['ghostEvicted', 'stat.ghost_evicted'], ['lastBan', 'stat.last_ban'],
   ];
