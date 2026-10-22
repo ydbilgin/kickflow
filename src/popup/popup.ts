@@ -356,6 +356,31 @@ document.addEventListener('keydown', (event) => {
   });
 }, true);
 
+/** Four tabs (Chat, Player, Rewards, Shortcuts) so the popup fits Chrome's 600 px popup height. */
+function selectTab(panel: string, focus = false): void {
+  document.querySelectorAll<HTMLButtonElement>('.tab').forEach((tab) => {
+    const selected = tab.dataset.panel === panel;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && focus) tab.focus();
+  });
+  document.querySelectorAll<HTMLElement>('.section[data-panel]').forEach((section) => {
+    section.hidden = section.dataset.panel !== panel;
+  });
+}
+
+const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
+tabButtons.forEach((tab, index) => {
+  tab.addEventListener('click', () => selectTab(tab.dataset.panel ?? 'chat'));
+  tab.addEventListener('keydown', (event) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = tabButtons[(index + step + tabButtons.length) % tabButtons.length];
+    selectTab(next.dataset.panel ?? 'chat', true);
+  });
+});
+
 $('hotkey-reset').addEventListener('click', () => {
   finishHotkeyCapture();
   void resetHotkeys();

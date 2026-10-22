@@ -69,6 +69,22 @@
     }
     .stat .v.ember, .stat .v.ochre, .stat .v.green { color: var(--text); }
     .stat .v.missing { color: var(--muted); font-weight: 500; }
+    .tabs {
+      position: sticky; top: 62px; z-index: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+      margin: 4px 0 0; padding: 6px 0; background: var(--bg); border-bottom: 1px solid var(--line);
+    }
+    .tab {
+      appearance: none; height: 30px; padding: 0 6px; border: 1px solid transparent; border-radius: 7px;
+      background: transparent; color: var(--muted); font: 600 11px/1 Inter, 'Segoe UI', system-ui, sans-serif; cursor: pointer;
+    }
+    .tab:hover { background: var(--surface); color: var(--text); }
+    .tab[aria-selected="true"] { border-color: oklch(0.86 0.24 145 / .35); background: oklch(0.86 0.24 145 / .10); color: var(--accent); }
+    .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .section[data-panel] { margin-top: 8px; }
+    .section[data-panel] > .section-title {
+      position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+    }
+    .section[data-panel] > .mode-card { margin-bottom: 0; border-top: 0; }
     .summary { margin: 0 0 16px; }
     .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .sum {
@@ -141,15 +157,6 @@
   <div id="reason">Reading status…</div>
 
   <div id="toggles" class="toggles">
-    <div class="mode-card">
-      <div class="mode-copy"><strong>Chat view</strong><span>Kick or KickFlow list</span></div>
-      <select id="t-chat-mode" aria-label="Chat mode"><option value="native">Native</option><option value="own">KickFlow</option></select>
-    </div>
-    <div class="mode-card">
-      <div class="mode-copy hover-follow-copy"><strong>Hover follow</strong><span>Mode A pinned hover scroll</span></div>
-      <select id="t-hover-follow-mode" aria-label="Hover follow"><option value="browser-smooth">Current: browser smooth</option><option value="instant">Instant: no animation</option></select>
-    </div>
-
     <section class="summary" aria-label="This session">
       <div id="stats" class="summary-grid">
         <div class="sum"><span class="v missing" id="messages">—</span><span class="k">Messages seen</span></div>
@@ -158,8 +165,25 @@
       </div>
     </section>
 
-    <section class="section">
+    <div class="mode-card">
+      <div class="mode-copy"><strong>Chat view</strong><span>Kick or KickFlow list</span></div>
+      <select id="t-chat-mode" aria-label="Chat mode"><option value="native">Native</option><option value="own">KickFlow</option></select>
+    </div>
+
+
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button class="tab" type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="true" data-panel="chat" data-i18n="tab.chat">Chat</button>
+      <button class="tab" type="button" role="tab" id="tab-player" aria-controls="panel-player" aria-selected="false" tabindex="-1" data-panel="player" data-i18n="tab.player">Player</button>
+      <button class="tab" type="button" role="tab" id="tab-rewards" aria-controls="panel-rewards" aria-selected="false" tabindex="-1" data-panel="rewards" data-i18n="tab.rewards">Rewards</button>
+      <button class="tab" type="button" role="tab" id="tab-shortcuts" aria-controls="panel-shortcuts" aria-selected="false" tabindex="-1" data-panel="shortcuts" data-i18n="tab.shortcuts">Shortcuts</button>
+    </nav>
+
+    <section class="section" role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" data-panel="chat">
       <h2 class="section-title" data-i18n="tab.chat">Chat</h2>
+    <div class="mode-card">
+      <div class="mode-copy hover-follow-copy"><strong>Hover follow</strong><span>Mode A pinned hover scroll</span></div>
+      <select id="t-hover-follow-mode" aria-label="Hover follow"><option value="browser-smooth">Current: browser smooth</option><option value="instant">Instant: no animation</option></select>
+    </div>
       <div class="control-list">
         <label class="row" for="t-deleted"><span>Show deleted messages</span><input type="checkbox" id="t-deleted" /></label>
         <label class="row" for="t-bans-inline"><span>Preserve bans inline</span><input type="checkbox" id="t-bans-inline" /></label>
@@ -172,7 +196,7 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" role="tabpanel" id="panel-player" aria-labelledby="tab-player" data-panel="player" hidden>
       <h2 class="section-title" data-i18n="tab.player">Player</h2>
       <div class="control-list">
         <label class="row" for="t-auto-theater"><span>Automatic theater mode</span><input type="checkbox" id="t-auto-theater" /></label>
@@ -184,7 +208,7 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" role="tabpanel" id="panel-rewards" aria-labelledby="tab-rewards" data-panel="rewards" hidden>
       <h2 class="section-title" data-i18n="tab.rewards">Rewards</h2>
       <p class="section-intro" id="rewards-intro">Manage Kick Drops and daily rewards from this tab.</p>
       <div class="control-list">
@@ -193,7 +217,7 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" role="tabpanel" id="panel-shortcuts" aria-labelledby="tab-shortcuts" data-panel="shortcuts" hidden>
       <h2 class="section-title" data-i18n="tab.shortcuts">Shortcuts</h2>
       <div class="hotkey-list">
         <div class="hotkey-row" data-hotkey-action="rewind"><input class="hotkey-enabled" type="checkbox" id="hk-rewind-enabled" aria-label="Enable 10s back shortcut" /><span>10s back</span><kbd class="key-chip" id="hk-rewind-key">←</kbd><button class="hotkey-change" id="hk-rewind-change" type="button" aria-label="Change 10s back shortcut">Change</button></div>

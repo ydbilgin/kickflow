@@ -76,4 +76,27 @@ describe('popup layout refresh', () => {
     expect(text('#chatroomId')).toBe('15250312');
     expect(document.querySelector('.section #t-debug')).toBeNull();
   });
+
+  it('K1: shows one of four tabs at a time and moves between them by click and arrow keys', async () => {
+    await openPopup('tr');
+    const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Sohbet', 'Oynatıcı', 'Ödüller', 'Kısayollar']);
+    const visible = (): string[] => Array.from(document.querySelectorAll<HTMLElement>('.section[data-panel]'))
+      .filter((section) => !section.hidden).map((section) => section.dataset.panel ?? '');
+    expect(visible()).toEqual(['chat']);
+    expect(document.querySelector('#panel-chat #t-hover-follow-mode')).not.toBeNull();
+    tabs[1].click();
+    expect(visible()).toEqual(['player']);
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+    expect(tabs[0].getAttribute('aria-selected')).toBe('false');
+    tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(visible()).toEqual(['rewards']);
+    tabs[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    tabs[3].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(visible()).toEqual(['chat']);
+    // Every switch keeps its element and id, so the existing setFlag wiring is untouched.
+    for (const id of ['t-deleted', 't-rewind-controls', 't-auto-claim-drops', 'hk-rewind-change']) {
+      expect(document.getElementById(id), id).not.toBeNull();
+    }
+  });
 });
