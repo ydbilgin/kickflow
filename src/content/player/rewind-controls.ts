@@ -1,5 +1,5 @@
 import { logger } from '../shared/logger';
-import { getVideoElement } from '../shared/selectors';
+import { findPlayerWrapper, getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
 import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 import type { Lifecycle } from '../shared/lifecycle';
@@ -180,29 +180,81 @@ function seekBy(video: HTMLVideoElement, delta: number): void {
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-// Solid double triangles rather than stroked chevrons: every icon Kick draws in this bar is
-// `[&_svg]:fill-current`, so an outline shape is the single most visible tell that a control
-// is not native.
-const REWIND_PATHS = ['M11.5 5.4v13.2L2.8 12z', 'M21.2 5.4v13.2L12.5 12z'];
-const FORWARD_PATHS = ['M2.8 5.4v13.2L11.5 12z', 'M12.5 5.4v13.2L21.2 12z'];
+// FINAL design 2026-10-18 (player-bar.html, icons #i-back10/#i-fwd10): a circular arrow with the
+// step number inside it. Drawn as FILLED shapes, not strokes: every icon Kick draws in this bar is
+// `[&_svg]:fill-current`, so an outline is the single most visible tell that a control is not
+// native. The ring is the design's 1.9px stroke turned into an annular arc (r 8 +/- 0.95).
+const STEP_RING = 'M4.84 6.63A8.95 8.95 0 1 1 3.05 12H4.95A7.05 7.05 0 1 0 6.36 7.77z';
+const STEP_ARROW = 'M4.35 3.4h1.9v3.25h3.25v1.9H4.35z';
 
-function createSeekIcon(paths: string[]): SVGSVGElement {
+function createStepIcon(direction: 'back' | 'forward'): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
-  for (const pathData of paths) {
+  const arrow = document.createElementNS(SVG_NS, 'g');
+  if (direction === 'forward') arrow.setAttribute('transform', 'matrix(-1 0 0 1 24 0)');
+  for (const pathData of [STEP_RING, STEP_ARROW]) {
     const path = document.createElementNS(SVG_NS, 'path');
     path.setAttribute('d', pathData);
-    svg.append(path);
+    arrow.append(path);
   }
+  const label = document.createElementNS(SVG_NS, 'text');
+  label.setAttribute('x', direction === 'forward' ? '11.7' : '12.3');
+  label.setAttribute('y', '15.3');
+  label.setAttribute('text-anchor', 'middle');
+  label.setAttribute('class', 'kickflow-player-btn__step');
+  label.textContent = String(STEP_SECONDS);
+  svg.append(arrow, label);
   return svg;
 }
 
-function createStepLabel(): HTMLSpanElement {
+let forwardAtLiveEdge = false;
+let forwardButtonRef: HTMLButtonElement | null = null;
+
+function applyForwardDim(): void {
+  const button = forwardButtonRef;
+  if (!button) return;
+  button.classList.toggle('kickflow-player-btn--dim', forwardAtLiveEdge);
+  if (forwardAtLiveEdge) button.setAttribute('aria-disabled', 'true');
+  else button.removeAttribute('aria-disabled');
+}
+
+/** Called by live-catchup.ts when the live-edge state CHANGES (never per frame): at the live edge
+ * 10 s forward has nowhere to go, so the design dims it (FINAL 6.3) and the overflow budget may
+ * drop it first on a narrow player. Stays clickable for the keyboard: a press is a harmless no-op. */
+export function setForwardAtLiveEdge(atEdge: boolean): void {
+  if (forwardAtLiveEdge === atEdge) return;
+  forwardAtLiveEdge = atEdge;
+  applyForwardDim();
+}
+
+const RIPPLE_CLASS = 'kickflow-seek-ripple';
+const RIPPLE_MS = 520;
+let rippleTimer: number | null = null;
+
+/** FINAL 6.3 moment 4: a short glass circle in the picture says where the jump went (0.5 s), then
+ * the node is removed. One node at most; nothing is left running between presses, so an idle
+ * player repaints nothing. Skipped when the user asks the system for reduced motion. */
+export function showSeekRipple(delta: number): void {
+  try {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  } catch { /* no matchMedia: show it */ }
+  const host = document.fullscreenElement ?? findPlayerWrapper();
+  if (!host) return;
+  host.querySelector(`.${RIPPLE_CLASS}`)?.remove();
+  if (rippleTimer !== null) window.clearTimeout(rippleTimer);
+  const ripple = document.createElement('div');
+  ripple.className = `${RIPPLE_CLASS} ${RIPPLE_CLASS}--${delta < 0 ? 'back' : 'forward'}`;
+  ripple.setAttribute('aria-hidden', 'true');
+  ripple.append(createStepIcon(delta < 0 ? 'back' : 'forward'));
   const label = document.createElement('span');
-  label.className = 'kickflow-player-btn__step';
-  label.textContent = String(STEP_SECONDS);
-  return label;
+  label.textContent = `${delta < 0 ? '−' : '+'}${Math.abs(delta)} ${t('player.seconds_short')}`;
+  ripple.append(label);
+  host.append(ripple);
+  rippleTimer = window.setTimeout(() => {
+    rippleTimer = null;
+    ripple.remove();
+  }, RIPPLE_MS);
 }
 
 /** Injected inline into Kick's native control bar, right after the LIVE button
@@ -250,14 +302,16 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     const rewind = document.createElement('button');
     rewind.type = 'button';
     rewind.className = 'kickflow-player-btn';
-    rewind.append(createSeekIcon(REWIND_PATHS), createStepLabel());
+    rewind.append(createStepIcon('back'));
 
     const forward = document.createElement('button');
     forward.type = 'button';
     forward.className = 'kickflow-player-btn';
-    forward.append(createStepLabel(), createSeekIcon(FORWARD_PATHS));
+    forward.append(createStepIcon('forward'));
     rewindButton = rewind;
     forwardButton = forward;
+    forwardButtonRef = forward;
+    applyForwardDim();
     updateHotkeyTitles();
 
     // Attached directly to the button (not routed through Lifecycle): these buttons get
@@ -269,10 +323,12 @@ export function initRewindControls(lifecycle: Lifecycle): void {
     rewind.addEventListener('click', () => {
       const current = getVideoElement();
       if (current) seekBy(current, -STEP_SECONDS);
+      showSeekRipple(-STEP_SECONDS);
     });
     forward.addEventListener('click', () => {
       const current = getVideoElement();
       if (current) seekBy(current, STEP_SECONDS);
+      if (!forwardAtLiveEdge) showSeekRipple(STEP_SECONDS);
     });
 
     group.append(rewind, forward);

@@ -35,9 +35,8 @@ export function findNavbarRightCluster(): HTMLDivElement | null {
   return null;
 }
 
-/** React-safe, interval-driven navbar injection. It owns one button only, retries quietly while
- * the shell is absent, and never observes the page body. Both it and the footer entry point call
- * the same body-level panel instance. */
+/** Keep the control outside React's SSR child sequence, aligned before the native cluster.
+ * Both this entry point and the footer open the same body-level panel. */
 export class NavbarSettingsButton {
   private button: HTMLButtonElement | null = null;
   private warnedMissingCluster = false;
@@ -47,26 +46,22 @@ export class NavbarSettingsButton {
     private readonly panel: NavbarSettingsPanel,
   ) {
     this.ensureInjected();
+    const reposition = (): void => this.ensureInjected();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    lifecycle.add(() => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    });
     lifecycle.add(subscribeLang(() => this.refresh()));
     lifecycle.setInterval(() => this.ensureInjected(), ENSURE_INTERVAL_MS);
     lifecycle.add(() => this.dispose());
   }
 
   private ensureInjected(): void {
-    const existing = document.getElementById(BUTTON_ID);
-    if (existing instanceof HTMLButtonElement && existing.classList.contains(BUTTON_CLASS)) {
-      const cluster = findNavbarRightCluster();
-      if (cluster && (existing.parentElement !== cluster || cluster.firstElementChild !== existing)) {
-        cluster.prepend(existing);
-      }
-      this.button = existing;
-      this.refresh();
-      return;
-    }
-    existing?.remove();
-
     const cluster = findNavbarRightCluster();
     if (!cluster) {
+      this.dispose();
       const renderedNavbar = Array.from(document.querySelectorAll('nav'))
         .some((nav) => nav.children.length >= 3
           && NAVBAR_HEIGHT_CLASSES.some((className) => nav.classList.contains(className)));
@@ -80,9 +75,22 @@ export class NavbarSettingsButton {
       }
       return;
     }
-    const button = this.build();
-    cluster.prepend(button);
-    this.button = button;
+    const existing = document.getElementById(BUTTON_ID);
+    if (existing instanceof HTMLButtonElement && existing.classList.contains(BUTTON_CLASS)) {
+      this.button = existing;
+    } else {
+      if (existing) return;
+      this.button = this.build();
+    }
+    const button = this.button;
+    const mounted = button.parentElement !== document.body;
+    if (mounted) document.body.append(button);
+    const box = cluster.getBoundingClientRect();
+    button.style.position = 'fixed';
+    button.style.zIndex = '1000';
+    button.style.left = `${Math.max(8, Math.min(innerWidth - 42, box.left))}px`;
+    button.style.top = `${Math.max(8, box.top + (box.height - 34) / 2)}px`;
+    button.style.display = box.width > 0 && box.height > 0 ? '' : 'none';
     this.refresh();
   }
 
@@ -109,7 +117,8 @@ export class NavbarSettingsButton {
   }
 
   private dispose(): void {
-    this.button?.remove();
+    if (!this.button) return;
+    this.button.remove();
     this.button = null;
   }
 }

@@ -2,6 +2,28 @@ import { Lifecycle } from '../shared/lifecycle';
 import { SELECTORS } from '../shared/selectors';
 import { t } from '../shared/i18n';
 
+/** Start at the first chat column, window load, or the bounded 3 second deadline.
+ * Dispose all three competitors before mounting so hydration cannot double-mount. */
+export function scheduleChatStartup(mount: () => void): () => void {
+  let done = false;
+  const observer = new MutationObserver(() => {
+    if (document.querySelector('#chatroom-messages')) start();
+  });
+  const cleanup = (): void => {
+    observer.disconnect(); window.clearTimeout(timer);
+    window.removeEventListener('load', start);
+  };
+  const start = (): void => {
+    if (done) return;
+    done = true; cleanup(); mount();
+  };
+  const timer = window.setTimeout(start, 3000);
+  window.addEventListener('load', start, { once: true });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  if (document.readyState === 'complete' || document.querySelector('#chatroom-messages')) start();
+  return () => { done = true; cleanup(); };
+}
+
 const OVERLAY_ROOT_ID = 'kickflow-chat-overlay';
 export const OWN_LIST_ID = 'kickflow-message-list';
 const CHAT_ACTIVE_CLASS = 'kickflow-chat-active';
@@ -167,6 +189,7 @@ export class ChatOverlayMount {
   private observedEventStackParent: HTMLElement | null = null;
   private availableOwnListRect: LayoutRect | null = null;
   private statusElement: HTMLElement | null = null;
+  private retryHandler: (() => void) | null = null;
   private disposed = false;
 
   constructor(lifecycle: Lifecycle) {
@@ -255,7 +278,7 @@ export class ChatOverlayMount {
     return this.root.isConnected
       && this.ownList.isConnected
       && this.ownList.parentElement === this.root
-      && isCssVisible(this.ownList)
+      && this.availableOwnListRect !== null
       ? this.ownList
       : null;
   }
@@ -273,7 +296,7 @@ export class ChatOverlayMount {
     }
 
     this.contentReady = true;
-    if (this.statusElement?.dataset.kickflowChatStatus === 'connected') this.setStatus(null);
+    if (!this.sourceUnavailable && this.statusElement?.dataset.kickflowChatStatus !== 'reconnecting') this.setStatus(null);
     this.takeoverState = 'ready';
     this.transitionToActive();
   }
@@ -352,7 +375,9 @@ export class ChatOverlayMount {
       && this.observedAnchor !== null
       && this.isUsableAnchor(this.observedAnchor)
       && hasPositiveAvailableRect
-      && hasVisibleContent;
+      && hasVisibleContent
+      && this.isPaintedOnTop()
+      && !this.hasOverlappingNativeControls();
     if (!valid) this.failOpen('active-invariant-broken');
     return valid;
   }
@@ -445,6 +470,36 @@ export class ChatOverlayMount {
     if (this.ownList.parentElement !== this.root) this.root.prepend(this.ownList);
   }
 
+  /** A body-level z-index loses to Kick's narrow-screen #channel-content context.
+   * Keep the list in that context, below Kick's popup layers, and outside its React list. */
+  private syncStackingContext(anchor: HTMLElement): void {
+    const host = anchor.closest<HTMLElement>('#channel-content') ?? document.body;
+    if (this.root.parentElement !== host) host.append(this.root);
+  }
+
+  private isPaintedOnTop(): boolean {
+    // jsdom has no paint engine. Browser checks always use the real hit test.
+    if (typeof document.elementFromPoint !== 'function') return true;
+    const rect = this.availableOwnListRect;
+    if (!rect) return false;
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return hit !== null && this.root.contains(hit);
+  }
+
+  private hasOverlappingNativeControls(): boolean {
+    const rect = this.availableOwnListRect;
+    if (!rect) return false;
+    return Array.from(document.querySelectorAll<HTMLElement>(
+      '[role="menu"], [role="dialog"], dialog[open], [data-radix-popper-content-wrapper], [data-testid="emote-picker"]',
+    )).some((control) => {
+      if (this.root.contains(control) || control.closest('[hidden], [aria-hidden="true"]')
+        || !isCssVisible(control)) return false;
+      const box = control.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && box.left < rect.right && box.right > rect.left
+        && box.top < rect.bottom && box.bottom > rect.top;
+    });
+  }
+
   private updateObservedAnchor(anchor: HTMLElement | null): void {
     if (anchor === this.observedAnchor) return;
     if (this.observedAnchor) this.resizeObserver.unobserve(this.observedAnchor);
@@ -471,6 +526,7 @@ export class ChatOverlayMount {
   }
 
   private syncGeometry(anchor: HTMLElement): boolean {
+    this.syncStackingContext(anchor);
     const geometry = resolveNativeEventStackGeometry(anchor);
     const eventStackObservationTarget = geometry.eventStack ?? findNativeEventStackObservationTarget(anchor);
     this.updateNativeEventStackObservers(anchor.parentElement, eventStackObservationTarget);
@@ -512,7 +568,7 @@ export class ChatOverlayMount {
   private hasVisibleStatus(): boolean {
     return this.statusElement !== null
       && this.statusElement.isConnected
-      && this.statusElement.parentElement === this.ownList
+      && this.statusElement.parentElement === this.root
       && isCssVisible(this.statusElement);
   }
 
@@ -528,7 +584,24 @@ export class ChatOverlayMount {
     }
   }
 
-  private setStatus(kind: 'connected' | 'reconnecting' | null, text = ''): void {
+  setRetryHandler(handler: () => void): void { this.retryHandler = handler; }
+
+  showFailure(): void {
+    this.failOpen('startup-failed');
+    this.setStatus('failed', t('overlay.failed'));
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = t('overlay.retry');
+    retry.addEventListener('click', () => {
+      this.setStatus(null);
+      this.updatePresentation();
+      this.retryHandler?.();
+    }, { once: true });
+    this.statusElement!.append(' ', retry);
+    this.updatePresentation();
+  }
+
+  private setStatus(kind: 'connected' | 'reconnecting' | 'failed' | null, text = ''): void {
     if (kind === null) {
       this.statusElement?.remove();
       this.statusElement = null;
@@ -541,7 +614,10 @@ export class ChatOverlayMount {
       this.statusElement.style.padding = '10px 12px';
       this.statusElement.style.color = 'rgba(255,255,255,0.68)';
       this.statusElement.style.fontSize = '12px';
-      this.ownList.prepend(this.statusElement);
+      this.statusElement.style.flex = '0 0 auto';
+      this.statusElement.style.marginTop = 'auto';
+      this.statusElement.style.pointerEvents = 'auto';
+      this.root.append(this.statusElement);
     }
     this.statusElement.setAttribute(STATUS_ATTRIBUTE, kind);
     this.statusElement.textContent = text;
@@ -550,7 +626,9 @@ export class ChatOverlayMount {
   private updatePresentation(): void {
     const active = this.takeoverState === 'active';
     this.ownList.style.display = active ? '' : 'none';
-    this.root.style.display = active ? '' : 'none';
+    const failed = this.statusElement?.dataset.kickflowChatStatus === 'failed'
+      && !this.hasOverlappingNativeControls();
+    this.root.style.display = active || failed ? '' : 'none';
     this.root.style.pointerEvents = active ? 'auto' : 'none';
   }
 }

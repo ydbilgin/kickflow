@@ -221,6 +221,31 @@ describe('ChatOverlayMount takeover readiness', () => {
     FakeMutationObserver.reset();
   });
 
+  it('mounts the popout chat at full column width below its native event strip and releases native rows on failure', () => {
+    const anchorRect = rect(340, 540, 0, 83);
+    const stackRect = rect(340, 12, 0, 83);
+    const { anchor } = addCapturedEventStackFixture(anchorRect, () => stackRect, ['pin']);
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setProbing();
+    const row = addOwnRow(mount, 'history-row');
+    mount.noteContentAppended([row]);
+
+    expect(mount.root.parentElement).toBe(document.body);
+    expect(mount.selectedAnchor).toBe(anchor);
+    expect(mount.root.style.left).toBe('0px');
+    expect(mount.root.style.top).toBe('95px');
+    expect(mount.root.style.width).toBe('340px');
+    expect(mount.root.style.height).toBe('528px');
+    expect(mount.state).toBe('active');
+    expect(mount.assertActiveInvariant()).toBe(true);
+
+    mount.setPrimaryUnavailable('socket-grace-expired');
+    expect(mount.state).toBe('fallback');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
+    lifecycle.dispose();
+  });
+
   it('uses the full captured anchor rectangle when there is no native pin', () => {
     addCapturedChatFixture(rect(320, 480, 10, 20));
     const lifecycle = new Lifecycle();
@@ -242,14 +267,14 @@ describe('ChatOverlayMount takeover readiness', () => {
     mount.setReplayLoading();
     expect(mount.state).toBe('active');
     expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(true);
-    expect(mount.ownList.textContent).toContain('Yayın sohbeti yükleniyor');
+    expect(mount.root.textContent).toContain('Yayın sohbeti yükleniyor');
 
     const row = addOwnRow(mount, 'old-window');
     mount.noteContentAppended([row]);
     row.remove();
     mount.setReplayReady();
     expect(mount.state).toBe('active');
-    expect(mount.ownList.textContent).toContain('Yayın sohbeti hazır');
+    expect(mount.root.textContent).toContain('Yayın sohbeti hazır');
     lifecycle.dispose();
   });
 
@@ -674,7 +699,7 @@ describe('ChatOverlayMount takeover readiness', () => {
     mount.setPrimaryReady();
 
     expect(mount.state).toBe('active');
-    expect(mount.ownList.querySelector('[data-kickflow-chat-status]')?.textContent).toContain('Bağlandı');
+    expect(mount.root.querySelector('[data-kickflow-chat-status]')?.textContent).toContain('Bağlandı');
     expect(mount.assertActiveInvariant()).toBe(true);
     lifecycle.dispose();
   });
@@ -705,7 +730,7 @@ describe('ChatOverlayMount takeover readiness', () => {
     mount.setReconnecting();
 
     expect(mount.state).toBe('active');
-    expect(mount.ownList.querySelector('[data-kickflow-chat-status]')?.textContent).toContain('Yeniden');
+    expect(mount.root.querySelector('[data-kickflow-chat-status]')?.textContent).toContain('Yeniden');
     mount.setPrimaryUnavailable('grace-expired');
     expect(mount.state).toBe('fallback');
     expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);

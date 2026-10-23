@@ -50,19 +50,20 @@ describe('navbar settings button', () => {
 
     const cluster = installNavbar();
     lifecycle.tick();
-    expect(cluster.firstElementChild?.id).toBe('kickflow-navbar-settings');
+    expect(document.getElementById('kickflow-navbar-settings')?.parentElement).toBe(document.body);
+    expect(cluster.firstElementChild?.id).toBe('gift');
     expect(warn).not.toHaveBeenCalled();
     lifecycle.dispose();
   });
 
-  it('anchors to the third direct navbar div and inserts as its first child', () => {
+  it('anchors outside the third direct navbar div and preserves its native children', () => {
     const cluster = installNavbar();
     const lifecycle = new FakeLifecycle();
     new NavbarSettingsButton(lifecycle as unknown as Lifecycle, new FakePanel());
 
     expect(findNavbarRightCluster()).toBe(cluster);
-    expect(cluster.firstElementChild?.id).toBe('kickflow-navbar-settings');
-    expect(cluster.children[1].id).toBe('gift');
+    expect(document.getElementById('kickflow-navbar-settings')?.parentElement).toBe(document.body);
+    expect(cluster.firstElementChild?.id).toBe('gift');
   });
 
   it('opens the existing shared settings panel and exposes an accessible icon-only mark', () => {
@@ -108,7 +109,8 @@ describe('navbar settings button', () => {
     lifecycle.tick();
     lifecycle.tick();
 
-    expect(cluster.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
+    expect(document.querySelectorAll('#kickflow-navbar-settings')).toHaveLength(1);
+    expect(cluster.firstElementChild?.id).toBe('gift');
   });
 
   it('warns once when a rendered navbar no longer matches the third-child class anchor', () => {

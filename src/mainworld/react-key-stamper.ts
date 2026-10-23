@@ -196,3 +196,4 @@ window.addEventListener('pagehide', () => {
   autoController?.teardown();
   autoController = null;
 });
+window.addEventListener('pageshow', start);

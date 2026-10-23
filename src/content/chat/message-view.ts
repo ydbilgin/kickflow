@@ -8,6 +8,7 @@ import { formatDurationMinutes, formatNumber, getLang, t, type MessageKey } from
 import { CONTENT_TOKEN_RE, EMOTE_TOKEN_RE } from './content-tokens';
 import { applyOwnListHighlights } from './message-highlight-apply';
 import { HOVER_TOOLTIP_ATTRIBUTE } from '../shared/hover-tooltip';
+import { formatLiveChatTimestamp } from './timestamp';
 
 export { extractMentionUsernames } from './content-tokens';
 
@@ -22,12 +23,6 @@ export const MOD_ACTION_KIND_CLASS_PREFIX = 'kickflow-modaction-kind--';
 export const MOD_ACTION_SURFACE_CLASS = 'kickflow-modaction-surface';
 export const MOD_ACTION_BULK_CLASS = `${EVENT_ROW_CLASS}--mod-action-bulk`;
 export const MOD_ACTION_JUMP_CONTROL_CLASS = `${EVENT_ROW_CLASS}__jump-control`;
-const MOD_ACTION_TAG_KEYS: Record<ModActionKind, MessageKey> = {
-  ban: 'modaction.tag.ban',
-  timeout: 'modaction.tag.timeout',
-  delete: 'modaction.tag.delete',
-  unknown: 'modaction.tag.unknown',
-};
 
 // Bulk gifts name at most this many recipients inline (a Kick bulk can be 50+; three ~25-char
 // usernames is about one wrapped line at the panel's 13px width). The rest collapse into
@@ -468,7 +463,9 @@ export function appendStatusLabel(row: HTMLElement, text: string, modifier: stri
   const label = document.createElement('span');
   label.className = `kickflow-status-label kickflow-status-label--${modifier}`;
   label.textContent = text;
-  row.appendChild(label);
+  const identity = row.querySelector('.kickflow-message__identity');
+  if (identity) identity.append(label);
+  else row.appendChild(label);
 }
 
 /** Compact localized duration from minutes. Empty when unknown. */
@@ -482,7 +479,7 @@ export function appendModLabel(row: HTMLElement, mod: string | null | undefined)
   const span = document.createElement('span');
   span.className = 'kickflow-mod-label';
   span.textContent = `· ${mod}`;
-  row.appendChild(span);
+  (row.querySelector('.kickflow-status-label') ?? row).appendChild(span);
 }
 
 /** Who/what removed a deleted message. Public MessageDeletedEvent usually carries only
@@ -612,6 +609,26 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
 
 /** Safe-render only: username and counts originate in public Pusher payloads and are assigned via
  * textContent. Fixed connecting words are separate text nodes; no event value becomes markup. */
+function lineGlyph(kind: string): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.6'); svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
+  const paths: Record<string, string> = {
+    subscription: 'm12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z',
+    'gifted-subscription': 'M4 10h16v11H4ZM3 6h18v4H3Zm9 0v15M12 6C5 6 6 0 9 2Zm0 0c7 0 6-6 3-4Z',
+    kicks: 'M5 4v16M8 12l10-8M8 12l10 8',
+    host: 'M3 9h6l10-5v16l-10-5H3Zm6 6 2 6',
+    mode: 'M4 7h16M4 17h16M8 4v6M16 14v6',
+    'mod-action': 'M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7Z',
+  };
+  const path = document.createElementNS(svg.namespaceURI, 'path');
+  path.setAttribute('d', paths[kind] ?? paths.subscription); svg.append(path);
+  return svg;
+}
+
 function buildSystemEventElement(message: ChatMessage, options: MessageElementOptions = {}): HTMLElement {
   const event = message.systemEvent;
   if (!event) throw new Error('buildSystemEventElement requires a system event');
@@ -619,6 +636,14 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
   const row = document.createElement('div');
   row.className = `${MESSAGE_CLASS} ${EVENT_ROW_CLASS} ${EVENT_ROW_CLASS}--${event.kind}`;
   row.dataset.messageId = message.id;
+  row.dataset.createdAt = message.createdAt;
+  if (event.kind === 'gap') {
+    row.setAttribute('role', 'separator');
+    row.textContent = event.estimatedCount === null
+      ? t('overlay.gap_time', { n: event.seconds })
+      : t('overlay.gap', { n: event.estimatedCount });
+    return row;
+  }
   if (event.kind === 'mod-action') {
     row.classList.add(
       MOD_ACTION_SURFACE_CLASS,
@@ -629,15 +654,7 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
   const icon = event.kind === 'mod-action' ? null : document.createElement('span');
   if (icon) {
     icon.className = `${EVENT_ROW_CLASS}__icon`;
-    icon.textContent = event.kind === 'subscription'
-      ? '⭐'
-      : event.kind === 'gifted-subscription'
-        ? '🎁'
-        : event.kind === 'kicks'
-          ? '💰'
-          : event.kind === 'host'
-            ? '📡'
-            : '⚙';
+    icon.append(lineGlyph(event.kind));
   }
 
   if (event.kind === 'mode') {
@@ -690,8 +707,9 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
     const tag = document.createElement('span');
     tag.className = `${EVENT_ROW_CLASS}__kind-tag`;
     tag.dataset.kickflowRole = 'action-kind';
-    tag.textContent = t(MOD_ACTION_TAG_KEYS[event.actionKind]);
-    body.append(tag, document.createTextNode(' '));
+    tag.setAttribute('aria-hidden', 'true');
+    tag.append(lineGlyph('mod-action'));
+    body.append(tag);
 
     const createModerator = (): HTMLSpanElement | null => {
       const moderator = event.moderator?.trim();
@@ -699,17 +717,13 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
       const actor = document.createElement('span');
       actor.className = `${EVENT_ROW_CLASS}__actor`;
       actor.dataset.kickflowRole = 'moderator';
-      const shield = document.createElement('span');
-      shield.className = `${EVENT_ROW_CLASS}__moderator-shield`;
-      shield.setAttribute('aria-hidden', 'true');
-      shield.textContent = '🛡';
       const name = document.createElement('span');
       name.className = `${EVENT_ROW_CLASS}__username ${EVENT_ROW_CLASS}__moderator`;
       name.dataset.kickflowRole = 'moderator-name';
       name.textContent = moderator;
       name.title = t('modaction.moderator_profile_title', { name: moderator });
       wireEventProfileIdentity(name, moderator);
-      actor.append(shield, name);
+      actor.append(name);
       return actor;
     };
 
@@ -1052,10 +1066,11 @@ function buildCelebrationElement(message: ChatMessage): HTMLElement {
   const row = document.createElement('div');
   row.className = `${MESSAGE_CLASS} ${EVENT_ROW_CLASS} ${EVENT_ROW_CLASS}--celebration`;
   row.dataset.messageId = message.id;
+  row.dataset.createdAt = message.createdAt;
 
   const icon = document.createElement('span');
   icon.className = `${EVENT_ROW_CLASS}__icon`;
-  icon.textContent = '⭐';
+  icon.append(lineGlyph('subscription'));
 
   const body = document.createElement('span');
   body.className = `${EVENT_ROW_CLASS}__body`;
@@ -1122,6 +1137,7 @@ export function buildMessageElement(
   const row = document.createElement('div');
   row.className = MESSAGE_CLASS;
   row.dataset.messageId = message.id;
+  row.dataset.createdAt = message.createdAt;
   appendReplyContext(row, message);
 
   const time = document.createElement('span');
@@ -1129,10 +1145,7 @@ export function buildMessageElement(
   if (options.timestampText !== undefined) {
     time.textContent = options.timestampText;
   } else {
-    const createdAt = new Date(message.createdAt);
-    time.textContent = Number.isNaN(createdAt.getTime())
-      ? ''
-      : createdAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    time.textContent = formatLiveChatTimestamp(message.createdAt);
   }
 
   const badges = document.createElement('span');

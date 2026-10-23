@@ -1,0 +1,44 @@
+<!--
+Fixture reconstructed from saved public JavaScript, corrected 2026-10-18.
+Source: https://assets.kick.com/main/_next/static/chunks/3-h2e5aim5_z4.js
+SHA256: d5ad49a9a3cc1bef466d51cb5454847c0030733287b194fd7365aa6acb33adbe
+Offsets: 221653 header/Close; 222521 card; 222994 StageShell; 232423 stage media;
+247000-249700 footer portals (hidden when inactive), primary w-full claim button;
+250492 SnapCarousel; 252489 DailyRewardsDesktop Trigger/Content.
+Button: caller at decoded offset 249293 imports module 888724 at 224701.
+Module 888724 in 3q2dt6mecfjf8.js: primary bg-primary-base at 18206;
+native button at 19219 forwards props without adding type. Caller has no type.
+Close's sr-only "Close" span: 3g8hejao00h9g.js, module 745259.
+Runtime Radix role/id, carousel DOM wrappers, portal order, labels, media and phase
+timing are INFERRED. One active card/footer is instantiated here; tests clone them
+to exercise multiple stages and inactive hidden footers. No live HTML was supplied.
+Text is synthetic English. Account identifiers and media URLs are omitted.
+This fixture proves offline behavior only, never a successful live claim.
+-->
+<div role="dialog" data-state="open" class="flex flex-col lg:max-h-156.75 lg:max-w-120.5 lg:p-4">
+  <div class="flex flex-row gap-2 border-b border-surface-fg-decorative p-0 pb-4">
+    <h2 class="flex-1 self-center text-lg">Claim your rewards</h2>
+    <button type="button" class="size-9"><svg aria-hidden="true"></svg><span class="sr-only">Close</span></button>
+  </div>
+  <div class="relative -mx-4 flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div class="flex w-full flex-1 flex-col gap-4">
+      <div aria-roledescription="carousel">
+        <section class="flex w-full flex-col items-center gap-4 rounded-lg bg-surface-bg-highest p-4 flex-1">
+          <div class="flex w-full flex-col gap-2"><h3 class="w-full text-base leading-6 font-semibold text-surface-fg-default">Daily Reward</h3></div>
+          <div class="flex flex-col gap-3 overflow-hidden rounded-lg pt-3 w-full"><div class="flex h-12 items-center justify-between gap-2 px-0">Streak</div></div>
+          <div class="relative aspect-1348/1080 w-full overflow-hidden rounded-md bg-black select-none">
+            <div class="absolute inset-0 z-10 bg-black"><video autoplay loop muted playsinline aria-hidden="true" class="absolute inset-0 size-full object-contain"></video></div>
+          </div>
+        </section>
+      </div>
+      <div class="flex w-full flex-col gap-4 px-4">
+        <div class="flex w-full flex-col gap-4">
+          <div class="flex w-full flex-col items-center gap-2">
+            <button class="state-layer-base bg-primary-base text-primary-onPrimary w-full">Claim</button>
+            <p class="min-h-5 w-full text-center text-sm leading-5 font-normal text-surface-fg-subtle">Claim before reset</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

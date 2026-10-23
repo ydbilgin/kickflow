@@ -2,6 +2,44 @@ import { logger } from '../shared/logger';
 import { normalizeMessage } from './pusher-client';
 import type { ChatMessage } from './message-store';
 
+export interface OutageBoundary {
+  readonly lastId: string;
+  readonly lastAt: number;
+  readonly messagesPerMs: number | null;
+}
+
+export function captureOutage(messages: readonly ChatMessage[]): OutageBoundary | null {
+  const sample = messages.filter((m) => !m.systemEvent && Number.isFinite(Date.parse(m.createdAt)))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).slice(-25);
+  const last = sample[sample.length - 1];
+  if (!last) return null;
+  const lastAt = Date.parse(last.createdAt);
+  const span = lastAt - Date.parse(sample[0].createdAt);
+  return { lastId: last.id, lastAt, messagesPerMs: span > 0 ? (sample.length - 1) / span : null };
+}
+
+/** Drop history outside the retained window. Estimate missing messages using the measured
+ * pre-outage rate; a zero estimate still marks one reconnect boundary. */
+export function planBackfill(
+  history: readonly ChatMessage[], oldestShown: number | null, outage: OutageBoundary | null,
+): { messages: ChatMessage[]; gap: { at: number; count: number | null; seconds: number } | null } {
+  const sorted = [...history].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  let gap = outage && sorted.length > 0 ? { at: outage.lastAt + 1, count: 0 as number | null, seconds: 0 } : null;
+  if (outage && sorted.length > 0 && !sorted.some((m) => m.id === outage.lastId)) {
+    const first = sorted.find((m) => Date.parse(m.createdAt) > outage.lastAt);
+    if (first) {
+      const elapsed = Date.parse(first.createdAt) - outage.lastAt;
+      const expected = outage.messagesPerMs === null ? null : elapsed * outage.messagesPerMs;
+      // One ordinary inter-message interval is not a hole, particularly on quiet channels.
+      if (Date.parse(sorted[0].createdAt) > outage.lastAt && (expected === null ? elapsed > 3000 : expected > 2)) {
+        gap = { at: outage.lastAt + 1, count: expected === null ? null : Math.max(1, Math.round(expected) - 1),
+          seconds: Math.max(1, Math.round(elapsed / 1000)) };
+      }
+    }
+  }
+  return { messages: sorted.filter((m) => oldestShown === null || Date.parse(m.createdAt) >= oldestShown), gap };
+}
+
 export const historyUrl = (channelId: number, startTime?: string): string => {
   const base = `https://web.kick.com/api/v1/chat/${channelId}/history`;
   if (!startTime) return base;
@@ -59,13 +97,6 @@ export class ChatHistoryBackfill {
       if (this.requested && !this.callbacks.isDisposed()) void this.run();
     }
   }
-}
-
-/** Compatibility array API used by callers that only need rows. New readiness code consumes the
- * result API below so a valid empty history is not confused with a failed request. */
-export async function fetchChatHistory(channelId: number): Promise<ChatMessage[]> {
-  const result = await fetchChatHistoryResult(channelId);
-  return result.status === 'success' ? result.messages : [];
 }
 
 export async function fetchChatHistoryResult(

@@ -3,6 +3,14 @@ import { declarations, styleTemplate } from '../helpers/bootstrap-css';
 import { HOVER_TOOLTIP_MAX_WIDTH_CSS_VARIABLE } from '../../src/content/shared/hover-tooltip';
 
 describe('own-mode message row geometry styles', () => {
+  it('step 8: uses neutral cards, a 12px floor, a nonshrinking reply name and straight 3px role bars', () => {
+    expect(declarations('#${OWN_LIST_ID}')).toContain('max(12px,');
+    expect(declarations('#${OWN_LIST_ID} .kickflow-event-row')).toContain('background: #181d19');
+    expect(declarations('#${OWN_LIST_ID} .kickflow-message__reply-user')).toContain('flex-shrink: 0');
+    expect(styleTemplate()).toContain('width: ${ROLE_BAR_WIDTH_PX}px; background: var(--kf-mod-bar); border-radius: 0');
+    expect(declarations('#${OWN_LIST_ID} .kickflow-preserved')).toBe('opacity: 1;');
+    expect(declarations('.kickflow-status-label')).toContain('font-size: 12px');
+  });
   afterEach(() => {
     document.head.querySelector('[data-kickflow-test-styles]')?.remove();
     document.body.innerHTML = '';
@@ -26,11 +34,11 @@ describe('own-mode message row geometry styles', () => {
     const role = declarations('.kickflow-badge-role');
     const text = declarations('.kickflow-badge-text');
 
-    expect(list).toContain('font-size: var(--chatroom-font-size, 13px)');
+    expect(list).toContain('font-size: max(12px, var(--chatroom-font-size, 13px))');
     expect(list).toContain('line-height: 1.5');
     expect(row).toContain('padding: var(--chatroom-message-spacing, 3px) 5px');
     expect(time).toContain('display: var(--chatroom-timestamps-display, inline)');
-    expect(time).toContain('font-size: calc(var(--chatroom-font-size, 13px) - 2px)');
+    expect(time).toContain('font-size: max(12px, calc(var(--chatroom-font-size, 13px) - 2px))');
     expect(time).toContain('font-weight: 600');
     expect(time).toContain('margin-right: 4px');
     expect(emptyTime).toBe('display: none;');
@@ -115,14 +123,14 @@ describe('own-mode message row geometry styles', () => {
     const surface = declarations('.kickflow-modaction-surface');
 
     expect(actionCss).toContain('.kickflow-modaction-surface {');
-    expect(surface).toContain('--kickflow-modaction-accent: oklch(0.80 0.06 265)');
+    expect(surface).toContain('--kickflow-modaction-accent: #aeb8b1');
     expect(surface).toContain('background: var(--kickflow-modaction-band)');
-    expect(surface).toContain('border: 0');
-    expect(surface).toContain('border-radius: 4px');
-    expect(tag).toContain('font-size: 10px');
+    expect(surface).toContain('border: 1px solid');
+    expect(surface).toContain('border-radius: 6px');
+    expect(tag).toContain('font-size: 12px');
     expect(tag).toContain('font-weight: 700');
-    expect(tag).toContain('letter-spacing: 0.07em');
-    expect(tag).toContain('text-transform: uppercase');
+    expect(tag).not.toContain('letter-spacing');
+    expect(tag).not.toContain('text-transform');
     expect(moderator).toContain('color: var(--kickflow-modaction-moderator-color)');
     expect(victim).toContain('text-decoration: underline');
     expect(victimAction).toContain('display: inline-flex');
@@ -143,7 +151,7 @@ describe('own-mode message row geometry styles', () => {
     expect(declarations('.kickflow-modaction-kind--timeout'))
       .toContain('--kickflow-modaction-accent: oklch(0.75 0.14 72)');
     expect(declarations('.kickflow-modaction-kind--delete'))
-      .toContain('--kickflow-modaction-accent: oklch(0.80 0.06 265)');
+      .toContain('--kickflow-modaction-accent: #aeb8b1');
   });
 
   it('measures action roles and the band from the production stylesheet', () => {
@@ -182,23 +190,23 @@ describe('own-mode message row geometry styles', () => {
     const targetStyle = getComputedStyle(target);
     const nativeStyle = getComputedStyle(nativeRow);
 
-    expect(tagStyle.textTransform).toBe('uppercase');
+    expect(tagStyle.textTransform).not.toBe('uppercase');
     expect(Number.parseFloat(tagStyle.fontSize)).toBeLessThan(Number.parseFloat(actionStyle.fontSize));
     expect(actionStyle.getPropertyValue('--kickflow-modaction-moderator-color').trim())
-      .toBe('oklch(0.78 0.13 155)');
+      .toBe('#eef3ef');
     // jsdom preserves unresolved custom-property references in computed declarations. The
     // variable value above is read from the real stylesheet and is the browser-resolved color.
     expect(moderatorStyle.color).toBe('var(--kickflow-modaction-moderator-color)');
     expect(moderatorStyle.color).not.toBe(targetStyle.color);
     expect(targetStyle.color).toBe('rgb(18, 171, 239)');
     expect(targetStyle.textDecoration).toContain('underline');
-    expect(actionStyle.borderLeftWidth).toBe('0px');
-    expect(actionStyle.borderRightWidth).toBe('0px');
+    expect(actionStyle.borderLeftWidth).toBe('1px');
+    expect(actionStyle.borderRightWidth).toBe('1px');
     expect(actionStyle.backgroundColor).not.toBe(nativeStyle.backgroundColor);
     // jsdom does not resolve color-mix(), so verify the computed custom-property payload and
     // production background binding here; Chromium resolves this band during the offline probe.
     expect(actionStyle.getPropertyValue('--kickflow-modaction-band').trim())
-      .toContain('color-mix(in oklch');
+      .toBe('#181d19');
     expect(actionStyle.background).toBe('var(--kickflow-modaction-band)');
   });
 

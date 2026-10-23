@@ -64,11 +64,10 @@ beforeEach(async () => {
   bootstrap.initChatIntegrity({ kind: 'live', slug: 'fixture', sessionKey: 'live:fixture' }, lifecycle,
     new RemovedMessagesPanel(lifecycle, null, bootstrap.getLiveStatusSnapshot));
   for (let n = 0; n < 12; n++) await Promise.resolve();
-  expect(Socket.instances).toHaveLength(1);
+  expect(Socket.instances).toHaveLength(0);
   publication('initial');
   expect(active()).toBe(true);
-  // A failed fallback while native is proven must not own the native grace deadline.
-  Socket.instances[0].close();
+  // No dead legacy transport can override the native grace deadline.
 });
 
 afterEach(() => {

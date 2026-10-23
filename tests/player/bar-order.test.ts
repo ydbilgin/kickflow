@@ -8,6 +8,7 @@ import {
 } from '../../src/content/player/bar-order';
 import { findQualityGearCandidates } from '../../src/content/player/quality-lock';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
+import { declarations, styleTemplate } from '../helpers/bootstrap-css';
 
 const originalFullscreenTerminal = featureFlags.fullscreenTerminal;
 
@@ -87,5 +88,32 @@ describe('player bar order', () => {
     const { gear } = setupPlayer();
 
     expect(findQualityGearCandidates()).toEqual([{ button: gear, via: 'trailing-icon' }]);
+  });
+});
+
+// His 2026-10-21 screenshot: Kick's bar over a bright stream, chat text burned into the picture
+// behind pause and mute. The dark fade (FINAL row 15, layer 1) must not depend on the cinema strip
+// flag, or the flat fallback is unreadable again. The pixel proof is player-bar-visual.mjs --bright.
+describe("dark fade under Kick's bar", () => {
+  it("is painted on Kick's bar itself, with or without the strip", () => {
+    const fade = declarations('div.z-controls.bottom-0::after');
+    expect(fade).toContain("content: ''");
+    expect(fade).toContain('position: absolute');
+    expect(fade).toContain('bottom: 0');
+    expect(fade).toContain('var(--kickflow-bar-shade, 0.60)');
+    expect(fade).toContain('rgba(0,0,0,0) 9rem');
+    expect(fade).toContain('pointer-events: none');
+    expect(declarations('div.z-controls.bottom-0')).toContain('isolation: isolate');
+  });
+
+  it('has no strip-only copy that could drift from the shared one', () => {
+    expect(styleTemplate()).not.toContain('html[data-kickflow-strip] div.z-controls.bottom-0::after');
+  });
+
+  it('removes the full-width capsule and darkens the fade for hover and keyboard focus', () => {
+    expect(declarations('html[data-kickflow-strip] div.z-controls.bottom-0::before')).toContain('content: none');
+    expect(declarations('div.z-controls.bottom-0:is(:hover, :focus-within)')).toContain('--kickflow-bar-shade: 0.70');
+    const plate = declarations('.kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip)::before');
+    expect(plate).toContain('backdrop-filter: blur(12px)');
   });
 });

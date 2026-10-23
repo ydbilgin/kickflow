@@ -1,0 +1,27 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {CONTROLS_IDLE_MS,inBottomArea,initControlsVisibility} from '../../src/content/player/controls-visibility';
+import {Lifecycle} from '../../src/content/shared/lifecycle';
+let life:Lifecycle;
+beforeEach(()=>{vi.useFakeTimers();life=new Lifecycle();});
+afterEach(()=>{life.dispose();document.body.replaceChildren();vi.useRealTimers();vi.restoreAllMocks();});
+function fixture(paused=false) {
+ document.body.innerHTML='<div id="wrapper"><video id="video-player"></video><div class="z-controls bottom-0"><button id="control">Control</button></div></div>';
+ const wrapper=document.getElementById('wrapper')!,video=document.querySelector('video')!,bar=document.querySelector('.bottom-0')!;
+ Object.defineProperty(video,'paused',{configurable:true,get:()=>paused});
+ vi.spyOn(wrapper,'getBoundingClientRect').mockReturnValue({top:0,left:0,bottom:600,right:1000,height:600,width:1000} as DOMRect);
+ initControlsVisibility(life);
+ const move=(y:number,x=500)=>wrapper.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:x,clientY:y}));
+ const state=()=>wrapper.getAttribute('data-kickflow-controls');
+ return {wrapper,video,bar,move,state,pause:()=>{paused=true;video.dispatchEvent(new Event('pause'));},play:()=>{paused=false;video.dispatchEvent(new Event('play'));}};
+}
+it('idle hides after native timing and bottom-area movement shows again',()=>{const f=fixture();f.move(580);expect(f.state()).toBe('shown');vi.advanceTimersByTime(CONTROLS_IDLE_MS-1);expect(f.state()).toBe('shown');vi.advanceTimersByTime(1);expect(f.state()).toBe('hidden');f.move(580);expect(f.state()).toBe('shown');});
+it('center movement cannot reveal a hidden bar',()=>{const f=fixture();f.move(300);expect(f.state()).toBe('hidden');expect(inBottomArea(f.wrapper.getBoundingClientRect(),-1,580)).toBe(false);});
+it('paused video stays shown then playing returns to idle-hide',()=>{const f=fixture();f.pause();vi.advanceTimersByTime(12000);expect(f.state()).toBe('shown');f.play();vi.advanceTimersByTime(CONTROLS_IDLE_MS);expect(f.state()).toBe('hidden');});
+it('fast player exit and window exit hide without waiting for a timer',()=>{const f=fixture();f.move(580);f.wrapper.dispatchEvent(new MouseEvent('pointerout',{bubbles:true,relatedTarget:document.body}));expect(f.state()).toBe('hidden');f.move(580);f.wrapper.dispatchEvent(new MouseEvent('pointerout',{bubbles:true,relatedTarget:null}));expect(f.state()).toBe('hidden');});
+it('keyboard focus holds controls but automated mouse focus cannot pin them',()=>{const f=fixture();const b=document.getElementById('control')!;b.focus();vi.advanceTimersByTime(5000);expect(f.state()).toBe('hidden');document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));b.blur();b.focus();vi.advanceTimersByTime(9000);expect(f.state()).toBe('shown');});
+it('an open quality menu holds controls until it closes',async()=>{const f=fixture();const b=document.getElementById('control')!;b.setAttribute('aria-expanded','true');await Promise.resolve();vi.advanceTimersByTime(9000);expect(f.state()).toBe('shown');b.setAttribute('aria-expanded','false');await Promise.resolve();vi.advanceTimersByTime(CONTROLS_IDLE_MS);expect(f.state()).toBe('hidden');});
+it('window blur and fullscreen exit clear stale shown state',()=>{const f=fixture();f.move(580);window.dispatchEvent(new Event('blur'));expect(f.state()).toBe('hidden');f.move(580);document.dispatchEvent(new Event('fullscreenchange'));expect(f.state()).toBe('hidden');f.move(580);expect(f.state()).toBe('shown');});
+it('tab hiding clears visibility and returning playing does not pin controls',()=>{const f=fixture();f.move(580);vi.spyOn(document,'visibilityState','get').mockReturnValue('hidden');document.dispatchEvent(new Event('visibilitychange'));expect(f.state()).toBe('hidden');vi.spyOn(document,'visibilityState','get').mockReturnValue('visible');document.dispatchEvent(new Event('visibilitychange'));expect(f.state()).toBe('hidden');});
+it('replacement player gets state and disposal releases presentation attributes',async()=>{const f=fixture();f.move(580);document.body.innerHTML='<div id="next"><video id="video-player"></video></div>';await Promise.resolve();expect(f.wrapper.hasAttribute('data-kickflow-controls')).toBe(false);expect(document.getElementById('next')!.getAttribute('data-kickflow-controls')).toBe('shown');life.dispose();expect(document.getElementById('next')!.hasAttribute('data-kickflow-controls')).toBe(false);});
+it('keyboard hold renews before the native timeout can remove the focused control',()=>{const f=fixture();let nativeTimer=window.setTimeout(()=>f.bar.remove(),4000);const renew=()=>{window.clearTimeout(nativeTimer);nativeTimer=window.setTimeout(()=>f.bar.remove(),4000);};f.wrapper.addEventListener('mousemove',renew);document.getElementById('control')!.focus();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));vi.advanceTimersByTime(4500);expect(f.bar.isConnected).toBe(true);expect(f.state()).toBe('shown');f.wrapper.removeEventListener('mousemove',renew);window.clearTimeout(nativeTimer);});
+it('keyboard entry reveals hidden controls and restores native wrapper attributes on disposal',()=>{const f=fixture();expect(f.state()).toBe('hidden');expect(f.wrapper.tabIndex).toBe(0);document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));f.wrapper.focus();expect(f.state()).toBe('shown');life.dispose();expect(f.wrapper.hasAttribute('tabindex')).toBe(false);});

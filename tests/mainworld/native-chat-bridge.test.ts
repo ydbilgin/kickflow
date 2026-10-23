@@ -21,6 +21,12 @@ function frame(data: unknown = rawMessage, channel = 'chatrooms.1.v2', event = '
     tags: { event },
   } } });
 }
+/** Kick's realtime client registers its handler right after construction (2026-10-20 bridge contract). */
+function kickSocket(address: string): WebSocket {
+  const socket = new WebSocket(address);
+  socket.addEventListener('message', () => { /* Kick's own handler */ });
+  return socket;
+}
 let uninstall: (() => void) | undefined;
 afterEach(() => { uninstall?.(); uninstall = undefined; vi.unstubAllGlobals(); });
 
@@ -66,12 +72,12 @@ describe('public native socket boundary', () => {
     const receive = (e: Event): void => { received.push((e as CustomEvent<NativeChatSignal>).detail); };
     window.addEventListener(NATIVE_CHAT_EVENT, receive);
     uninstall = installNativeChatBridge();
-    const socket = new WebSocket(url);
+    const socket = kickSocket(url);
     expect(socket).toBeInstanceOf(NativeSocket);
     expect(socket).toBeInstanceOf(WebSocket);
     expect(WebSocket.OPEN).toBe(1);
     expect(socket.send).toBe(NativeSocket.prototype.send);
-    const other = new WebSocket('wss://websockets.kick.com/viewer/v1/connect');
+    const other = kickSocket('wss://websockets.kick.com/viewer/v1/connect');
     other.dispatchEvent(new MessageEvent('message', { data: frame() }));
     socket.dispatchEvent(new MessageEvent('message', { data: '{"id":1,"connect":{"token":"discarded-field"}}\n' + frame() }));
     expect(received).toHaveLength(1);
@@ -88,10 +94,14 @@ describe('public native socket boundary', () => {
   it('matches the endpoint exactly without keeping its query parameters', () => {
     expect(isKickRealtimeUrl(url + '?ignored=value')).toBe(true);
     expect(isKickRealtimeUrl(url.replace('us-east-1', 'us-west-2'))).toBe(true);
-    expect(isKickRealtimeUrl(url.replace('us-east-1', 'unknown-region'))).toBe(false);
+    expect(isKickRealtimeUrl(url.replace('us-east-1', 'eu-central-1'))).toBe(true);
     expect(isKickRealtimeUrl(url.replace('kick.com', 'kick.com.invalid'))).toBe(false);
     expect(isKickRealtimeUrl(url.replace('wss:', 'ws:'))).toBe(false);
     expect(isKickRealtimeUrl(url + '/other')).toBe(false);
+      expect(isKickRealtimeUrl(url.replace('us-east-1', 'eu-central-1.evil'))).toBe(false);
+      expect(isKickRealtimeUrl(url.replace('us-east-1', '-invalid'))).toBe(false);
+      expect(isKickRealtimeUrl(url.replace('wss://', 'wss://someone@'))).toBe(false);
+      expect(isKickRealtimeUrl(url.replace('kick.com/', 'kick.com:8443/'))).toBe(false);
   });
 
   it('preserves supported deletion-actor names without forwarding extra actor fields', () => {
@@ -108,12 +118,59 @@ describe('public native socket boundary', () => {
     const receive = (e: Event): void => { received.push((e as CustomEvent<NativeChatSignal>).detail); };
     window.addEventListener(NATIVE_CHAT_EVENT, receive);
     uninstall = installNativeChatBridge();
-    const socket = new WebSocket(url);
+    const socket = kickSocket(url);
     socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ push: { channel: 'private-user.1', unsubscribe: { code: 1 } } }) }));
     socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ push: { channel: 'chatrooms.1.v2', unsubscribe: { code: 1 } } }) }));
     expect(received).toEqual([{ kind: 'unavailable', socketId: 1, channel: 'chatrooms.1.v2' }]);
     uninstall(); uninstall = undefined;
     socket.close();
+    expect(received).toHaveLength(1);
+    window.removeEventListener(NATIVE_CHAT_EVENT, receive);
+  });
+
+  // 2026-10-20 (errors-page noise report): a constructor Proxy put native-chat.js on
+  // the stack of every Kick socket, so Chrome listed Kick's own failed handshakes as extension errors.
+  it('leaves the WebSocket constructor untouched, so a socket is never created from this file', () => {
+    const stacks: string[] = [];
+    class StackSocket extends NativeSocket {
+      constructor(address: string) { super(address); stacks.push(new Error('construct').stack ?? ''); }
+    }
+    vi.stubGlobal('WebSocket', StackSocket);
+    uninstall = installNativeChatBridge();
+    expect(window.WebSocket).toBe(StackSocket);
+    new WebSocket('wss://websockets.kick.com/viewer/v1/connect');
+    new WebSocket(url);
+    expect(stacks).toHaveLength(2);
+    for (const stack of stacks) expect(stack).not.toMatch(/src[\\/]mainworld[\\/]native-chat-bridge/);
+  });
+
+  it('observes a realtime socket whose handler Kick assigns with onmessage', () => {
+    class PropertySocket extends NativeSocket {
+      private handler: ((event: MessageEvent) => void) | null = null;
+      get onmessage(): ((event: MessageEvent) => void) | null { return this.handler; }
+      set onmessage(value: ((event: MessageEvent) => void) | null) {
+        if (this.handler) this.removeEventListener('message', this.handler as EventListener);
+        this.handler = value;
+        if (value) EventTarget.prototype.addEventListener.call(this, 'message', value as EventListener);
+      }
+    }
+    vi.stubGlobal('WebSocket', PropertySocket);
+    const received: NativeChatSignal[] = [];
+    const receive = (e: Event): void => { received.push((e as CustomEvent<NativeChatSignal>).detail); };
+    window.addEventListener(NATIVE_CHAT_EVENT, receive);
+    uninstall = installNativeChatBridge();
+    const socket = new WebSocket(url) as unknown as PropertySocket;
+    const kick = vi.fn();
+    socket.onmessage = kick;
+    expect(socket.onmessage).toBe(kick);
+    socket.dispatchEvent(new MessageEvent('message', { data: frame() }));
+    expect(kick).toHaveBeenCalledOnce();
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ kind: 'publication', socketId: 1 });
+    uninstall(); uninstall = undefined;
+    expect(Object.getOwnPropertyDescriptor(PropertySocket.prototype, 'onmessage')?.set).toBeTypeOf('function');
+    expect(Object.hasOwn(NativeSocket.prototype, 'addEventListener')).toBe(false);
+    socket.dispatchEvent(new MessageEvent('message', { data: frame() }));
     expect(received).toHaveLength(1);
     window.removeEventListener(NATIVE_CHAT_EVENT, receive);
   });
@@ -125,7 +182,7 @@ describe('public native socket boundary', () => {
     window.addEventListener(NATIVE_CHAT_EVENT, receive);
     uninstall = installNativeChatBridge();
     const constructor = window.WebSocket;
-    const socket = new WebSocket(url);
+    const socket = kickSocket(url);
     const repeatedTeardown = installNativeChatBridge();
     expect(repeatedTeardown).toBe(uninstall);
     expect(window.WebSocket).toBe(constructor);

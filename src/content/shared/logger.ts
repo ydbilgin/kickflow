@@ -4,10 +4,6 @@ export function setDebugLogging(enabled: boolean): void {
   debugEnabled = enabled;
 }
 
-export function isDebugLogging(): boolean {
-  return debugEnabled;
-}
-
 // debug/info are silent unless the debug flag is on; warn/error stay visible by default
 // so unconfirmed-shape problems (ban payload, missing player selectors) surface without
 // the user having to flip a flag first.

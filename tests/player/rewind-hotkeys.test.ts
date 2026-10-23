@@ -53,6 +53,25 @@ describe('rewind hotkeys', () => {
     document.removeEventListener('keydown', nativeHandler);
   });
 
+  // 2026-10-20 check of a reported double rewind: Kick's current player bundle (1qmgob0ivmvmz.js,
+  // module 882610, registered in 0_-tquroq9mjt.js) handles ArrowLeft/ArrowRight in a WINDOW bubble
+  // keydown listener (10 s back on a VOD, DVR 30 s then 5 s steps on live). KickFlow's document-capture
+  // listener runs first and stops the event, so one press moves the player once.
+  it.each(['ArrowLeft', 'ArrowRight'])('one %s press seeks once and never reaches Kick\'s window keydown handler', (key) => {
+    const video = setupVideo();
+    const sitePlayerHandler = vi.fn();
+    window.addEventListener('keydown', sitePlayerHandler);
+    const lifecycle = new Lifecycle();
+    initRewindHotkeys(lifecycle);
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key });
+    document.body.dispatchEvent(event);
+    expect(sitePlayerHandler).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+    expect(video.currentTime).toBeCloseTo(key === 'ArrowLeft' ? 3.4 : 23.4, 8);
+    lifecycle.dispose();
+    window.removeEventListener('keydown', sitePlayerHandler);
+  });
+
   it('reads a live rebound key from the registry instead of retaining a hardcoded arrow path', () => {
     const video = setupVideo();
     const lifecycle = new Lifecycle();

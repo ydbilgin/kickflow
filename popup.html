@@ -17,9 +17,10 @@
       --muted: oklch(0.69 0.01 150);
     }
     * { box-sizing: border-box; }
-    html { background: var(--bg); }
+    html { background: var(--bg); overflow: hidden; }
     body {
       width: 372px; margin: 0; padding: 0 16px 16px;
+      max-height: 600px; overflow-y: auto;
       background: var(--bg); color: var(--text);
       font-family: Inter, 'Segoe UI', system-ui, sans-serif; font-size: 12px; line-height: 1.4;
     }

@@ -1,6 +1,7 @@
 import { logger } from '../shared/logger';
 import { findLiveButton, getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
+import { setForwardAtLiveEdge } from './rewind-controls';
 import { bindVideoElementListener, observeVideoElement } from './video-element';
 import {
   NORMAL_PLAYBACK_RATE,
@@ -16,8 +17,23 @@ import { subscribeLang, t } from '../shared/i18n';
 
 const CONTROLS_ID = 'kickflow-catchup-controls';
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** FINAL icons.svg #i-tolive: play triangle into a bar, filled like Kick's own icons. */
+function createToLiveIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', 'M4.5 6.2v11.6a.7.7 0 0 0 1.1.6l8-5.8a.7.7 0 0 0 0-1.2l-8-5.8a.7.7 0 0 0-1.1.6ZM17 5.5h1.2a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H17a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z');
+  svg.append(path);
+  return svg;
+}
+
 const CATCHUP_PLAYBACK_RATE = 1.5;
 const BEHIND_THRESHOLD_SECONDS = 3;
+/** The chip, once shown, stays until the gap is clearly closed, so a player hovering around the
+ * threshold does not make the chip (and the bar budget behind it) flicker. */
+const CHIP_HIDE_SECONDS = 2.5;
 const CAUGHT_UP_THRESHOLD_SECONDS = 1.5;
 
 // Behind-live sanity bound, not a product cap. Kick's HLS state can report bogus media
@@ -207,19 +223,29 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       ? t('player.behind_minutes', { n: Math.round(roundedSeconds / 60) })
       : t('player.behind_seconds', { n: roundedSeconds });
 
-  /** The single "CANLI" button doubles as the behind-live indicator: at the edge it is a
-   * quiet red-dot pill, when behind it turns amber and appends "-Xsn" in place (no extra
-   * indicator element appearing/disappearing, so nothing to its right ever shifts). */
+  /** FINAL design 2026-10-18 ("İkinci CANLI yok"): Kick's own LIVE label already says "live", so
+   * at the live edge this control shows nothing (its box stays reserved and invisible, so nothing
+   * ever shifts). Behind live it becomes the amber chip "−N sn | Canlıya". Every DOM write happens
+   * only when the rounded label changes, so a steady player causes no repaint from here. */
+  let chipGroupEl: HTMLElement | null = null;
+  let behindTextEl: HTMLSpanElement | null = null;
+  let goTextEl: HTMLSpanElement | null = null;
   const setLiveButtonState = (behindSeconds: number | null): void => {
-    if (!liveButtonEl) return;
     lastBehindSeconds = behindSeconds;
     const behind = behindSeconds !== null;
+    if (!liveButtonEl) return;
     const rounded = behind ? Math.max(0, Math.round(behindSeconds)) : 0;
+    const label = behind ? formatBehind(rounded) : '';
+    const key = `${label}|${t('player.to_live')}`;
+    if (key === lastLiveLabel) return;
+    lastLiveLabel = key;
     liveButtonEl.classList.toggle('kickflow-player-btn--behind', behind);
-    const label = behind ? `${t('player.live')} ${formatBehind(rounded)}` : t('player.live');
-    if (label === lastLiveLabel) return;
-    lastLiveLabel = label;
-    liveButtonEl.textContent = label;
+    chipGroupEl?.classList.toggle('kickflow-player-group--chip', behind);
+    if (behindTextEl) behindTextEl.textContent = label;
+    if (goTextEl) goTextEl.textContent = t('player.to_live');
+    liveButtonEl.tabIndex = behind ? 0 : -1;
+    if (behind) liveButtonEl.removeAttribute('aria-hidden');
+    else liveButtonEl.setAttribute('aria-hidden', 'true');
     liveButtonEl.setAttribute(
       'aria-label',
       behind ? t('player.go_live_behind', { n: rounded }) : t('player.go_live'),
@@ -237,6 +263,7 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     liveLatched = false;
     lastSeekEnd = null;
     resetAutoPlaybackRate(current);
+    setForwardAtLiveEdge(false);
     setLiveButtonState(null);
   };
 
@@ -275,20 +302,26 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
 
     if (!live) {
       if (catchingUp) resetAutoPlaybackRate(current);
+      setForwardAtLiveEdge(false);
       setLiveButtonState(null);
       return;
     }
 
     if (liveEdgeSec === null || behindBy === null) {
       if (catchingUp) resetAutoPlaybackRate(current);
+      setForwardAtLiveEdge(false);
       setLiveButtonState(null);
       return;
     }
 
     const plausible = Number.isFinite(behindBy) && behindBy <= MAX_PLAUSIBLE_BEHIND_SECONDS;
+    // Only a confirmed live stream sitting at its edge dims 10 s forward; a VOD never does.
+    setForwardAtLiveEdge(plausible && behindBy <= BEHIND_THRESHOLD_SECONDS);
     // Behind-live is shown in BOTH modes (unlike the old catch-up-only indicator): "how far
     // behind am I" is orthogonal to whether auto catch-up is doing anything about it.
-    setLiveButtonState(plausible && behindBy > BEHIND_THRESHOLD_SECONDS ? behindBy : null);
+    const chipShown = lastBehindSeconds !== null;
+    const showChip = plausible && (behindBy > BEHIND_THRESHOLD_SECONDS || (chipShown && behindBy > CHIP_HIDE_SECONDS));
+    setLiveButtonState(showChip ? behindBy : null);
 
     if (playerState.mode === 'manual') {
       catchingUp = false;
@@ -354,6 +387,7 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   });
   lifecycle.add(() => {
     resetAutoPlaybackRate();
+    setForwardAtLiveEdge(false);
   });
   lifecycle.add(subscribePlayerState(() => {
     if (getPlayerState().mode === 'manual') catchingUp = false;
@@ -366,7 +400,16 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     const live = document.createElement('button');
     live.type = 'button';
     live.className = 'kickflow-player-btn kickflow-player-btn--live';
+    live.append(createToLiveIcon());
+    const behindText = document.createElement('span');
+    behindText.className = 'kickflow-live-chip__behind';
+    const goText = document.createElement('span');
+    goText.className = 'kickflow-live-chip__go';
+    live.append(behindText, goText);
     liveButtonEl = live;
+    behindTextEl = behindText;
+    goTextEl = goText;
+    chipGroupEl = group;
     updateHotkeyTitle();
     lastLiveLabel = '';
     setLiveButtonState(null);

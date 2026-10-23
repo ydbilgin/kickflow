@@ -7,11 +7,14 @@ import { type OverflowControl, createOverflowControl } from './overflow-menu';
 const OBSERVER_DEBOUNCE_MS = 150;
 const RETRY_INTERVAL_MS = 250;
 const RETRY_LIMIT = 20;
+/** Bar order (FINAL design 2026-10-18, player-bar.html): the plate holds 10 s back, 10 s forward,
+ * speed, screenshot, and the behind-live chip LAST, so the chip appearing or leaving never moves
+ * another control. */
 const CONTROL_ORDER = [
   'kickflow-rewind-controls',
-  'kickflow-catchup-controls',
   'kickflow-speed-controls',
   'kickflow-screenshot-controls',
+  'kickflow-catchup-controls',
 ] as const;
 /** The order controls are given up in when the bar is too narrow — first entry collapses first.
  * Screenshot, forward/rewind and go-live all keep their hotkeys when collapsed
@@ -24,6 +27,7 @@ const COLLAPSE_PRIORITY = [
   'kickflow-catchup-controls',
 ] as const;
 const OVERFLOW_CONTROL_ID = 'kickflow-overflow-controls';
+const CHIP_CONTROL_ID = 'kickflow-catchup-controls';
 /** Applying a plan changes what is in the bar, which changes what the next measurement sees —
  * a control's cost is only knowable once it has been laid out. Two passes settle every case
  * (mount, then measure the ⋯ button, then give up one more control); the third is the stop. */
@@ -44,7 +48,7 @@ interface RegisteredControl {
 type MissingNativeBarAnchor = 'control-bar' | 'insertion-anchor';
 
 /** A lifecycle owns one mount manager, rather than one pair of observers per control.
- * Map insertion order is the native-bar order: rewind, CANLI, speed, screenshot. */
+ * Bar order comes from CONTROL_ORDER: rewind, speed, screenshot, behind-live chip. */
 const managers = new WeakMap<Lifecycle, NativeBarMountManager>();
 const managerAliases = new WeakMap<Lifecycle, Lifecycle>();
 const controlOwners = new WeakMap<HTMLElement, NativeBarMountManager>();
@@ -124,6 +128,7 @@ class NativeBarMountManager {
     const registry = this.controls.has(id) ? this.controls : this.rootControls;
     const control = registry.get(id);
     if (!control) return;
+    if (control.element) this.barResizeObserver?.unobserve(control.element);
     control.element?.remove();
     if (control.element) controlOwners.delete(control.element);
     const existing = document.getElementById(id);
@@ -224,8 +229,10 @@ class NativeBarMountManager {
     const check = anchor === 'control-bar'
       ? 'SELECTORS.controlBarBottom / SELECTORS.controlBar in src/content/shared/selectors.ts'
       : 'LIVE_EDGE_LABELS / GO_TO_LIVE_PHRASES / findControlBarInsertionAnchor in src/content/shared/selectors.ts';
-    logger.warn(
-      `native-bar: gave up after ${RETRY_LIMIT} attempts — ${check} did not match Kick's native player bar.`,
+    // Optional controls recover on later native mutations. A bounded mount miss requires
+    // no viewer action and must not become a persistent chrome://extensions error entry.
+    logger.debug(
+      `native-bar: waiting for native controls after ${RETRY_LIMIT} attempts — ${check}.`,
     );
   }
 
@@ -318,9 +325,21 @@ class NativeBarMountManager {
     }
 
     let anchor: HTMLElement = insertionAnchor;
+    let overflowPlaced = false;
+    const placeOverflow = (): void => {
+      overflowPlaced = true;
+      const element = this.ensureOverflowControl().element;
+      if (element.parentElement !== parent || anchor.nextElementSibling !== element) {
+        anchor.after(element);
+      }
+      anchor = element;
+    };
     for (const id of plan.mounted) {
       const control = this.controls.get(id);
       if (!control) continue;
+      // The ⋯ button belongs to the plate; the behind-live chip stays the plate's last item, so
+      // the chip appearing never splits the plate (FINAL design 2026-10-18).
+      if (plan.overflow && !overflowPlaced && id === CHIP_CONTROL_ID) placeOverflow();
       const existing = document.getElementById(control.id);
       if (existing instanceof HTMLElement && existing !== control.element) {
         if (controlOwners.get(existing) && controlOwners.get(existing) !== this) return false;
@@ -333,6 +352,9 @@ class NativeBarMountManager {
         element.id = control.id;
         control.element = element;
         controlOwners.set(element, this);
+        // The behind-live chip changes its own width (0 at the live edge); a bar-size watch
+        // cannot see that, so its size is watched too and the budget re-plans before paint.
+        if (control.id === CHIP_CONTROL_ID) this.barResizeObserver?.observe(element);
       }
 
       if (element.parentElement !== parent || anchor.nextElementSibling !== element) {
@@ -342,10 +364,7 @@ class NativeBarMountManager {
     }
 
     if (plan.overflow) {
-      const element = this.ensureOverflowControl().element;
-      if (element.parentElement !== parent || anchor.nextElementSibling !== element) {
-        anchor.after(element);
-      }
+      if (!overflowPlaced) placeOverflow();
     } else if (this.overflow) {
       this.overflow.detach();
     }
@@ -376,6 +395,7 @@ class NativeBarMountManager {
     const bar = findControlBar();
     if (!this.barResizeObserver || bar === this.observedBar) return;
     if (this.observedBar) this.barResizeObserver.unobserve(this.observedBar);
+    // (The chip's own observation, added in applyPlan, is independent of the bar's.)
     this.observedBar = bar;
     if (bar) this.barResizeObserver.observe(bar);
   }

@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { formatVodReplayTimestamp } from '../../src/content/chat/timestamp';
+import { formatVodReplayTimestamp, formatLiveChatTimestamp } from '../../src/content/chat/timestamp';
+
+describe('formatLiveChatTimestamp', () => {
+  it('keeps browser locale/timezone labels across hours, days and daylight transitions', () => {
+    for (const value of ['2026-01-01T00:00:00Z', '2026-03-29T01:59:00Z', '2026-07-26T01:25:48Z', '2026-10-25T02:01:00Z']) {
+      expect(formatLiveChatTimestamp(value)).toBe(new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }));
+    }
+  });
+  it('does not format invalid dates as a visible clock', () => {
+    expect(formatLiveChatTimestamp('')).toBe('');
+    expect(formatLiveChatTimestamp('not-a-date')).toBe('');
+  });
+});
 
 describe('formatVodReplayTimestamp', () => {
   const vodStart = Date.parse('2026-07-25T18:12:38Z');

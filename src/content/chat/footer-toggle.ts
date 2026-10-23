@@ -38,13 +38,9 @@ function buildIcon(): SVGSVGElement {
   return svg;
 }
 
-/** MoKick-style KickFlow toggle button injected into Kick's chat footer (anchored to
- * `#send-message-button`, the "Gönder" button) — opens/closes the shared `RemovedMessagesPanel`
- * and shows a small badge with its removed-message count. Kick's React footer re-renders
- * (typing, channel switch, layout changes) can tear our node out at any time; rather than fight
- * React with a body-wide MutationObserver, this self-heals on a cheap 1s interval — the exact
- * pattern NativeChatAugmenter already uses for its own re-attach loop. Per-session (rebuilt on
- * channel change via a fresh Lifecycle). */
+/** Body-level control aligned with the native send cluster. CSS reserves its old inline slot
+ * without adding a child to the SSR footer: inserting before a native button causes React #418.
+ * Reconcile the anchor on the bounded interval and viewport changes, including native remounts. */
 export class FooterToggleButton {
   private button: HTMLButtonElement | null = null;
   private badge: HTMLSpanElement | null = null;
@@ -54,6 +50,13 @@ export class FooterToggleButton {
     private readonly panel: FooterTogglePanel,
   ) {
     this.ensureInjected();
+    const reposition = (): void => this.ensureInjected();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    lifecycle.add(() => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    });
     lifecycle.add(subscribeLang(() => this.refresh()));
     lifecycle.setInterval(() => this.ensureInjected(), ENSURE_INTERVAL_MS);
     lifecycle.add(() => this.dispose());
@@ -63,18 +66,22 @@ export class FooterToggleButton {
    * A native remount can leave our connected button behind in an obsolete footer. */
   private ensureInjected(): void {
     const send = document.getElementById(SEND_BUTTON_ID);
-    if (!send || !send.parentElement) return;
+    if (!send || !send.parentElement) {
+      this.dispose();
+      return;
+    }
     const existing = document.getElementById(BUTTON_ID);
     if (existing && (!(existing instanceof HTMLButtonElement)
       || !existing.classList.contains(BUTTON_CLASS))) return;
 
     const button = existing ?? this.build();
-    let reference = send.previousElementSibling;
-    if (reference === button) reference = button.previousElementSibling;
-    reference ??= send;
-    if (button.parentElement !== send.parentElement || button.nextElementSibling !== reference) {
-      send.parentElement.insertBefore(button, reference);
-    }
+    if (button.parentElement !== document.body) document.body.append(button);
+    const box = send.parentElement.getBoundingClientRect();
+    button.style.position = 'fixed';
+    button.style.zIndex = '403';
+    button.style.left = `${box.left}px`;
+    button.style.top = `${box.top + (box.height - 30) / 2}px`;
+    button.style.display = box.width > 0 && box.height > 0 && !send.closest('[hidden]') ? '' : 'none';
     this.button = button;
     this.badge = button.querySelector<HTMLSpanElement>(`.${BADGE_CLASS}`);
     this.refresh();

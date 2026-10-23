@@ -359,6 +359,40 @@ describe('decideScrollFollow', () => {
 });
 
 describe('attachScrollFollowHover', () => {
+  it('moves own-list hover to the row under a stationary pointer after incoming rows shift the list', async () => {
+    const container = document.createElement('div');
+    const first = document.createElement('div');
+    const second = document.createElement('div');
+    first.className = second.className = 'kickflow-message';
+    container.append(first, second);
+    document.body.append(container);
+    let hit: Element = first;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => hit });
+    const controller = new ScrollFollowController(container, { createResizeObserver: () => null });
+    const hover = attachScrollFollowHover(container, controller);
+    try {
+      container.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 100, clientY: 250 }));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      hit = second;
+      second.style.transform = 'translateY(32px)';
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+      expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      hit = first;
+      container.dispatchEvent(new Event('scroll'));
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+      container.dispatchEvent(new Event('pointerleave'));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+    } finally {
+      hover.dispose();
+      controller.dispose();
+      container.remove();
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    }
+  });
+
   it('tracks one pointer listener pair and exposes transition hooks', () => {
     const container = document.createElement('div');
     const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
@@ -449,6 +483,22 @@ describe('cap constants', () => {
 });
 
 describe('trimMessageWindow', () => {
+  it('measures every removed row before mutating layout and retains the reading offset', () => {
+    const container = buildContainer(5, 1);
+    container.scrollTop = 100;
+    const reads: number[] = [];
+    for (const node of Array.from(container.children)) {
+      vi.spyOn(node, 'getBoundingClientRect').mockImplementation(() => {
+        reads.push(container.childElementCount);
+        return { height: 12.25 } as DOMRect;
+      });
+    }
+    trimMessageWindow(container, new ChatDomRegistry(), 2);
+    expect(reads).toEqual([6, 6, 6]);
+    expect(container.scrollTop).toBe(63.25);
+    expect(container.firstElementChild?.classList.contains(PRESERVED_CLASS)).toBe(true);
+  });
+
   it('trims non-preserved nodes down to the default cap', () => {
     const container = buildContainer(MAX_NON_PRESERVED_NODES + 50);
     const registry = new ChatDomRegistry();

@@ -2,6 +2,18 @@
 // docs/superpowers/specs/2026-07-04-kickflow-design.md). Do not swap these for guessed
 // alternates (e.g. `.chat-rooms-list`, which does not exist on the live page).
 export const SELECTORS = {
+  // Fresh public Kick bundle read 2026-10-17; runtime DOM is INFERRED.
+  // Evidence and inference boundaries: tests/fixtures/daily-reward-2026-10.html.
+  dailyRewardCta: 'video[src*="reward-available-CTA"]',
+  dailyRewardDialog: '[role="dialog"], [role="alertdialog"], dialog',
+  dailyRewardExcludedSurface: '#rewards-panel, #drops-panel',
+  dailyRewardStage: '[class~="aspect-[1348/1080]"], [class~="aspect-1348/1080"]',
+  dailyRewardMediaStage: 'div.relative.w-full.overflow-hidden.rounded-md.bg-black',
+  dailyRewardFullWidthButton: 'button.w-full',
+  // Current footer imports module 888724 (bg-primary-base); retain the older Button style.
+  dailyRewardPrimaryButton: 'button.bg-primary-base, button.bg-brand-bg-default',
+  dailyRewardCloseLabel: 'button span.sr-only',
+  dailyRewardHidden: '[hidden], [aria-hidden="true"], [inert]',
   chatMessagesContainer: '#chatroom-messages',
   videoPlayer: '#video-player',
   // Native control bar root. GOTCHA (confirmed live via Playwright against a real stream
@@ -26,10 +38,6 @@ export const SELECTORS = {
   nativeFullscreenButton: 'button[data-testid="video-player-fullscreen"]',
 } as const;
 
-export function getChatMessagesContainer(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(SELECTORS.chatMessagesContainer);
-}
-
 export function getVideoElement(): HTMLVideoElement | null {
   const el = document.querySelector(SELECTORS.videoPlayer);
   return el instanceof HTMLVideoElement ? el : null;
@@ -49,7 +57,9 @@ export function findControlBar(): HTMLElement | null {
   // pick the one that actually holds buttons — and, of those, the richest cluster — never
   // the empty layout layer.
   const bars = Array.from(wrapper.querySelectorAll<HTMLElement>(SELECTORS.controlBar))
-    .filter((bar) => bar.querySelector('button'));
+    // The upper z-controls layer also contains the logged-out HD trial promotion. Its
+    // two CTA buttons can mount before the transport bar; they are not player controls.
+    .filter((bar) => !bar.classList.contains('grid-row-1') && bar.querySelector('button'));
   if (bars.length === 0) return null;
   return bars.reduce((best, bar) =>
     bar.querySelectorAll('button').length > best.querySelectorAll('button').length ? bar : best,

@@ -356,7 +356,7 @@ describe('sanitizeHighlightColor', () => {
 
 describe('role highlight rendering', () => {
   it('exports the built-in role constants exactly', () => {
-    expect(ROLE_BAR_WIDTH_PX).toBe(2);
+    expect(ROLE_BAR_WIDTH_PX).toBe(3);
     expect(ROLE_BAR_ALPHA).toBe(0.80);
     expect(ROLE_FILL_ALPHA).toBe(0.04);
   });
@@ -397,13 +397,13 @@ describe('role highlight rendering', () => {
     expect(row.classList.contains(HL_FRAME_CLASS)).toBe(false);
   });
 
-  it('native frame has 2px/0.80 bar and no 9999px role fill shadow', () => {
+  it('native frame has 3px/0.80 bar and no 9999px role fill shadow', () => {
     featureFlags.roleHighlightStyle = 'frame';
     featureFlags.modFrameColor = '#38BDF8';
     const row = document.createElement('div');
     applyNativeHighlights(row, roleMessage('moderator'));
 
-    expect(row.style.boxShadow).toBe('inset 2px 0 0 rgba(56,189,248,0.8)');
+    expect(row.style.boxShadow).toBe('inset 3px 0 0 rgba(56,189,248,0.8)');
     expect(row.style.boxShadow).not.toContain('9999px');
     expect(row.style.background).toBe('');
     expect(row.style.backgroundColor).toBe('');
@@ -422,7 +422,7 @@ describe('role highlight rendering', () => {
     const vipOnly = document.createElement('div');
     applyNativeHighlights(vipOnly, roleMessage('vip'));
     expect(vipOnly.style.boxShadow).toBe(
-      'inset 2px 0 0 rgba(167,139,250,0.8), inset 0 0 0 9999px rgba(167,139,250,0.04)',
+      'inset 3px 0 0 rgba(167,139,250,0.8), inset 0 0 0 9999px rgba(167,139,250,0.04)',
     );
 
     const withReply: ChatMessage = {
@@ -438,7 +438,7 @@ describe('role highlight rendering', () => {
     };
     const row = document.createElement('div');
     applyNativeHighlights(row, withReply);
-    expect(row.style.boxShadow.startsWith('inset 2px 0 0 rgba(167,139,250,0.8)')).toBe(true);
+    expect(row.style.boxShadow.startsWith('inset 3px 0 0 rgba(167,139,250,0.8)')).toBe(true);
     expect(row.style.boxShadow).toContain('rgba(255,201,77,0.18)');
     expect(row.style.boxShadow).not.toContain('rgba(167,139,250,0.04)');
     expect(row.style.backgroundColor).toBe('');

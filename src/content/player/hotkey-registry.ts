@@ -1,5 +1,5 @@
 import { safeStorageGet, safeStorageSet } from '../shared/extension-context';
-import { hotkeyLabel, t } from '../shared/i18n';
+import { t } from '../shared/i18n';
 
 export const HOTKEY_ACTIONS = ['rewind', 'forward', 'screenshot', 'goLive'] as const;
 
@@ -32,10 +32,6 @@ export const HOTKEY_DEFINITIONS: readonly HotkeyDefinition[] = [
   { action: 'screenshot', label: 'Screenshot', defaultKey: 's' },
   { action: 'goLive', label: 'Go live', defaultKey: 'l' },
 ];
-
-export function getHotkeyLabel(action: HotkeyAction): string {
-  return hotkeyLabel(action);
-}
 
 const NATIVE_KEYS = new Set(['c', 't', 'f', 'm', 'k', ' ', 'i']);
 const MODIFIER_KEYS = new Set(['Alt', 'AltGraph', 'Control', 'Meta', 'Shift', 'CapsLock', 'NumLock', 'ScrollLock']);

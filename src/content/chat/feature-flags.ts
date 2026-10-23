@@ -61,6 +61,10 @@ export interface FeatureFlags {
   speedControls: boolean;
   /** Move Kick's fullscreen button to the terminal slot through CSS order without changing the DOM. */
   fullscreenTerminal: boolean;
+  /** FINAL design 2026-10-18 "Sinema şeridi": Kick's bar floats as one glass strip with a dark fade
+   * under it. CSS only, keyed on one attribute on <html>; when Kick renames its bar the selector
+   * stops matching and Kick's flat bar returns with our plate (the design's fallback). */
+  floatingStrip: boolean;
   /** Click Kick's own Claim button when a Drops reward reaches 100% on the watched channel.
    * Opt-in because it acts on the page rather than only observing it. KickFlow never calls a
    * Drops endpoint itself, and never touches the separate channel-points redemption surface. */
@@ -116,6 +120,7 @@ export const featureFlags: FeatureFlags = {
   screenshot: true,
   speedControls: true,
   fullscreenTerminal: true,
+  floatingStrip: true,
   autoClaimDrops: false,
   autoClaimDailyReward: false,
   modLogPanel: false,

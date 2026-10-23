@@ -39,8 +39,9 @@ import {
   trimMessageWindow,
   type ScrollFollowBehavior,
 } from './chat/dom-window';
-import { ChatHistoryBackfill } from './chat/history';
-import { ChatOverlayMount } from './chat/overlay-mount';
+import { ChatHistoryBackfill, captureOutage, planBackfill, type OutageBoundary } from './chat/history';
+import { ChatOverlayMount, scheduleChatStartup } from './chat/overlay-mount';
+import { initControlsVisibility } from './player/controls-visibility';
 import {
   parseChatSessionContext,
   type ChatSessionContext,
@@ -112,6 +113,7 @@ const BOOLEAN_FLAG_KEYS = [
   'screenshot',
   'speedControls',
   'fullscreenTerminal',
+  'floatingStrip',
   'autoClaimDrops',
   'autoClaimDailyReward',
   'mentionHighlightEnabled',
@@ -401,15 +403,16 @@ export async function resolveChannel(slug: string): Promise<ResolvedChannel | nu
           : [];
         return { chatroomId, channelId, subscriberBadges };
       }
-      const transient = response.status === 429 || response.status >= 500;
+      const transient = response.status === 403 || response.status === 429 || response.status >= 500;
       if (transient) {
-        logger.warn('bootstrap: channel lookup failed for', slug, 'status', response.status, '(retrying)');
+        // 2026-10-20: a retried 429/5xx is not a fault yet; only exhaustion below warns (errors page noise).
+        logger.debug('bootstrap: channel lookup failed for', slug, 'status', response.status, '(retrying)');
       } else {
         logger.info('bootstrap: channel lookup failed for', slug, 'status', response.status, '(terminal)');
         return null;
       }
     } catch (error) {
-      logger.warn('bootstrap: channel lookup threw', error, '(retrying)');
+      logger.debug('bootstrap: channel lookup threw', error, '(retrying)');
     } finally {
       window.clearTimeout(timeoutId);
     }
@@ -443,18 +446,24 @@ function ensureStyles(): void {
     #${OVERLAY_ROOT_ID} { display: flex; flex-direction: column; overflow: hidden; }
     #${OWN_LIST_ID} {
       flex: 1 1 auto; min-height: 0; padding: 6px 10px; overflow-y: auto; height: auto; box-sizing: border-box;
-      font-size: var(--chatroom-font-size, 13px); line-height: 1.5; color: #efeff1;
+      font-size: max(12px, var(--chatroom-font-size, 13px)); line-height: 1.5; color: #eef3ef;
       font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
       scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.16) transparent;
     }
     #${OWN_LIST_ID} .kickflow-message {
-      display: block; padding: var(--chatroom-message-spacing, 3px) 5px; border-radius: 6px;
+      display: block; position: relative; padding: var(--chatroom-message-spacing, 3px) 5px; border-radius: 6px;
       word-break: break-word; overflow-wrap: anywhere;
     }
     #${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):hover { background: rgba(255,255,255,0.06); }
+    #${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):not(.kickflow-message--hl-fill):not(.kickflow-message--role-fill):hover:not([data-kickflow-pointer-row]):not(:has(:focus-visible)) {
+      background: transparent;
+    }
+    #${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):not(.kickflow-message--hl-fill):not(.kickflow-message--role-fill):is([data-kickflow-pointer-row], :has(:focus-visible)) {
+      background: rgba(255,255,255,0.06);
+    }
     #${OWN_LIST_ID} .kickflow-message__time {
       display: var(--chatroom-timestamps-display, inline); color: #adadb8;
-      font-size: calc(var(--chatroom-font-size, 13px) - 2px); font-weight: 600;
+      font-size: max(12px, calc(var(--chatroom-font-size, 13px) - 2px)); font-weight: 600;
       margin-right: 4px; font-variant-numeric: tabular-nums;
     }
     #${OWN_LIST_ID} .kickflow-message__time:empty { display: none; }
@@ -478,17 +487,15 @@ function ensureStyles(): void {
     }
     #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; line-height: 1.55; }
     #${OWN_LIST_ID} .kickflow-event-row {
-      display: flex; align-items: baseline; gap: 0; margin: 2px 0;
-      border-left: 2px solid rgba(83,252,24,0.7);
-      background: rgba(83,252,24,0.07); color: #d8f7ce;
+      display: flex; align-items: baseline; gap: 0; margin: 4px 0;
+      border: 1px solid rgba(220,255,226,0.10); border-radius: 6px;
+      padding: 8px 9px; background: #181d19; color: #aeb8b1;
     }
     #${OWN_LIST_ID} .kickflow-event-row--gifted-subscription {
-      border-left-color: rgba(255,176,32,0.8);
-      background: rgba(255,176,32,0.08); color: #ffe0a3;
+      color: #aeb8b1;
     }
     #${OWN_LIST_ID} .kickflow-event-row--celebration {
-      align-items: flex-start; border-left-color: rgba(83,252,24,0.9);
-      background: rgba(83,252,24,0.1);
+      align-items: flex-start;
     }
     #${OWN_LIST_ID} .kickflow-event-row--celebration .kickflow-event-row__body,
     #${OWN_LIST_ID} .kickflow-celebration__headline,
@@ -500,14 +507,13 @@ function ensureStyles(): void {
     }
     #${OWN_LIST_ID} .kickflow-celebration__author { font-weight: 700; }
     #${OWN_LIST_ID} .kickflow-event-row--host {
-      border-left-color: rgba(70,169,255,0.85);
-      background: rgba(70,169,255,0.09); color: #b9ddff;
+      color: #aeb8b1;
     }
     #${OWN_LIST_ID} .kickflow-event-row--mode {
-      border-left-color: rgba(168,139,250,0.85);
-      background: rgba(168,139,250,0.09); color: #ddd0ff;
+      color: #aeb8b1;
     }
-    #${OWN_LIST_ID} .kickflow-event-row__icon { flex: none; margin-right: 5px; }
+    #${OWN_LIST_ID} .kickflow-event-row__icon { flex: none; margin-right: 7px; color: #aeb8b1; }
+    #${OWN_LIST_ID} .kickflow-event-row svg { display: inline-block; vertical-align: -3px; }
     #${OWN_LIST_ID} .kickflow-event-row__username,
     #${OWN_LIST_ID} .kickflow-event-row__count,
     #${OWN_LIST_ID} .kickflow-event-row__recipient { font-weight: 700; color: inherit; }
@@ -517,7 +523,7 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-event-row__more:hover { opacity: 0.85; }
     #${OWN_LIST_ID} .kickflow-message__reply-context {
       display: flex; align-items: center; width: 100%; min-width: 0; margin-bottom: 4px;
-      color: rgba(255,255,255,0.55); font-size: 11px; font-weight: 500;
+      color: #aeb8b1; font-size: 12px; font-weight: 500;
       white-space: nowrap; overflow: hidden;
       border-left: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.035);
       border-radius: 4px; padding: 1px 6px;
@@ -554,14 +560,20 @@ function ensureStyles(): void {
     }
     /* Role bars: left accent always; faint tint only with role-fill (yields to personal fill). */
     #${OWN_LIST_ID} .kickflow-message--role-mod {
-      border-left: ${ROLE_BAR_WIDTH_PX}px solid var(--kf-mod-bar);
+      padding-left: 9px;
+    }
+    #${OWN_LIST_ID} .kickflow-message--role-mod::before,
+    #${OWN_LIST_ID} .kickflow-message--role-vip::before {
+      content: ''; position: absolute; left: 0; top: 5px; bottom: 5px;
+      width: ${ROLE_BAR_WIDTH_PX}px; background: var(--kf-mod-bar); border-radius: 0;
     }
     #${OWN_LIST_ID} .kickflow-message--role-mod.kickflow-message--role-fill:not(.kickflow-message--hl-fill) {
       background-color: var(--kf-mod-fill);
     }
     #${OWN_LIST_ID} .kickflow-message--role-vip {
-      border-left: ${ROLE_BAR_WIDTH_PX}px solid var(--kf-vip-bar);
+      padding-left: 9px;
     }
+    #${OWN_LIST_ID} .kickflow-message--role-vip::before { background: var(--kf-vip-bar); }
     #${OWN_LIST_ID} .kickflow-message--role-vip.kickflow-message--role-fill:not(.kickflow-message--hl-fill) {
       background-color: var(--kf-vip-fill);
     }
@@ -570,7 +582,7 @@ function ensureStyles(): void {
       color: rgba(255,255,255,0.72);
     }
     #${OWN_LIST_ID} .kickflow-message__reply-me-mark {
-      display: inline-block; margin-right: 4px; color: var(--kf-hl-outline); font-size: 11px;
+      display: inline-block; margin-right: 4px; color: var(--kf-hl-outline); font-size: 12px;
     }
     /* Panel: highlight style segments + color swatches */
     .kickflow-panel__settings-row--stack {
@@ -658,15 +670,14 @@ function ensureStyles(): void {
       40%, 80% { transform: translateX(3px); }
     }
     #${OWN_LIST_ID} .kickflow-message__reply-icon {
-      display: inline-block; flex: none; width: 13px; margin-right: 4px; font-size: 11px;
+      display: inline-block; flex: none; width: 13px; margin-right: 4px; font-size: 12px;
     }
     #${OWN_LIST_ID} .kickflow-message__reply-text {
       display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%;
     }
     #${OWN_LIST_ID} .kickflow-message__reply-separator { flex: none; }
     #${OWN_LIST_ID} .kickflow-message__reply-user {
-      flex: 0 1 auto; min-width: 0; max-width: 38%;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      flex: 0 0 auto; flex-shrink: 0; white-space: nowrap;
     }
     #${OWN_LIST_ID} .kickflow-message__reply-separator { white-space: pre; }
     #${OWN_LIST_ID} .kickflow-message__reply-snippet {
@@ -674,9 +685,42 @@ function ensureStyles(): void {
       overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
     }
     #${OWN_LIST_ID} .kickflow-message__reply-user { font-weight: 700; color: rgba(255,255,255,0.72); }
-    #${OWN_LIST_ID} .kickflow-preserved { opacity: 0.6; }
-    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content { text-decoration: line-through; }
+    #${OWN_LIST_ID} .kickflow-preserved { opacity: 1; }
+    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__identity { display: inline; }
+    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content {
+      color: #aeb8b1; text-decoration: line-through; text-decoration-color: rgba(255,107,94,0.55);
+    }
+    #${OWN_LIST_ID} .kickflow-badge-text,
+    #${OWN_LIST_ID} .kickflow-badge-role,
+    #${OWN_LIST_ID} .kickflow-badge-role__count { font-size: 12px; }
+    #${OWN_LIST_ID} .kickflow-event-row--gap {
+      display: block; padding: 8px 0; border: 0; border-block: 1px solid rgba(220,255,226,0.12);
+      border-radius: 0; background: transparent; color: #aeb8b1; font-size: 12px; text-align: center;
+    }
+    #${OVERLAY_ROOT_ID} [data-kickflow-chat-status] { background: #121613; border-top: 1px solid rgba(220,255,226,0.12); }
+    #${OVERLAY_ROOT_ID} [data-kickflow-chat-status] button {
+      color: #eef3ef; font: inherit; text-decoration: underline; cursor: pointer;
+      border: 0; background: transparent; padding: 4px 6px;
+    }
     html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
+    /* A descendant can override inherited visibility. Opacity on the native row cannot be
+       overridden by Kick's reply action during own-list takeover. */
+    html.kickflow-chat-active #chatroom-messages [data-index] { opacity: 0 !important; pointer-events: none !important; }
+    /* Kick's virtualized list can retain :hover on the old row after an incoming message moves
+       the list under a stationary mouse. The augmenter marks the row actually under the pointer.
+       Keyboard focus remains a separate way to reveal the native reply control. */
+    #chatroom-messages [data-index]:hover:not([data-kickflow-pointer-row]):not(:has(:focus-visible)) > .group > .w-full {
+      background-color: transparent !important;
+    }
+    #chatroom-messages [data-index]:is([data-kickflow-pointer-row], :has(:focus-visible)) > .group > .w-full {
+      background-color: rgba(255,255,255,0.06) !important;
+    }
+    #chatroom-messages [data-index] > .group > div:has(> button > svg[data-ds-icon="ArrowCurveLeft"]) {
+      display: none !important;
+    }
+    #chatroom-messages [data-index]:is([data-kickflow-pointer-row], :has(:focus-visible)) > .group > div:has(> button > svg[data-ds-icon="ArrowCurveLeft"]) {
+      display: flex !important;
+    }
     .kickflow-scroll-pill {
       position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
       display: inline-flex; align-items: center; gap: 5px;
@@ -692,6 +736,7 @@ function ensureStyles(): void {
       position: fixed; z-index: 2147483647; width: 320px; padding: 12px;
       box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;
       max-height: calc(100vh - ${CARD_MAX_HEIGHT_INSET_PX}px);
+      max-width: calc(100vw - ${CARD_MAX_HEIGHT_INSET_PX}px); overflow-y: auto;
       border: 1px solid rgba(255,255,255,0.13); border-radius: 10px;
       background: oklch(0.19 0.008 260 / 0.985); color: #efeff1;
       box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 16px 40px rgba(0,0,0,0.52);
@@ -699,6 +744,7 @@ function ensureStyles(): void {
       animation: kickflow-card-in 160ms cubic-bezier(0.25, 1, 0.5, 1) both;
     }
     .kickflow-user-card--instant { animation: none; }
+    .kickflow-user-card > :not(.kickflow-user-messages) { flex-shrink: 0; }
     @keyframes kickflow-card-in {
       from { opacity: 0; transform: translateY(6px) scale(0.985); }
       to   { opacity: 1; transform: none; }
@@ -906,14 +952,13 @@ function ensureStyles(): void {
     .kickflow-mention--link:hover { text-decoration: underline; }
     .kickflow-link { color: #66bfff; text-decoration: underline; }
     .kickflow-status-label {
-      display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
-      font-size: 9px; font-weight: 800; letter-spacing: 0.03em; vertical-align: middle;
-      text-decoration: none; text-transform: uppercase;
+      display: inline; margin-left: 5px; padding: 1px 5px; border-radius: 3px;
+      font-size: 12px; font-weight: 600; vertical-align: baseline;
+      text-decoration: none; text-transform: lowercase; background: rgba(220,255,226,0.08); color: #aeb8b1;
     }
-    .kickflow-status-label--banned { background: rgba(233,17,60,0.92); color: #fff; }
-    .kickflow-status-label--timeout { background: rgba(230,147,43,0.92); color: #fff; }
-    .kickflow-status-label--deleted { background: rgba(156,122,30,0.92); color: #fff; }
-    .kickflow-status-label--unknown { background: rgb(65,72,86); color: #fff; }
+    .kickflow-status-label--banned { background: rgba(255,107,94,0.12); color: #ff6b5e; }
+    .kickflow-status-label--timeout { background: rgba(240,184,78,0.12); color: #f0b84e; }
+    .kickflow-status-label--deleted, .kickflow-status-label--unknown { background: #20261f; color: #aeb8b1; }
     .kickflow-active-chatters-badge {
       flex: none; min-width: auto; height: 18px; margin-left: auto; padding: 0 6px;
       border: 1px solid rgba(230,147,43,0.45); border-radius: 999px;
@@ -922,7 +967,7 @@ function ensureStyles(): void {
     }
     .kickflow-active-chatters-badge:hover { background: rgba(230,147,43,0.38); color: #fff; }
     .kickflow-active-chatters-badge:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
-    .kickflow-mod-label { margin-left: 5px; font-size: 10px; font-weight: 600; opacity: 0.7; }
+    .kickflow-mod-label { margin-left: 4px; font-size: 12px; font-weight: 500; text-transform: none; }
     .kickflow-preserved { position: relative; }
     .kickflow-original-content {
       margin-left: 6px; color: #efeff1; opacity: 0.6; text-decoration: line-through;
@@ -986,15 +1031,15 @@ function ensureStyles(): void {
     .kickflow-event-row__victims { min-width: 0; }
     .kickflow-event-row__remainder { color: inherit; }
     .kickflow-modaction-surface {
-      --kickflow-modaction-accent: oklch(0.80 0.06 265);
-      --kickflow-modaction-band: color-mix(in oklch, var(--kickflow-modaction-accent) 8%, transparent);
-      --kickflow-modaction-moderator-color: oklch(0.78 0.13 155);
-      --kickflow-modaction-body-color: oklch(0.9 0.02 265);
-      --kickflow-modaction-meta-color: oklch(0.72 0.03 265 / 0.62);
+      --kickflow-modaction-accent: #aeb8b1;
+      --kickflow-modaction-band: #181d19;
+      --kickflow-modaction-moderator-color: #eef3ef;
+      --kickflow-modaction-body-color: #aeb8b1;
+      --kickflow-modaction-meta-color: #aeb8b1;
       background: var(--kickflow-modaction-band);
       color: var(--kickflow-modaction-body-color);
-      border: 0;
-      border-radius: 4px;
+      border: 1px solid rgba(220,255,226,0.10);
+      border-radius: 6px;
       box-shadow: none;
     }
     .kickflow-modaction-kind--ban {
@@ -1004,20 +1049,18 @@ function ensureStyles(): void {
       --kickflow-modaction-accent: oklch(0.75 0.14 72);
     }
     .kickflow-modaction-kind--delete {
-      --kickflow-modaction-accent: oklch(0.80 0.06 265);
+      --kickflow-modaction-accent: #aeb8b1;
     }
     .kickflow-event-row--mod-action {
       cursor: pointer;
     }
     .kickflow-event-row--mod-action .kickflow-event-row__kind-tag {
-      display: inline-block;
+      display: inline-flex;
       margin-right: 6px;
       color: var(--kickflow-modaction-accent);
-      font-size: 10px;
+      font-size: 12px;
       font-weight: 700;
-      letter-spacing: 0.07em;
       line-height: 1;
-      text-transform: uppercase;
       vertical-align: middle;
       white-space: nowrap;
     }
@@ -1057,8 +1100,8 @@ function ensureStyles(): void {
       overflow-wrap: anywhere;
       background: var(--kickflow-modaction-band);
       color: var(--kickflow-modaction-body-color);
-      border: 0;
-      border-radius: 4px;
+      border: 1px solid rgba(220,255,226,0.10);
+      border-radius: 6px;
       box-shadow: none;
     }
     #${OWN_LIST_ID} .kickflow-event-row--mod-action .kickflow-event-row__moderator {
@@ -1400,8 +1443,11 @@ function ensureStyles(): void {
       .kickflow-panel__shell, .kickflow-panel__hotkey-chip--capturing { animation: none; }
     }
 
-    /* --- Footer toggle button: injected into Kick's own chat footer, next to its send/gear
-       cluster (see footer-toggle.ts). Sized to match Kick's neighboring icon buttons. --- */
+    /* A CSS-only slot leaves the native footer child/text sequence intact during hydration.
+       The body-level control occupies this space beside the native send/gear cluster. */
+    body:has(> .kickflow-footer-toggle) div:has(> #send-message-button)::before {
+      content: ''; width: 30px; height: 30px; flex: 0 0 30px;
+    }
     .kickflow-footer-toggle {
       position: relative; appearance: none; width: 30px; height: 30px; padding: 0; margin: 0;
       border: 0; border-radius: 8px; background: transparent; color: #b5b5be; cursor: pointer;
@@ -1419,7 +1465,10 @@ function ensureStyles(): void {
       display: flex; align-items: center; justify-content: center;
     }
 
-    /* Real-navbar first-child injection: one compact KickFlow mark, no dropdown or React clone. */
+    /* Body-level mark aligned before the native navbar actions. */
+    body:has(> .kickflow-navbar-settings) nav > div:nth-child(3).flex.items-center.gap-2::before {
+      content: ''; width: 34px; height: 34px; flex: 0 0 34px;
+    }
     .kickflow-navbar-settings {
       appearance: none; width: 34px; height: 34px; padding: 0; margin: 0; border: 1px solid rgba(255,255,255,.10);
       border-radius: 9px; background: rgba(255,255,255,.055); color: #53fc18; cursor: pointer;
@@ -1433,80 +1482,162 @@ function ensureStyles(): void {
     .kickflow-navbar-settings:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
 
     /* --- Player controls, injected inline into Kick's native control bar.
-       These are NOT styled to a KickFlow identity: the goal is to be indistinguishable from
-       the buttons Kick puts either side of them. Every value below is Kick's own, read out of
-       its production bundle (2026-08-05) rather than eyeballed —
-       buttonIconVariants base + size:xl + variant:link:
-         size-11        -> 44x44 box
-         rounded        -> 4px radius
-         bg-transparent -> NO chip background; native player buttons are bare icons
-         text-xl + [&_svg]:size-[1em] -> 20px icon, [&_svg]:fill-current -> FILLED, not stroked
-         active:scale-[0.95]
-       and the group's own "flex flex-row items-center gap-2 lg:gap-0" -> no gap on desktop.
-       The permanent translucent chips and the border-left separators this replaced were the
-       whole reason the cluster read as bolted on. Hover keeps a state layer, matching the
-       treatment Kick uses on its non-link icon buttons, so the affordance survives. --- */
+       FINAL design 2026-10-18 (player-bar.html): KickFlow's controls sit on ONE plate, so it is clear what KickFlow adds,
+       while every BUTTON keeps Kick's own geometry, read out of its bundle 2026-08-05:
+         size-11 -> 44x44 box, bg-transparent at rest, 20px FILLED icons (fill-current),
+         active:scale-[0.95], group gap 0 on desktop.
+       The plate, the hover layer and the chip are pseudo-elements INSIDE those 44px boxes, so the
+       geometry gate (tests/playwright/player-bar-visual.mjs) still sees native boxes and Kick's
+       own controls never move. Nothing here animates while the player is idle. --- */
     .kickflow-player-group {
+      position: relative; isolation: isolate;
       display: inline-flex; align-items: center; gap: 0;
       height: 44px;
       /* Kick's own bar buttons carry shrink-0 grow-0; ours match, so a squeezed bar never
          squashes a control instead of collapsing it into the overflow menu. */
       flex: none;
     }
+    /* The plate: one glass piece across our consecutive groups. The behind-live chip joins it
+       only while it shows; at the live edge its reserved box stays outside and invisible. */
+    .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip)::before {
+      content: ''; position: absolute; z-index: -1; inset: 4px 0;
+      background: rgba(255,255,255,0.04);
+      -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.09); border-left-width: 0; border-right-width: 0;
+      pointer-events: none;
+    }
+    .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip):not(.kickflow-player-group + .kickflow-player-group)::before {
+      border-left-width: 1px; border-top-left-radius: 12px; border-bottom-left-radius: 12px; left: 0;
+    }
+    .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip):not(:has(+ .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip)))::before {
+      border-right-width: 1px; border-top-right-radius: 12px; border-bottom-right-radius: 12px;
+    }
+    /* Divider after the 10 s pair, as in the design. */
+    #kickflow-rewind-controls::after {
+      content: ''; width: 1px; height: 18px; margin: 0 3px; flex: none;
+      background: rgba(255,255,255,0.16);
+    }
+    .kickflow-overflow-menu .kickflow-player-group::before,
+    .kickflow-overflow-menu #kickflow-rewind-controls::after { display: none; }
     .kickflow-player-btn,
     .kickflow-speed-btn {
-      appearance: none;
+      appearance: none; position: relative;
       display: inline-flex; align-items: center; justify-content: center;
-      margin: 0; border: 0; color: #fff; line-height: 1; white-space: nowrap; cursor: pointer;
+      margin: 0; border: 0; color: #f2f6f2; line-height: 1; white-space: nowrap; cursor: pointer;
       /* Kick's bar owns the type: inheriting is what makes the text sit native. */
-      font: inherit; font-size: 14px; font-weight: 600;
-      transition: background .14s ease, color .14s ease, transform .09s ease;
+      font: inherit; font-size: 14px; font-weight: 700;
+      background: transparent;
+      transition: color .12s ease, transform .09s ease;
     }
     .kickflow-player-btn {
-      gap: 2px; height: 44px; min-width: 44px; padding: 0 6px; border-radius: 4px;
-      background: transparent;
+      gap: 2px; height: 44px; min-width: 40px; padding: 0 9px; border-radius: 10px;
     }
-    .kickflow-player-btn:hover,
-    .kickflow-speed-btn:hover {
-      background: rgba(255,255,255,0.10);
+    /* Hover and press draw a 36px rounded layer inside the 44px box, matching the plate. */
+    .kickflow-player-btn:not(.kickflow-player-btn--live)::after,
+    .kickflow-speed-btn::after {
+      content: ''; position: absolute; z-index: -1; inset: 4px 1px; border-radius: 10px;
+      background: transparent; transition: background .12s ease; pointer-events: none;
     }
+    .kickflow-player-btn:not(.kickflow-player-btn--dim):hover::after,
+    .kickflow-speed-btn:hover::after { background: rgba(255,255,255,0.12); }
+    .kickflow-player-btn:not(.kickflow-player-btn--dim):active::after,
+    .kickflow-speed-btn:active::after { background: rgba(255,255,255,0.18); }
     .kickflow-player-btn:active,
-    .kickflow-speed-btn:active {
-      background: rgba(255,255,255,0.16); transform: scale(0.95);
-    }
+    .kickflow-speed-btn:active { transform: scale(0.95); }
     .kickflow-player-btn:focus-visible,
     .kickflow-speed-btn:focus-visible {
-      outline: 2px solid #53fc18; outline-offset: -2px;
+      outline: 2px solid #53fc18; outline-offset: -4px;
     }
     .kickflow-player-btn svg {
       width: 20px; height: 20px; display: block;
       fill: currentColor; fill-rule: evenodd; stroke: none;
     }
-    .kickflow-player-btn__step {
-      font-variant-numeric: tabular-nums; font-size: 13px;
+    .kickflow-player-btn svg text,
+    .kickflow-seek-ripple svg text {
+      font: 800 7.6px 'Segoe UI', system-ui, sans-serif; fill: currentColor;
     }
-    /* The fixed width reserves room for the "-Xsn" suffix so nothing to the right ever shifts
-       when it appears. Content is LEFT-aligned inside that reserved box rather than centred:
-       centring makes the short "CANLI" state float in dead air on both sides, which is the one
-       thing that still read as bolted-on once the chips were gone. */
+    /* 10 s forward at the live edge: nowhere to go, so it is dim (still focusable, a no-op). */
+    .kickflow-player-btn--dim { opacity: 0.38; cursor: default; }
+    /* The behind-live chip. At the live edge it takes no room at all, because Kick's own LIVE
+       label already says live ("İkinci CANLI yok"). It is the LAST item of our plate, so when it
+       appears nothing of Kick's or ours moves; native-bar.ts watches its size and re-plans the
+       width budget before the next paint. */
     .kickflow-player-btn--live {
-      min-width: 112px; padding: 0 8px; gap: 5px; justify-content: flex-start;
-      font-variant-numeric: tabular-nums;
+      display: none; padding: 0 10px 0 9px; gap: 6px; justify-content: flex-start;
+      color: #ffc670; font-size: 13px; font-variant-numeric: tabular-nums;
     }
     .kickflow-player-btn--live::before {
-      content: ''; width: 7px; height: 7px; border-radius: 50%; flex: none;
-      background: #e9113c;
-      transition: background .14s ease;
+      content: ''; position: absolute; z-index: -1; inset: 7px 3px; border-radius: 8px;
+      background: rgba(16,13,8,0.32); box-shadow: inset 0 0 0 1px rgba(255,181,71,0.45);
+      transition: background .12s ease; pointer-events: none;
     }
-    /* Behind-live uses coloured text and a transparent button to match the surrounding
-       bare icons. 2026-10-16.
-       Keep the state visible without a filled chip. */
-    .kickflow-player-btn--behind { color: #ffb020; }
-    .kickflow-player-btn--behind::before { background: #ffb020; }
+    .kickflow-player-btn--live:hover::before { background: rgba(16,13,8,0.42); }
+    .kickflow-player-btn--live svg { width: 14px; height: 14px; }
+    .kickflow-player-btn--live.kickflow-player-btn--behind { display: inline-flex; }
+    .kickflow-live-chip__go {
+      padding-left: 7px; border-left: 1px solid rgba(255,198,112,0.35); font-weight: 600;
+    }
     .kickflow-speed-btn {
-      height: 44px; min-width: 52px; padding: 0 8px; border-radius: 4px;
-      background: transparent;
+      height: 44px; min-width: 52px; padding: 0 10px; gap: 5px; border-radius: 10px;
       font-variant-numeric: tabular-nums;
+    }
+    .kickflow-speed-btn__auto {
+      font-size: 11px; font-weight: 600; letter-spacing: .06em; color: #f2f6f2;
+    }
+    .kickflow-speed-btn svg.kickflow-speed-btn__bolt {
+      width: 15px; height: 15px; fill: #53fc18; stroke: none;
+    }
+    .kickflow-speed-btn--catch { color: #c8ffb2; }
+    .kickflow-speed-btn--catch .kickflow-speed-btn__auto { color: inherit; }
+    .kickflow-speed-btn--manual { color: #c8ffb2; }
+    .kickflow-speed-btn--manual::after {
+      inset: 6px 1px; border-radius: 9px;
+      background: rgba(83,252,24,0.10); box-shadow: inset 0 0 0 1px rgba(83,252,24,0.42);
+    }
+
+    /* Player bar 2026-10-22: transparent at the top, 60% dark at the bottom;
+       hover/focus deepens the same fade. Only the middle controls retain a blurred plate.
+       Override Kick's background too, so the two fades do not stack. Geometry is unchanged. */
+    div.z-controls.bottom-0 {
+      isolation: isolate; background-image: none; background-color: transparent;
+    }
+    div.z-controls.bottom-0:is(:hover, :focus-within) { --kickflow-bar-shade: 0.70; }
+    div.z-controls.bottom-0::after {
+      content: ''; position: absolute; z-index: -2; left: 0; right: 0; bottom: 0; height: 9rem;
+      background: linear-gradient(to top, rgba(0,0,0,var(--kickflow-bar-shade, 0.60)) 0, rgba(0,0,0,var(--kickflow-bar-shade, 0.60)) 4.5rem, rgba(0,0,0,0) 9rem);
+      pointer-events: none;
+    }
+    /* Bottom-area reveal owns both the native strip and the floating overlay controls. */
+    [data-kickflow-controls]:focus-visible { outline: 2px solid #53fc18; outline-offset: -2px; }
+    [data-kickflow-controls="hidden"] :is(div.z-controls, .kickflow-player-menu) {
+      opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
+    }
+    [data-kickflow-controls="shown"] div.z-controls.bottom-0 {
+      opacity: 1 !important; visibility: visible !important; pointer-events: auto !important;
+    }
+    /* Current Kick nests the 80px customized bar in a 44px clipping shelf. */
+    [data-kickflow-controls] div:has(> div.z-controls.bottom-0) { overflow: visible !important; }
+    html[data-kickflow-strip] div.z-controls.bottom-0 {
+      padding: 26px 18px 10px;
+      background-image: none; background-color: transparent;
+    }
+    html[data-kickflow-strip] div.z-controls.bottom-0::before {
+      content: none;
+    }
+    /* The seek line moves inside the capsule, above the buttons. */
+    html[data-kickflow-strip] div.z-controls.bottom-0 [class*="group/seekbar"] {
+      top: 4px; left: 26px; right: 26px; width: auto;
+    }
+    /* Flat bar (flag off or Kick renamed its bar): our plate carries its own darker fill. No blur
+       here: each group would blur on its own and show seams between the pieces. */
+    html:not([data-kickflow-strip]) .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip)::before {
+      background: rgba(10,13,11,0.72);
+    }
+    /* Behind live, the unwatched part of the seek line turns into an amber dashed gap (FINAL 6.3,
+       moment 1): ours and Kick's own track, keyed on the chip being shown. */
+    div.z-controls.bottom-0:has(.kickflow-player-btn--behind) .kickflow-seek-bar__track,
+    div.z-controls.bottom-0:has(.kickflow-player-btn--behind) [class*="group/seekbar"] [class*="bg-subtle"] {
+      background: repeating-linear-gradient(90deg, #ffb547 0 4px, rgba(255,181,71,0) 4px 7px);
     }
 
     /* --- Seek bar. The geometry and colours come from Kick's OWN utility classes, which the
@@ -1538,42 +1669,117 @@ function ensureStyles(): void {
       position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #53fc18;
     }
     /* One popup shell for every player menu (player-menu.ts); the menu's own class adds only
-       what is specific to it. */
+       what is specific to it. Glass over video, as in the FINAL design. */
     .kickflow-player-menu {
-      position: fixed; z-index: 2147483647; padding: 6px;
-      border: 1px solid rgba(255,255,255,0.16); border-radius: 8px;
-      background: rgba(18,20,24,0.97); color: #fff;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.45);
-      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+      position: fixed; z-index: 2147483647; padding: 8px;
+      border: 0; border-radius: 14px;
+      background: rgba(10,13,11,0.86); color: #f2f6f2;
+      -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.11), inset 0 1px 0 rgba(255,255,255,0.07), 0 16px 40px rgba(0,0,0,0.5);
+      font-family: 'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;
     }
-    .kickflow-speed-menu { min-width: 128px; }
+    .kickflow-player-kbd {
+      display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 5px;
+      border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; background: rgba(255,255,255,0.08);
+      color: #fff; font: 700 11px/1 'Inter','Segoe UI',system-ui,sans-serif;
+    }
+    .kickflow-speed-menu { width: 248px; }
+    .kickflow-speed-menu__head {
+      display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px;
+      font-size: 12px; font-weight: 600; color: rgba(242,246,242,0.62);
+    }
+    .kickflow-speed-menu__auto {
+      appearance: none; display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 8px 10px; border: 0; border-radius: 10px; background: rgba(255,255,255,0.06);
+      color: inherit; cursor: pointer; text-align: left; font: inherit;
+    }
+    .kickflow-speed-menu__auto:hover { background: rgba(255,255,255,0.10); }
+    .kickflow-speed-menu__auto:focus-visible,
+    .kickflow-speed-menu__item:focus-visible { outline: none; box-shadow: 0 0 0 2px #53fc18; }
+    .kickflow-speed-menu__auto-text { flex: 1; display: grid; gap: 2px; }
+    .kickflow-speed-menu__auto-text b { font-size: 14px; }
+    .kickflow-speed-menu__auto-text small { font-size: 12px; line-height: 1.3; color: rgba(242,246,242,0.62); }
+    .kickflow-switch {
+      position: relative; flex: none; width: 38px; height: 22px; border-radius: 11px;
+      background: rgba(255,255,255,0.18); transition: background .12s ease;
+    }
+    .kickflow-switch::after {
+      content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+      background: #f2f6f2; transition: transform .12s ease;
+    }
+    .kickflow-speed-menu__auto[aria-checked="true"] .kickflow-switch { background: #53fc18; }
+    .kickflow-speed-menu__auto[aria-checked="true"] .kickflow-switch::after { transform: translateX(16px); background: #071a04; }
+    .kickflow-speed-menu__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }
     .kickflow-speed-menu__item {
-      appearance: none; display: flex; align-items: center; gap: 7px;
-      width: 100%; height: 30px; padding: 0 10px; border: 0; border-radius: 5px;
-      background: transparent; color: #fff; cursor: pointer;
-      font-size: 12px; font-weight: 700; text-align: left; font-variant-numeric: tabular-nums;
+      appearance: none; min-height: 36px; padding: 0; border: 0; border-radius: 8px;
+      background: rgba(255,255,255,0.04); color: inherit; cursor: pointer;
+      font: 700 14px/1 'Inter','Segoe UI',system-ui,sans-serif; font-variant-numeric: tabular-nums;
     }
-    .kickflow-speed-menu__item::before {
-      content: ''; width: 6px; height: 6px; border-radius: 50%; background: transparent;
-    }
-    .kickflow-speed-menu__item[aria-checked="true"]::before { background: #53fc18; }
-    .kickflow-speed-menu__item:hover,
-    .kickflow-speed-menu__item:focus-visible {
-      outline: none; background: rgba(255,255,255,0.13);
-    }
-    .kickflow-speed-menu__separator {
-      height: 1px; margin: 5px 4px; background: rgba(255,255,255,0.14);
-    }
-    /* The overflow menu holds the REAL control elements as rows, so each row is exactly one
-       44px control box — no second implementation, no second set of styles. */
+    .kickflow-speed-menu__item:hover:not([aria-checked="true"]) { background: rgba(255,255,255,0.10); }
+    .kickflow-speed-menu__item[aria-checked="true"] { background: #53fc18; color: #071a04; }
+    .kickflow-speed-menu__hint { padding: 8px 4px 2px; font-size: 12px; color: rgba(242,246,242,0.55); }
+    /* The overflow ("Diğer") menu holds the REAL control elements as rows, each with its name
+       and key, so no control gets a second implementation. */
     .kickflow-overflow-menu {
-      display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+      display: flex; flex-direction: column; align-items: stretch; gap: 2px; min-width: 232px;
     }
     .kickflow-overflow-menu__row {
-      display: flex; align-items: center; border-radius: 5px;
+      display: flex; align-items: center; gap: 8px; padding-right: 8px; border-radius: 8px;
     }
-    .kickflow-overflow-menu__row:hover { background: rgba(255,255,255,0.06); }
-    .kickflow-overflow-menu__row > .kickflow-player-group { flex: 1 1 auto; }
+    .kickflow-overflow-menu__row:hover { background: rgba(255,255,255,0.08); }
+    .kickflow-overflow-menu__row > .kickflow-player-group { flex: none; }
+    .kickflow-overflow-menu__name { flex: 1; font-size: 13px; font-weight: 600; color: #f2f6f2; white-space: nowrap; }
+    .kickflow-overflow-menu .kickflow-player-btn--live { display: inline-flex; }
+    /* Seek feedback: a glass circle for half a second (rewind-controls.ts showSeekRipple). */
+    .kickflow-seek-ripple {
+      position: absolute; z-index: 2147483646; top: 42%; width: 112px; height: 112px; margin-top: -56px;
+      display: grid; place-items: center; align-content: center; gap: 2px; border-radius: 50%;
+      background: rgba(10,12,11,0.45); color: #fff; pointer-events: none;
+      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+      font: 700 14px/1 'Inter','Segoe UI',system-ui,sans-serif;
+      animation: kickflow-ripple .5s cubic-bezier(.22,1,.36,1) both;
+    }
+    .kickflow-seek-ripple svg { width: 32px; height: 32px; fill: currentColor; }
+    .kickflow-seek-ripple--back { left: 15%; }
+    .kickflow-seek-ripple--forward { right: 15%; }
+    @keyframes kickflow-ripple {
+      0% { opacity: 0; transform: scale(.85); } 25% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(1.05); }
+    }
+    /* Screenshot: one toast above the strip (screenshot.ts showFrameToast). */
+    .kickflow-frame-toast {
+      position: absolute; z-index: 2147483646; right: 14px; bottom: 96px;
+      display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; border-radius: 10px;
+      background: rgba(10,13,11,0.86); color: #f2f6f2; pointer-events: none;
+      -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.11), 0 10px 30px rgba(0,0,0,0.45);
+      font-family: 'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;
+      animation: kickflow-toast-in .18s cubic-bezier(.22,1,.36,1) both;
+    }
+    .kickflow-frame-toast__thumb { width: 64px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; box-shadow: 0 0 0 1px rgba(255,255,255,0.2); }
+    .kickflow-frame-toast__text { display: grid; gap: 3px; }
+    .kickflow-frame-toast__text b { font-size: 13px; }
+    .kickflow-frame-toast__text small { font-size: 12px; color: rgba(242,246,242,0.62); }
+    .kickflow-capture-status, .kickflow-clip-preview {
+      position: absolute; z-index: 2147483646; right: 14px; bottom: 104px;
+      max-width: min(320px, calc(100% - 28px)); border-radius: 8px; padding: 12px;
+      background: #121713; color: #f2f6f2; font: 13px/1.5 system-ui, sans-serif;
+      box-shadow: 0 0 0 1px #465047;
+    }
+    .kickflow-capture-status { pointer-events: none; }
+    .kickflow-clip-preview { display: grid; gap: 8px; pointer-events: auto; }
+    .kickflow-clip-preview video { width: 100%; max-height: 180px; }
+    .kickflow-clip-preview small { overflow-wrap: anywhere; }
+    .kickflow-clip-preview a, .kickflow-clip-preview button {
+      padding: 8px 12px; border-radius: 4px; background: #285c27; color: #f2f6f2; text-align: center;
+    }
+    .kickflow-clip-preview :focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
+    @keyframes kickflow-toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      .kickflow-seek-ripple, .kickflow-frame-toast { animation: none; }
+      .kickflow-player-btn, .kickflow-speed-btn, .kickflow-switch, .kickflow-switch::after { transition: none; }
+    }
     .kickflow-speed-warning {
       position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
       z-index: 2147483647; padding: 7px 11px; border-radius: 6px;
@@ -2009,15 +2215,17 @@ function initOwnChatIntegrity(
   lifecycle.setTimeout(() => {
     mount.initialNoContentDeadline();
     if (mount.state === 'fallback') {
+      mount.showFailure();
       setStatus({ active: false, reason: t('status.content_not_ready') });
     }
   }, INITIAL_NO_CONTENT_FALLBACK_MS);
 
-  resolveChannel(slug).then(async (resolved) => {
+  const start = (): void => { void resolveChannel(slug).then(async (resolved) => {
     if (lifecycle.isDisposed) return;
     if (!resolved) {
       logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
       mount.failOpen('channel-resolution-failed');
+      mount.showFailure();
       setStatus({ active: false, reason: t('status.chatroom_unresolved_native') });
       return;
     }
@@ -2085,6 +2293,8 @@ function initOwnChatIntegrity(
     let primaryReady = false;
     let hasPrimaryReadyOnce = false;
     let reconnectGraceTimer: number | null = null;
+    let outage: OutageBoundary | null = null;
+    let historyLoaded = false;
     const clearReconnectGrace = (): void => {
       if (reconnectGraceTimer === null) return;
       window.clearTimeout(reconnectGraceTimer);
@@ -2094,7 +2304,22 @@ function initOwnChatIntegrity(
     const historyBackfill = new ChatHistoryBackfill(channelId, {
       isDisposed: () => lifecycle.isDisposed,
       onMessages: (history) => {
-        for (const message of history) {
+        const times = Array.from(ownList.querySelectorAll<HTMLElement>('[data-created-at]'))
+          .map((row) => Date.parse(row.dataset.createdAt!)).filter(Number.isFinite);
+        const oldest = historyLoaded && times.length > 0 ? Math.min(...times) : null;
+        const plan = planBackfill(history, oldest, outage);
+        if (plan.gap && outage) {
+          const gap = plan.gap;
+          enqueueOnce({
+            id: `gap:${outage.lastId}`, chatroomId, type: 'system',
+            createdAt: new Date(Math.max(gap.at, oldest ?? gap.at)).toISOString(), content: '',
+            sender: { id: 0, username: 'KickFlow', slug: 'kickflow', identity: { color: '', badges: [], badgesV2: [] } },
+            preserved: false, systemEvent: { kind: 'gap', estimatedCount: gap.count, seconds: gap.seconds },
+          });
+        }
+        outage = null;
+        historyLoaded = true;
+        for (const message of plan.messages) {
           enqueueOnce(message);
         }
       },
@@ -2142,6 +2367,7 @@ function initOwnChatIntegrity(
         });
       },
       onDisconnected: () => {
+        outage ??= captureOutage(store.getMessagesInArrivalOrder());
         const keepDuringGrace = mount.state === 'active';
         primaryReady = false;
         setStatus({ pusherConnected: false });
@@ -2153,6 +2379,7 @@ function initOwnChatIntegrity(
           reconnectGraceTimer = null;
           if (primaryReady || lifecycle.isDisposed) return;
           mount.setPrimaryUnavailable('primary-reconnect-grace-expired');
+          mount.showFailure();
           setStatus({ active: false, reason: t('status.reconnect_failed') });
         }, PRIMARY_RECONNECT_GRACE_MS);
       },
@@ -2185,7 +2412,14 @@ function initOwnChatIntegrity(
       setStatus({ pusherConnected: false });
     });
     client.connect();
+  }); };
+  // Retry starts a fresh session so old clients, queues and deadlines are disposed together.
+  mount.setRetryHandler(() => {
+    lifecycle.dispose();
+    navigationInitialized = false;
+    handlePotentialNavigation();
   });
+  start();
 }
 
 export function initChatIntegrity(
@@ -2254,6 +2488,7 @@ export function initPlayerQolSession(lifecycle: Lifecycle): void {
         if (playerSessionLifecycle === lifecycle) disposePlayerFeatures();
       });
       initAutoTheater(lifecycle);
+      initControlsVisibility(lifecycle);
       initBarOrder(lifecycle);
       initRewindHotkeys(lifecycle);
       for (const key of PLAYER_FEATURE_KEYS) syncPlayerFeature(key);
@@ -2581,7 +2816,7 @@ export function applyFlagChange(key: string, value: boolean | string): Promise<b
       syncLayoutWatchdog();
     }
     if (key === 'autoTheater') syncAutoTheaterFlag();
-    if (key === 'fullscreenTerminal') syncBarOrderFlag();
+    if (key === 'fullscreenTerminal' || key === 'floatingStrip') syncBarOrderFlag();
     if (key === 'autoClaimDrops') syncAutoClaimDropsFlag();
     if (key === 'autoClaimDailyReward') syncAutoClaimDailyRewardFlag();
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
@@ -2646,6 +2881,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     screenshot: featureFlags.screenshot,
     speedControls: featureFlags.speedControls,
     fullscreenTerminal: featureFlags.fullscreenTerminal,
+    floatingStrip: featureFlags.floatingStrip,
     autoClaimDrops: featureFlags.autoClaimDrops,
     autoClaimDailyReward: featureFlags.autoClaimDailyReward,
     mentionHighlightEnabled: featureFlags.mentionHighlightEnabled,
@@ -2751,6 +2987,25 @@ function installStatusBridge(): void {
   // applyFlagChange mutator, so featureFlags stays the one source of truth either way. Registered
   // once here (installStatusBridge runs once from main()), never per-session.
   window.addEventListener('kickflow:setFlag', onWindowFlagChange);
+  // A settings page can write kf_flag_* while no Kick tab is open; open tabs apply the new value at once.
+  chrome.storage.onChanged?.addListener(applyStoredFlagChanges);
+}
+
+/** Applies kf_flag_* values written by another extension page. A value equal to the current flag is the
+ * echo of this tab's own save and is skipped, so a change never loops. */
+export function applyStoredFlagChanges(changes: Record<string, { newValue?: unknown }>, area: string): void {
+  if (area !== 'local' || !changes || typeof changes !== 'object') return;
+  for (const [name, change] of Object.entries(changes)) {
+    if (!name.startsWith('kf_flag_')) continue;
+    const key = name.slice('kf_flag_'.length);
+    const value = change?.newValue;
+    if (isBooleanFlagKey(key) && typeof value === 'boolean') {
+      if (featureFlags[key] !== value) void applyFlagChange(key, value);
+    } else if (isStringFlagKey(key) && typeof value === 'string') {
+      const parsed = parseStringFlag(key, value);
+      if (parsed !== null && featureFlags[key] !== parsed) void applyFlagChange(key, parsed);
+    }
+  }
 }
 
 /** Load flag overrides the user set via the popup, applied before the first session starts so
@@ -2786,35 +3041,17 @@ function installNavigationHooks(): void {
   window.addEventListener('kickflow:locationchange', handlePotentialNavigation);
 }
 
-/** Longest we wait for an idle slot before mounting anyway. */
 /** Backlog size before the metered "new messages" pill is worth showing, and how long it stays up
  * once shown. Kick admits one queued row every 250 ms, so on a quiet channel the pending count
  * oscillates between 1 and 0 and a naive pill blinks on every release. */
 const PILL_MIN_PENDING = 2;
 const PILL_MIN_VISIBLE_MS = 700;
 
-const PAGE_SETTLE_TIMEOUT_MS = 1_000;
 
-/** Defers the first DOM work until the page has finished loading and the browser goes idle.
- *
- * Kick is server-rendered React: every node an extension inserts while hydration is still running
- * is a difference React did not expect. Measured on the same page, one load each — 1 × React #418
- * with KickFlow loaded, 0 × without. Everything KickFlow mounts self-heals and re-injects anyway,
- * so arriving a beat later costs nothing. Listeners and the status bridge are not deferred: they
- * touch no DOM. */
+/** The approved audit bounds startup at chat-column availability, load, or 3 seconds.
+ * DOM writes stay outside Kick's virtualized rows. Live probes measure hydration errors. */
 function afterPageSettled(mount: () => void): void {
-  const schedule = (): void => {
-    if (typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(() => mount(), { timeout: PAGE_SETTLE_TIMEOUT_MS });
-      return;
-    }
-    window.setTimeout(mount, 0);
-  };
-  if (document.readyState === 'complete') {
-    schedule();
-    return;
-  }
-  window.addEventListener('load', schedule, { once: true });
+  scheduleChatStartup(mount);
 }
 
 async function main(): Promise<void> {

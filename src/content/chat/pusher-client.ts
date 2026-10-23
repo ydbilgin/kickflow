@@ -522,6 +522,22 @@ export function normalizeChatroomUpdatedPayload(raw: unknown): ChatroomUpdatedEv
 type GiftSubscriptionState = 'idle' | 'pending' | 'active' | 'unavailable';
 type PrimarySubscriptionState = 'idle' | 'pending' | 'active';
 
+/** 2026-10-20: closing a socket that is still CONNECTING makes Chrome log "WebSocket is closed before
+ * the connection is established" against this extension (measured on a channel page, content.js). Such a
+ * socket is closed once it opens instead; its handlers already ignore a socket that is no longer current. */
+function closeQuietly(socket: WebSocket): void {
+  if (socket.readyState === 0) {
+    socket.addEventListener('open', () => {
+      try { socket.close(); } catch { /* already closing/closed */ }
+    }, { once: true });
+    return;
+  }
+  socket.close();
+}
+
+/** Consecutive failed connection attempts before a reconnect becomes a warning. 2026-10-20. */
+const RECONNECT_WARN_AFTER = 4;
+
 /** Consumes the page's filtered public realtime bridge, with an independent read-only
  * legacy Pusher fallback. Only exact-room validated native messages prove native readiness;
  * legacy failure cannot override that proof. Bootstrap disposes the listener on SPA changes. */
@@ -534,6 +550,8 @@ export class PusherClient {
   private socket: WebSocket | null = null;
   private disposed = false;
   private reconnectAttempt = 0;
+  /** One warning per outage; reset when the room is confirmed again. 2026-10-20. */
+  private reconnectWarned = false;
   private reconnectTimer: number | null = null;
   private livenessTimer: number | null = null;
   private livenessProbeTimer: number | null = null;
@@ -550,7 +568,8 @@ export class PusherClient {
   constructor(
     private readonly chatroomId: number,
     private readonly channelId: number,
-    private readonly callbacks: PusherClientCallbacks
+    private readonly callbacks: PusherClientCallbacks,
+    private readonly options: { legacyPusher?: boolean } = {},
   ) {}
 
   connect(): void {
@@ -559,6 +578,9 @@ export class PusherClient {
       window.addEventListener(NATIVE_CHAT_EVENT, this.onNativeSignal);
       this.nativeListening = true;
     }
+    // The audited legacy cluster rejects this app key. Keep it opt-in for compatibility
+    // tests only; Kick's socket owns reconnects and bootstrap owns the grace deadline.
+    if (!this.options.legacyPusher) return;
     this.teardownSocket();
 
     let socket: WebSocket;
@@ -576,7 +598,7 @@ export class PusherClient {
     this.establishmentTimer = window.setTimeout(() => {
       this.establishmentTimer = null;
       if (!isCurrentSocket()) return;
-      logger.warn('pusher-client: connection establishment timed out; reconnecting');
+      this.noteReconnect('pusher-client: connection establishment timed out; reconnecting');
       this.failCurrentConnection('handshake-timeout');
     }, PUSHER_ESTABLISHMENT_TIMEOUT_MS);
 
@@ -619,7 +641,7 @@ export class PusherClient {
       this.primarySubscriptionTimer = window.setTimeout(() => {
         this.primarySubscriptionTimer = null;
         if (this.primarySubscriptionState !== 'pending') return;
-        logger.warn('pusher-client: primary chatroom subscription was not confirmed; reconnecting', this.primaryChannelName);
+        this.noteReconnect('pusher-client: primary chatroom subscription was not confirmed; reconnecting', this.primaryChannelName);
         this.failCurrentConnection('subscription-timeout');
       }, PRIMARY_SUBSCRIPTION_CONFIRM_TIMEOUT_MS);
     }
@@ -704,6 +726,7 @@ export class PusherClient {
     this.clearPrimarySubscriptionTimer();
     this.primarySubscriptionState = 'active';
     this.reconnectAttempt = 0;
+    this.reconnectWarned = false;
     this.announceReady();
   }
 
@@ -714,6 +737,7 @@ export class PusherClient {
   }
 
   private reportUnavailable(reason: PusherReadinessFailure): void {
+    if (!this.options.legacyPusher) return;
     if (this.nativePrimarySockets.size > 0) return;
     this.readyAnnounced = false;
     this.callbacks.onPrimarySubscriptionUnavailable?.(reason);
@@ -843,6 +867,18 @@ export class PusherClient {
     }
   }
 
+  /** 2026-10-20: a dropped connection that this client
+   * retries by itself (sleep/wake, a network blip) is not an error for the extension errors page.
+   * It stays a debug line until RECONNECT_WARN_AFTER attempts in a row fail, then warns once. */
+  private noteReconnect(message: string, ...detail: unknown[]): void {
+    if (this.reconnectAttempt + 1 < RECONNECT_WARN_AFTER || this.reconnectWarned) {
+      logger.debug(message, ...detail);
+      return;
+    }
+    this.reconnectWarned = true;
+    logger.warn(message, ...detail, `(${this.reconnectAttempt + 1} attempts in a row)`);
+  }
+
   private checkConnectionLiveness(): void {
     if (this.disposed || !this.socket || this.awaitingLivenessReply) return;
     if (Date.now() - this.lastFrameAt < LIVENESS_IDLE_MS) return;
@@ -854,7 +890,7 @@ export class PusherClient {
     this.livenessProbeTimer = window.setTimeout(() => {
       this.livenessProbeTimer = null;
       if (!this.awaitingLivenessReply) return;
-      logger.warn('pusher-client: liveness probe timed out; reconnecting');
+      this.noteReconnect('pusher-client: liveness probe timed out; reconnecting');
       this.reconnectAfterLivenessFailure();
     }, LIVENESS_PROBE_TIMEOUT_MS);
   }
@@ -872,7 +908,7 @@ export class PusherClient {
     // Detach before close so its eventual close event cannot schedule a second reconnect.
     this.socket = null;
     try {
-      socket.close();
+      closeQuietly(socket);
     } catch {
       // already closing/closed — the scheduled reconnect below is still the recovery path
     }
@@ -973,6 +1009,7 @@ export class PusherClient {
           // a failed fallback while this room has proven native delivery.
           this.clearReconnectTimer();
           this.reconnectAttempt = 0;
+          this.reconnectWarned = false;
           this.announceReady();
         } else {
           this.confirmPrimaryFromValidatedFrame(frame.channel);
@@ -1125,7 +1162,7 @@ export class PusherClient {
     this.kicksSubscriptionState = 'idle';
     if (socket) {
       try {
-        socket.close();
+        closeQuietly(socket);
       } catch {
         // already closing/closed — reconnect scheduling below remains authoritative
       }
@@ -1136,6 +1173,7 @@ export class PusherClient {
   }
 
   private scheduleReconnect(): void {
+    if (!this.options.legacyPusher) return;
     if (this.disposed || this.nativePrimarySockets.size > 0 || this.reconnectTimer !== null) return;
     const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempt, RECONNECT_MAX_DELAY_MS);
     this.reconnectAttempt++;
@@ -1164,7 +1202,7 @@ export class PusherClient {
       const socket = this.socket;
       this.socket = null;
       try {
-        socket.close();
+        closeQuietly(socket);
       } catch {
         // already closing/closed — nothing to do
       }

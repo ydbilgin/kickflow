@@ -35,6 +35,7 @@ const NON_CHANNEL_SLUGS = new Set([
 ]);
 
 const SAFE_VOD_ID = /^[A-Za-z0-9_-]+$/;
+const SAFE_CHANNEL_SLUG = /^[A-Za-z0-9_-]+$/;
 
 export type ChatSessionContext =
   | {
@@ -65,6 +66,15 @@ export function parseChatSessionContext(pathname: string): ChatSessionContext | 
   if (rawSegments.length === 0) return null;
   const segments = rawSegments.map(decodePathSegment);
   if (segments.some((segment) => segment === null)) return null;
+
+  // Kick's standalone chat uses the same native message anchor but no channel-page root.
+  // Give it a separate lifecycle key so channel -> popout navigation cannot reuse a socket.
+  if (segments[0]?.toLowerCase() === 'popout') {
+    if (segments.length !== 3 || segments[2]?.toLowerCase() !== 'chat') return null;
+    const popoutSlug = segments[1]!;
+    if (!SAFE_CHANNEL_SLUG.test(popoutSlug)) return null;
+    return { kind: 'live', slug: popoutSlug, sessionKey: `popout:${popoutSlug}` };
+  }
 
   const slug = segments[0]!;
   if (!slug || NON_CHANNEL_SLUGS.has(slug.toLowerCase())) return null;

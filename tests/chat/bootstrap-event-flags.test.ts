@@ -47,6 +47,18 @@ afterAll(() => {
 });
 
 describe('bootstrap event display flags', () => {
+  it('step 6: retries a transient channel lookup 403 and resolves the next response', async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 403 } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 2, chatroom: { id: 1 } }) } as Response);
+    try {
+      const result = bootstrap.resolveChannel('retry-fixture');
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await result).toMatchObject({ chatroomId: 1, channelId: 2 });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally { fetchSpy.mockRestore(); vi.useRealTimers(); }
+  });
   it.each(['chat', 'dashboard'])('gives unknown moderation labels an explicit readable background in %s', (surface) => {
     bootstrap.initSiteLifecycle();
     const row = buildMessageElement({
@@ -998,7 +1010,7 @@ describe('bootstrap event display flags', () => {
       await openUserCard('alice', 'Alice', 10, 10, null);
       expect(fetchSpy).toHaveBeenCalledWith(
         'https://kick.com/api/v2/channels/current-channel/users/alice',
-        { headers: { accept: 'application/json' } },
+        { headers: { accept: 'application/json' }, signal: expect.any(AbortSignal) },
       );
     } finally {
       lifecycle.dispose();

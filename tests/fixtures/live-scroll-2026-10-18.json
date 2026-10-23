@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-18",
+  "source": "https://kick.com/absi",
+  "evidence": "Measured live scroll geometry; public synthetic reproduction is tests/chat/live-scroll.regression.test.ts.",
+  "description": "Busy own-list chat with official emotes and Kicks gifts. Names and message identifiers below are invented. Layout metrics and wheel delta were measured on the live page.",
+  "scroll": { "scrollHeight": 2471, "clientHeight": 574, "scrollTop": 1897 },
+  "wheelDeltaY": -650,
+  "messages": [
+    { "id": "fixture-reader-one", "username": "FixtureReaderOne", "content": "[emote:5747946:collectiblessadKEK] [emote:37226:KEKW]" },
+    { "id": "fixture-reader-two", "username": "FixtureReaderTwo", "content": "[emote:6173712:collectiblesWastedGTABase]" }
+  ]
+}

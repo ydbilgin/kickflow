@@ -32,6 +32,7 @@ const MOD_ACTION_BLOCK_CLASS = 'kickflow-modaction-block';
 const MOD_ACTION_ANCHOR_ATTRIBUTE = 'data-kickflow-modaction-anchor';
 const MOD_ACTION_ID_ATTRIBUTE = 'data-kickflow-modaction-id';
 const MOD_ACTION_SIGNATURE_ATTRIBUTE = 'data-kickflow-modaction-signature';
+const POINTER_ROW_ATTRIBUTE = 'data-kickflow-pointer-row';
 export const NATIVE_CONTENT_SELECTOR = '.break-words, [class*="break-words"]';
 export const NATIVE_ROW_GROUP_CLASS = 'group';
 
@@ -96,7 +97,11 @@ export function getActiveNativeChatGhostStats(): NativeChatGhostStats {
 
 export class NativeChatAugmenter {
   private observer: MutationObserver | null = null;
+  private hoverObserver: MutationObserver | null = null;
   private observedRoot: HTMLElement | null = null;
+  private hoverFrame: number | null = null;
+  private pointerPosition: { x: number; y: number } | null = null;
+  private pointerRow: HTMLElement | null = null;
   private readonly ghostsNeeded = new Set<string>();
   private readonly ghostAnchorById = new Map<string, string>();
   private readonly ghostsByAnchor = new Map<string, Set<string>>();
@@ -109,9 +114,36 @@ export class NativeChatAugmenter {
     private readonly store: ChatIntegrityStore,
   ) {
     const attach = (): void => this.attachToCurrentChat();
+    // Kick's virtualized list can move a row out from under a stationary pointer without
+    // Chromium immediately recomputing :hover. The stale group-hover then leaves the native
+    // reply arrow and dark band on the old row. Track the actual hit row independently.
+    document.addEventListener('pointermove', this.handlePointerMove, true);
+    // pointerleave does not bubble. A capturing listener would also see leave events from
+    // individual rows as they shift, incorrectly forgetting a mouse still inside the chat.
+    document.addEventListener('pointerleave', this.handlePointerLeave);
+    document.documentElement.addEventListener('pointerleave', this.handlePointerLeave);
+    document.addEventListener('keydown', this.handleReplyEscape, true);
+    window.addEventListener('blur', this.handlePointerLeave);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    lifecycle.add(() => {
+      document.removeEventListener('pointermove', this.handlePointerMove, true);
+      document.removeEventListener('pointerleave', this.handlePointerLeave);
+      document.documentElement.removeEventListener('pointerleave', this.handlePointerLeave);
+      document.removeEventListener('keydown', this.handleReplyEscape, true);
+      window.removeEventListener('blur', this.handlePointerLeave);
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    });
     activeAugmenter = this;
     attach();
     lifecycle.setInterval(() => attach(), 1000);
+    // Kick also moves virtual rows through layout changes that emit neither a watched DOM
+    // mutation nor a chat scroll event. Recheck a stationary mouse at a low rate so the
+    // reply action follows the real hit row without requiring another pointer movement.
+    lifecycle.setInterval(() => {
+      if (this.pointerPosition && this.observedRoot && document.visibilityState !== 'hidden') {
+        this.refreshPointerRow();
+      }
+    }, 100);
     lifecycle.add(() => {
       if (activeAugmenter === this) activeAugmenter = null;
       this.dispose();
@@ -202,6 +234,17 @@ export class NativeChatAugmenter {
       attributes: true,
       attributeFilter: ['data-kickflow-mid'],
     });
+    this.hoverObserver = new MutationObserver(this.schedulePointerRefresh);
+    this.hoverObserver.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      // Kick repositions existing virtual rows with transform changes as well as appending rows.
+      // Do not observe our own POINTER_ROW_ATTRIBUTE, which would create an observer loop.
+      attributeFilter: ['style', 'data-index'],
+    });
+    root.addEventListener('scroll', this.schedulePointerRefresh, true);
+    this.schedulePointerRefresh();
     this.reconcileVisibleRows();
     if (this.modActionNotices.size > 0) this.scheduleAnchorPass();
   }
@@ -209,13 +252,77 @@ export class NativeChatAugmenter {
   private disconnectObserver(): void {
     this.observer?.disconnect();
     this.observer = null;
+    this.hoverObserver?.disconnect();
+    this.hoverObserver = null;
+    this.observedRoot?.removeEventListener('scroll', this.schedulePointerRefresh, true);
+    this.setPointerRow(null);
     this.observedRoot = null;
   }
 
   private dispose(): void {
+    if (this.hoverFrame !== null) window.cancelAnimationFrame(this.hoverFrame);
+    this.hoverFrame = null;
     this.clearGhosts();
     this.clearModActionNotices();
     this.disconnectObserver();
+  }
+
+  private readonly handlePointerMove = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') {
+      this.handlePointerLeave();
+      return;
+    }
+    // Native-player helpers dispatch untyped MouseEvent('pointermove') at (8, 8)
+    // to wake Kick controls. They do not represent the user's pointer and must not replace
+    // the last real mouse position while the user is hovering a chat reply row.
+    if (event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+    this.pointerPosition = { x: event.clientX, y: event.clientY };
+    this.refreshPointerRow();
+  };
+
+  private readonly handlePointerLeave = (): void => {
+    this.pointerPosition = null;
+    this.setPointerRow(null);
+  };
+
+  private readonly handleVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') this.handlePointerLeave();
+  };
+
+  private readonly handleReplyEscape = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return;
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLElement)
+      || !focused.matches('button:has(svg[data-ds-icon="ArrowCurveLeft"])')
+      || !focused.closest(CHAT_ROOT_SELECTOR)) return;
+    focused.blur();
+    this.handlePointerLeave();
+  };
+
+  private readonly schedulePointerRefresh = (): void => {
+    if (!this.pointerPosition || this.hoverFrame !== null) return;
+    this.hoverFrame = window.requestAnimationFrame(() => {
+      this.hoverFrame = null;
+      this.refreshPointerRow();
+    });
+  };
+
+  private refreshPointerRow(): void {
+    const pointer = this.pointerPosition;
+    if (!pointer || !this.observedRoot || document.documentElement.classList.contains('kickflow-chat-active')) {
+      this.setPointerRow(null);
+      return;
+    }
+    const hit = document.elementFromPoint(pointer.x, pointer.y);
+    const row = hit?.closest<HTMLElement>(`${CHAT_LIST_SELECTOR} ${ROW_SELECTOR}`) ?? null;
+    this.setPointerRow(row?.closest(CHAT_ROOT_SELECTOR) === this.observedRoot ? row : null);
+  }
+
+  private setPointerRow(row: HTMLElement | null): void {
+    if (this.pointerRow === row && (!row || row.isConnected)) return;
+    this.pointerRow?.removeAttribute(POINTER_ROW_ATTRIBUTE);
+    this.pointerRow = row;
+    row?.setAttribute(POINTER_ROW_ATTRIBUTE, '');
   }
 
   private reconcileVisibleRows(): void {

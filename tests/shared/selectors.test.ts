@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { findControlBarInsertionAnchor, findLiveButton } from '../../src/content/shared/selectors';
+import { findControlBar, findControlBarInsertionAnchor, findLiveButton } from '../../src/content/shared/selectors';
 
 function setupPlayerBar(label: string): HTMLButtonElement {
   const wrapper = document.createElement('div');
@@ -20,6 +20,22 @@ afterEach(() => {
 });
 
 describe('findControlBarInsertionAnchor', () => {
+  it('ignores the HD trial promotion in the upper z-controls layer before the bar mounts', () => {
+    const wrapper = document.createElement('div');
+    const video = document.createElement('video');
+    video.id = 'video-player';
+    const promotion = document.createElement('div');
+    promotion.className = 'relative z-controls grid-row-1';
+    const trial = document.createElement('button');
+    trial.textContent = '1080p dene';
+    const later = document.createElement('button');
+    later.textContent = 'Şimdi değil';
+    promotion.append(trial, later);
+    wrapper.append(video, promotion);
+    document.body.append(wrapper);
+    expect(findControlBar()).toBeNull();
+    expect(findControlBarInsertionAnchor()).toBeNull();
+  });
   function recordedBar(): { bar: HTMLElement; left: HTMLElement; time: HTMLElement; fullscreen: HTMLButtonElement } {
     const bar = setupPlayerBar('placeholder').parentElement!;
     const left = document.createElement('div');

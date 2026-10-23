@@ -39,10 +39,9 @@ export interface ScrollFollowControllerOptions {
   cancelFrame?: (handle: number) => void;
 }
 
-/** Owns one chat list's follow state. A scroll event alone is not proof of user intent: browser
- * scroll anchoring, our own scrollTop assignment, and late image sizing can all emit one. Pause
- * only after an explicit upward input (wheel/key/scrollbar drag), while still allowing any trip
- * back to the bottom to resume following. */
+/** Owns one chat list's follow state. Upward wheel intent pauses before a queued append or
+ * image resize can mask the browser's pending scroll event. Offset changes also cover
+ * keyboard/scrollbar input; returning to the bottom resumes following. */
 export class ScrollFollowController {
   private pinned = true;
   private disposed = false;
@@ -50,6 +49,8 @@ export class ScrollFollowController {
   private lastScrollTop: number;
   private programmaticClearFrame: number | null = null;
   private unsettledFollow: UnsettledFollowRequest | null = null;
+  private pointerHeld = false;
+  private pointerReleaseFrame: number | null = null;
   private readonly observedRows = new Set<HTMLElement>();
   private readonly resizeObserver: RowResizeObserver | null;
   private readonly scheduleFrame: (callback: FrameRequestCallback) => number;
@@ -65,19 +66,27 @@ export class ScrollFollowController {
     const createResizeObserver = options.createResizeObserver
       ?? ((callback: () => void) => new ResizeObserver(callback));
     this.resizeObserver = createResizeObserver(this.handleRowsResized);
+    // Composer, native events and panel resizing can change the viewport without changing
+    // any message row. Retain the same pin intent through those changes as through images.
+    this.resizeObserver?.observe(container);
 
     container.addEventListener('scroll', this.handleScroll);
     container.addEventListener('scrollend', this.handleScrollEnd);
+    container.addEventListener('wheel', this.handleWheel, { passive: true });
+    container.addEventListener('pointerdown', this.handlePointerDown);
+    document.addEventListener('pointerup', this.handlePointerRelease);
+    document.addEventListener('pointercancel', this.handlePointerRelease);
+    window.addEventListener('blur', this.handlePointerRelease);
   }
 
   get isPinned(): boolean {
-    return this.pinned;
+    return this.pinned && !this.pointerHeld;
   }
 
   /** Snap through one marked programmatic-scroll window. Explicit user intent always wins, even
    * if the user starts scrolling upward before the browser delivers our synthetic scroll event. */
   scrollToBottom(behavior: ScrollFollowBehavior = 'auto'): void {
-    if (this.disposed) return;
+    if (this.disposed || this.pointerHeld) return;
     this.setPinned(true);
     this.programmaticScroll = true;
     const top = this.container.scrollHeight;
@@ -113,16 +122,67 @@ export class ScrollFollowController {
     this.disposed = true;
     this.container.removeEventListener('scroll', this.handleScroll);
     this.container.removeEventListener('scrollend', this.handleScrollEnd);
+    this.container.removeEventListener('wheel', this.handleWheel);
+    this.container.removeEventListener('pointerdown', this.handlePointerDown);
+    document.removeEventListener('pointerup', this.handlePointerRelease);
+    document.removeEventListener('pointercancel', this.handlePointerRelease);
+    window.removeEventListener('blur', this.handlePointerRelease);
     if (this.programmaticClearFrame !== null) this.cancelFrame(this.programmaticClearFrame);
+    if (this.pointerReleaseFrame !== null) this.cancelFrame(this.pointerReleaseFrame);
     this.resizeObserver?.disconnect();
     this.observedRows.clear();
   }
+
+  /** Keep a pressed username, link or selection under the pointer until its click completes.
+   * A hover meter still releases rows, and smooth follow used to move the target between
+   * pointerdown and pointerup. Retain the user's prior follow intent rather than repinning
+   * someone who had already wheeled up. */
+  private readonly handlePointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0 || this.disposed) return;
+    if (this.pointerReleaseFrame !== null) this.cancelFrame(this.pointerReleaseFrame);
+    this.pointerReleaseFrame = null;
+    this.pointerHeld = true;
+    if (this.unsettledFollow && typeof this.container.scrollTo === 'function') {
+      this.container.scrollTo({ top: this.container.scrollTop, behavior: 'instant' });
+    }
+    this.unsettledFollow = null;
+  };
+
+  private readonly handlePointerRelease = (): void => {
+    if (!this.pointerHeld || this.disposed) return;
+    // The native click follows pointerup in the same input task. Resume after that click,
+    // so no synchronous resize delivery can steal its target.
+    if (this.pointerReleaseFrame !== null) return;
+    this.pointerReleaseFrame = this.scheduleFrame(() => {
+      this.pointerReleaseFrame = null;
+      if (this.disposed || !this.pointerHeld) return;
+      this.pointerHeld = false;
+      if (this.pinned) {
+        this.options.onPinnedChange?.(true);
+        this.scrollToBottom();
+      }
+    });
+  };
+
+  private readonly handleWheel = (event: WheelEvent): void => {
+    if (this.disposed || event.defaultPrevented || event.ctrlKey || event.deltaY >= 0
+      || this.container.scrollHeight <= this.container.clientHeight
+      || (this.container.scrollTop <= 0 && !this.unsettledFollow)) return;
+    // Input arrives before the resulting scroll event. Pause now so an intervening render
+    // or ResizeObserver delivery cannot pull the reader back down or restart smooth follow.
+    if (this.unsettledFollow && typeof this.container.scrollTo === 'function') {
+      this.container.scrollTo({ top: this.container.scrollTop, behavior: 'instant' });
+    }
+    this.programmaticScroll = false;
+    this.unsettledFollow = null;
+    this.setPinned(false);
+  };
 
   private readonly handleScroll = (): void => {
     if (this.disposed) return;
     const movedUp = this.container.scrollTop < this.lastScrollTop;
     this.lastScrollTop = this.container.scrollTop;
-    if (isNearBottom(this.container)) {
+    if (isNearBottom(this.container) && (this.pinned || !movedUp)) {
       this.setPinned(true);
       return;
     }
@@ -147,7 +207,7 @@ export class ScrollFollowController {
   private readonly handleRowsResized = (): void => {
     if (this.disposed) return;
     this.pruneObservedRows();
-    if (this.pinned) {
+    if (this.isPinned) {
       const behavior = this.options.getScrollFollowBehavior?.() ?? 'auto';
       if (this.unsettledFollow?.bottomTarget === this.bottomTarget
         && this.unsettledFollow.behavior === behavior) return;
@@ -189,13 +249,18 @@ export function trimMessageWindow(
 
   let removedHeight = 0;
   for (let i = 0; i < overflow; i++) {
+    removedHeight += nonPreserved[i].getBoundingClientRect().height;
+  }
+  // Finish layout reads before removing anything, and keep fractional CSS pixels: summing
+  // rounded offsetHeight values makes a paused reader drift during a large trim.
+  const scrollTop = container.scrollTop;
+  for (let i = 0; i < overflow; i++) {
     const node = nonPreserved[i];
-    removedHeight += node.offsetHeight;
     registry.forget(node);
     container.removeChild(node);
   }
   if (removedHeight > 0) {
-    container.scrollTop -= removedHeight;
+    container.scrollTop = scrollTop - removedHeight;
   }
   logger.debug('dom-window: trimmed', overflow, 'node(s)');
 }
@@ -254,6 +319,47 @@ export function attachScrollFollowHover(
   options: ScrollFollowHoverOptions = {},
 ): ScrollFollowHoverWiring {
   let hovered = false;
+  let pointer: { x: number; y: number } | null = null;
+  let pointerRow: HTMLElement | null = null;
+  let hoverFrame: number | null = null;
+
+  const markRow = (row: HTMLElement | null): void => {
+    if (row === pointerRow && (!row || row.isConnected)) return;
+    pointerRow?.removeAttribute('data-kickflow-pointer-row');
+    pointerRow = row;
+    row?.setAttribute('data-kickflow-pointer-row', '');
+  };
+  const refreshRow = (): void => {
+    if (!pointer || !container.isConnected) { markRow(null); return; }
+    const hit = document.elementFromPoint(pointer.x, pointer.y);
+    const row = hit?.closest<HTMLElement>(`.${MESSAGE_CLASS}`) ?? null;
+    markRow(row?.parentElement === container ? row : null);
+  };
+  const scheduleRowRefresh = (): void => {
+    if (!pointer || hoverFrame !== null) return;
+    hoverFrame = window.requestAnimationFrame(() => {
+      hoverFrame = null;
+      refreshRow();
+    });
+  };
+  const onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') { pointer = null; markRow(null); return; }
+    pointer = { x: event.clientX, y: event.clientY };
+    refreshRow();
+  };
+  const clearPointerRow = (): void => {
+    pointer = null;
+    markRow(null);
+  };
+  const onVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') clearPointerRow();
+  };
+  const rowObserver = new MutationObserver(scheduleRowRefresh);
+  rowObserver.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+  container.addEventListener('pointermove', onPointerMove);
+  container.addEventListener('scroll', scheduleRowRefresh);
+  window.addEventListener('blur', clearPointerRow);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   const onPointerEnter = (): void => {
     hovered = true;
@@ -261,6 +367,7 @@ export function attachScrollFollowHover(
   };
 
   const onPointerLeave = (): void => {
+    clearPointerRow();
     hovered = false;
     options.onHoverChange?.(false);
     options.onPointerLeave?.();
@@ -286,6 +393,13 @@ export function attachScrollFollowHover(
       follow.scrollToBottom(decision.scrollBehavior);
     },
     dispose(): void {
+      if (hoverFrame !== null) window.cancelAnimationFrame(hoverFrame);
+      rowObserver.disconnect();
+      clearPointerRow();
+      container.removeEventListener('pointermove', onPointerMove);
+      container.removeEventListener('scroll', scheduleRowRefresh);
+      window.removeEventListener('blur', clearPointerRow);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       container.removeEventListener('pointerenter', onPointerEnter);
       container.removeEventListener('pointerleave', onPointerLeave);
     },

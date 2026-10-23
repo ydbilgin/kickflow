@@ -12,7 +12,7 @@ export type PersonalKind = 'reply' | 'mention' | null;
 export const DEFAULT_MENTION_HIGHLIGHT_COLOR = '#FFC94D';
 
 /** Role left-bar width (own-list border / native inset shadow). */
-export const ROLE_BAR_WIDTH_PX = 2;
+export const ROLE_BAR_WIDTH_PX = 3;
 /** Role left-bar alpha over the chat surface. */
 export const ROLE_BAR_ALPHA = 0.80;
 /** Opt-in role full-row tint alpha (`both` style only). */

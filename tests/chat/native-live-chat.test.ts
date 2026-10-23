@@ -33,7 +33,7 @@ function setup(room = 1, channel = 2) {
     onMessage: vi.fn(), onUserBanned: vi.fn(), onSubscription: vi.fn(), onConnected: vi.fn(),
     onPrimarySubscriptionReady: vi.fn(), onPrimarySubscriptionUnavailable: vi.fn(), onDisconnected: vi.fn(),
   };
-  const client = new PusherClient(room, channel, callbacks);
+  const client = new PusherClient(room, channel, callbacks, { legacyPusher: true });
   clients.push(client); client.connect();
   return { client, callbacks, fallback: FakeSocket.instances.at(-1)! };
 }
@@ -79,6 +79,7 @@ describe('native and legacy live chat aggregation', () => {
     vi.stubGlobal('WebSocket', FakeSocket);
     unhook = installNativeChatBridge();
     const native = new WebSocket('wss://realtime.us-east-1.platform.kick.com/connection/websocket');
+    native.addEventListener('message', () => { /* Kick registers its handler */ });
     const { callbacks } = setup();
     native.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ push: { channel: 'chatrooms.1.v2', pub: {
       data: { event: 'App\\Events\\ChatMessageEvent', data: JSON.stringify(message()) }, tags: { event: 'App\\Events\\ChatMessageEvent' },

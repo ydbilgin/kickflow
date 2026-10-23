@@ -91,6 +91,7 @@ export interface CelebrationContext {
 /** Non-moderatable rows emitted by Kick's chat event streams. They still travel through
  * the normal store/render queue so ordering, trimming, scroll-follow, and id de-duping stay shared. */
 export type ChatSystemEvent =
+  | { kind: 'gap'; estimatedCount: number | null; seconds: number }
   | { kind: 'subscription'; username: string; months: number }
   | { kind: 'gifted-subscription'; username: string; giftCount: number; giftedUsernames: string[] }
   | { kind: 'kicks'; username: string; amount: number; giftName: string | null; senderMessage: string | null }

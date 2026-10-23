@@ -140,6 +140,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
           if (revision !== this.flagChangeRevision || !this.flagSaveStatus?.isConnected) return;
           this.flagSaveStatus.textContent = ok ? '' : t('popup.save_failed');
           this.flagSaveStatus.hidden = ok;
+          this.refreshSettingsControls();
         },
       },
     }));
@@ -189,6 +190,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private screenshotCheckbox: HTMLInputElement | null = null;
   private speedControlsCheckbox: HTMLInputElement | null = null;
   private fullscreenTerminalCheckbox: HTMLInputElement | null = null;
+  private floatingStripCheckbox: HTMLInputElement | null = null;
   private autoClaimDropsCheckbox: HTMLInputElement | null = null;
   private autoClaimDailyRewardCheckbox: HTMLInputElement | null = null;
   private readonly hotkeyRows = new Map<HotkeyAction, HotkeyRowControls>();
@@ -776,6 +778,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.fullscreenTerminalCheckbox = fullscreenTerminalCheckbox;
 
+    const { label: floatingStripLabel, checkbox: floatingStripCheckbox } = this.buildSettingsToggle(
+      t('setting.floating_strip'), t('setting.floating_strip_desc'), 'floatingStrip', featureFlags.floatingStrip,
+    );
+    this.floatingStripCheckbox = floatingStripCheckbox;
+
     playerGroup.append(
       autoTheaterLabel,
       captionGuardLabel,
@@ -786,6 +793,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       screenshotLabel,
       speedControlsLabel,
       fullscreenTerminalLabel,
+      floatingStripLabel,
     );
     player.append(playerGroup);
 
@@ -1469,6 +1477,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.fullscreenTerminalCheckbox && this.fullscreenTerminalCheckbox.checked !== featureFlags.fullscreenTerminal) {
       this.fullscreenTerminalCheckbox.checked = featureFlags.fullscreenTerminal;
     }
+    if (this.floatingStripCheckbox && this.floatingStripCheckbox.checked !== featureFlags.floatingStrip) {
+      this.floatingStripCheckbox.checked = featureFlags.floatingStrip;
+    }
     if (this.autoClaimDropsCheckbox && this.autoClaimDropsCheckbox.checked !== featureFlags.autoClaimDrops) {
       this.autoClaimDropsCheckbox.checked = featureFlags.autoClaimDrops;
     }
@@ -1597,6 +1608,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.screenshotCheckbox = null;
     this.speedControlsCheckbox = null;
     this.fullscreenTerminalCheckbox = null;
+    this.floatingStripCheckbox = null;
     this.autoClaimDropsCheckbox = null;
     this.autoClaimDailyRewardCheckbox = null;
     this.hotkeyRows.clear();

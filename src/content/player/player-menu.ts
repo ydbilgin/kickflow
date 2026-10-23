@@ -13,6 +13,8 @@ export interface PlayerMenuOptions {
   className: string;
   /** Fills a freshly created, still-hidden menu. Runs on every open, so it always shows state. */
   fill: (menu: HTMLElement) => void;
+  /** Element to focus when the menu opens (keyboard use, FINAL design 2026-10-18). */
+  initialFocus?: (menu: HTMLElement) => HTMLElement | null;
 }
 
 const HOST_CHECK_INTERVAL_MS = 250;
@@ -53,6 +55,8 @@ export class PlayerMenu {
     this.element = menu;
     this.position(menu, anchor);
     this.bindClosers(menu, anchor);
+    const focusTarget = this.options.initialFocus?.(menu);
+    focusTarget?.focus({ preventScroll: true });
   }
 
   close(): void {
@@ -88,7 +92,12 @@ export class PlayerMenu {
       this.close();
     }, true);
     this.listen(document, 'keydown', (event) => {
-      if ((event as KeyboardEvent).key === 'Escape') this.close();
+      if ((event as KeyboardEvent).key !== 'Escape') return;
+      // Esc from inside the menu hands focus back to the button that opened it, so a keyboard
+      // user is never left on a removed node.
+      const hadFocus = menu.contains(document.activeElement);
+      this.close();
+      if (hadFocus && anchor.isConnected) anchor.focus({ preventScroll: true });
     });
     // A resize or a fullscreen switch moves the anchor; a re-render disconnects it. The menu is
     // positioned from one reading of that rect, so every one of these invalidates it.

@@ -77,6 +77,12 @@ async function flushObserver(): Promise<void> {
   await Promise.resolve();
 }
 
+function dispatchRealPointerMove(x: number, y: number): void {
+  const event = new MouseEvent('pointermove', { bubbles: true, clientX: x, clientY: y });
+  Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+  document.dispatchEvent(event);
+}
+
 describe('NativeChatAugmenter', () => {
   const originalShowDeleted = featureFlags.showDeletedMessages;
 
@@ -94,6 +100,107 @@ describe('NativeChatAugmenter', () => {
     document.body.innerHTML = '';
   });
 
+  it('moves the native reply hover to the row under a stationary pointer when new messages shift the list', async () => {
+    const list = installChat(['m1', 'm2']);
+    const first = list.querySelector<HTMLElement>('[data-kickflow-mid="m1"]')!;
+    const second = list.querySelector<HTMLElement>('[data-kickflow-mid="m2"]')!;
+    let hit: Element = first;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => hit });
+    const lifecycle = new Lifecycle();
+    new NativeChatAugmenter(lifecycle, new ChatIntegrityStore());
+    try {
+      dispatchRealPointerMove(100, 250);
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      hit = second;
+      second.style.transform = 'translateY(32px)';
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+      expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      hit = first;
+      list.dispatchEvent(new Event('scroll'));
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+    } finally {
+      lifecycle.dispose();
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    }
+  });
+
+  it('updates the stationary-pointer reply row after a live layout shift without a watched mutation', async () => {
+    const list = installChat(['m1', 'm2']);
+    const first = list.querySelector<HTMLElement>('[data-kickflow-mid="m1"]')!;
+    const second = list.querySelector<HTMLElement>('[data-kickflow-mid="m2"]')!;
+    let hit: Element = first;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => hit });
+    const lifecycle = new Lifecycle();
+    new NativeChatAugmenter(lifecycle, new ChatIntegrityStore());
+    try {
+      dispatchRealPointerMove(100, 250);
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      hit = second;
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+      expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+    } finally {
+      lifecycle.dispose();
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    }
+  });
+
+  it('ignores player-generated untyped pointermove events while tracking a real chat pointer', async () => {
+    const list = installChat(['m1', 'm2']);
+    const first = list.querySelector<HTMLElement>('[data-kickflow-mid="m1"]')!;
+    const second = list.querySelector<HTMLElement>('[data-kickflow-mid="m2"]')!;
+    let hit: Element = first;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: (x: number) => x === 8 ? null : hit });
+    const lifecycle = new Lifecycle();
+    new NativeChatAugmenter(lifecycle, new ChatIntegrityStore());
+    try {
+      dispatchRealPointerMove(100, 250);
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 8, clientY: 8 }));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      hit = second;
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+      expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+    } finally {
+      lifecycle.dispose();
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    }
+  });
+
+  it('clears the native reply hover on fast exit, window blur, and reply cancel', () => {
+    const list = installChat(['m1']);
+    const row = list.querySelector<HTMLElement>('[data-kickflow-mid="m1"]')!;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => row });
+    const lifecycle = new Lifecycle();
+    new NativeChatAugmenter(lifecycle, new ChatIntegrityStore());
+    try {
+      dispatchRealPointerMove(100, 250);
+      expect(row.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      document.dispatchEvent(new MouseEvent('pointerleave', { bubbles: true, relatedTarget: null }));
+      expect(row.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+      dispatchRealPointerMove(100, 250);
+      window.dispatchEvent(new Event('blur'));
+      expect(row.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+      dispatchRealPointerMove(100, 250);
+      const reply = document.createElement('button');
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('data-ds-icon', 'ArrowCurveLeft');
+      reply.append(icon);
+      row.append(reply);
+      reply.focus();
+      reply.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(row.contains(document.activeElement)).toBe(false);
+      expect(row.hasAttribute('data-kickflow-pointer-row')).toBe(false);
+    } finally {
+      lifecycle.dispose();
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    }
+  });
+
   it('marks preserved banned messages on demand with original content and status', () => {
     installChat(['m1']);
     const store = new ChatIntegrityStore();
@@ -107,7 +214,7 @@ describe('NativeChatAugmenter', () => {
     expect(row?.classList.contains('kickflow-preserved')).toBe(true);
     expect(row?.classList.contains('kickflow-banned')).toBe(true);
     expect(row?.querySelector('.kickflow-original-content')?.textContent).toContain('merhaba @x https://a.b');
-    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI');
+    expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI· mod1');
   });
 
   it('rebuilds rich preserved content beside a nested class-bearing Kick row without copying its utilities', () => {

@@ -1,8 +1,9 @@
 import { logger } from '../shared/logger';
 import { getVideoElement } from '../shared/selectors';
 import { featureFlags } from '../chat/feature-flags';
-import { clampSeekTarget } from './rewind-controls';
+import { clampSeekTarget, showSeekRipple } from './rewind-controls';
 import { captureScreenshot } from './screenshot';
+import {toggleLocalClip} from './local-clip';
 import { goLiveNow } from './live-catchup';
 import { findHotkeyAction, isHotkeyCaptureActive } from './hotkey-registry';
 import type { Lifecycle } from '../shared/lifecycle';
@@ -67,6 +68,8 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
     const keyboardEvent = event as KeyboardEvent;
     if (isHotkeyCaptureActive()) return;
     if (isTypingTarget(keyboardEvent.target)) return;
+    // Arrow keys inside an open KickFlow player menu move its focus (speed grid); they are not seeks.
+    if (keyboardEvent.target instanceof Element && keyboardEvent.target.closest('.kickflow-player-menu')) return;
     if (keyboardEvent.ctrlKey || keyboardEvent.metaKey || keyboardEvent.altKey) return;
     const action = findHotkeyAction(keyboardEvent.key);
     if (!action) return;
@@ -86,11 +89,13 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
           const target = clampSeekTarget(current, direction * SEEK_STEP_SECONDS);
           current.currentTime = target;
           lastSeekAt = now;
+          if (!keyboardEvent.repeat) showSeekRipple(direction * SEEK_STEP_SECONDS);
           logger.debug('rewind-hotkeys: seeked to', target);
           handled = true;
         }
       } else if (action === 'screenshot' && featureFlags.screenshot) {
-        handled = captureScreenshot();
+        // Holding a key must not create dozens of downloads or toggle recording repeatedly.
+        handled = keyboardEvent.repeat || (keyboardEvent.shiftKey ? toggleLocalClip() : captureScreenshot());
       } else if (action === 'goLive' && featureFlags.liveCatchup) {
         handled = goLiveNow();
       }

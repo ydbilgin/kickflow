@@ -124,11 +124,11 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(firstMonth.classList.contains('kickflow-event-row')).toBe(true);
-    expect(firstMonth.querySelector('.kickflow-event-row__icon')?.textContent).toBe('⭐');
+    expect(firstMonth.querySelector('.kickflow-event-row__icon')?.querySelector('svg')).not.toBeNull();
     expect(firstMonth.querySelector('.kickflow-event-row__username')?.textContent).toBe(unsafeUsername);
-    expect(firstMonth.textContent).toBe(`⭐${unsafeUsername} abone oldu`);
+    expect(firstMonth.textContent).toBe(`${unsafeUsername} abone oldu`);
     expect(firstMonth.querySelector('img')).toBeNull();
-    expect(renewal.textContent).toBe('⭐violet_demo 5 ay abone oldu');
+    expect(renewal.textContent).toBe('violet_demo 5 ay abone oldu');
   });
 
   it('labels an unspecified ban type as unknown on a preserved message', () => {
@@ -152,9 +152,9 @@ describe('message-view safe rendering', () => {
             victims: [{ name: 'target-one', messageId: null }, ...(count === 2 ? [{ name: 'target-two', messageId: null }] : [])],
           },
         }));
-        expect(row.textContent).toContain(language === 'en' ? 'Moderation type unknown' : 'Moderasyon türü bilinmiyor');
-        expect(row.textContent).toContain(language === 'en' ? 'Moderator:' : 'Moderatör:');
-        expect(row.textContent).toContain(moderator ?? (language === 'en' ? 'unknown' : 'bilinmiyor'));
+        expect(row.textContent).toContain(language === 'en' ? 'action type unknown' : 'türü bilinmiyor');
+        expect(row.querySelector('[data-kickflow-role="moderator"]') !== null).toBe(moderator !== null);
+        expect(row.textContent).toContain(moderator ?? (language === 'en' ? 'A moderator' : 'Bir moderatör'));
         expect(row.querySelectorAll('.kickflow-event-row__victim')).toHaveLength(count);
       }
     }
@@ -203,16 +203,16 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(row.querySelector('.kickflow-event-row__icon')).toBeNull();
-    expect(row.querySelector('.kickflow-event-row__kind-tag')?.textContent).toBe('BAN');
-    expect(row.textContent).toBe(`BAN Moderator: 🛡moderator_one | Target: ${unsafeName} | Banned`);
+    expect(row.querySelector('.kickflow-event-row__kind-tag')?.querySelector('svg')).not.toBeNull();
+    expect(row.textContent).toBe(`moderator_one banned ${unsafeName}.`);
     expect(row.querySelector('.kickflow-event-row__moderator')?.textContent).toBe('moderator_one');
     expect(row.querySelector('.kickflow-event-row__moderator')?.getAttribute('title'))
       .toBe("Open moderator moderator_one's profile");
     expect(row.querySelector('.kickflow-event-row__victim')?.textContent).toBe(unsafeName);
     expect(row.querySelector('[data-kickflow-role="moderator"]')).not.toBeNull();
     expect(row.querySelector('[data-kickflow-role="target"]')).not.toBeNull();
-    expect(row.textContent).toContain('Moderator:');
-    expect(row.textContent).toContain('Target:');
+    expect(row.textContent).toContain('banned');
+    expect(row.textContent).toContain(unsafeName);
     expect(row.querySelector('img')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('role')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('tabindex')).toBeNull();
@@ -233,12 +233,12 @@ describe('message-view safe rendering', () => {
       },
     }));
 
-    expect(row.querySelector('.kickflow-event-row__kind-tag')?.textContent).toBe('SUSTURMA');
+    expect(row.querySelector('.kickflow-event-row__kind-tag')?.querySelector('svg')).not.toBeNull();
     expect(row.querySelector('[data-kickflow-role="moderator"]')).toBeNull();
     expect(row.querySelector('.kickflow-event-row__moderator-shield')).toBeNull();
     expect(row.querySelector('[data-kickflow-role="target"]')?.textContent).toBe('target-user');
-    expect(row.textContent).toContain('Moderatör: bilinmiyor');
-    expect(row.textContent).toContain('Hedef:');
+    expect(row.textContent).toContain('Bir moderatör');
+    expect(row.textContent).toContain('susturdu');
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('role')).toBe('link');
     expect(row.querySelector('.kickflow-event-row__victim')?.tabIndex).toBe(0);
     expect(row.querySelector('.kickflow-event-row__victim')?.getAttribute('title'))
@@ -263,9 +263,7 @@ describe('message-view safe rendering', () => {
 
     for (const language of ['en', 'tr'] as const) {
       setLang(language);
-      const moderatorLabel = language === 'en' ? 'Moderator:' : 'Moderatör:';
-      const targetLabel = language === 'en' ? 'Target' : 'Hedef';
-      const bulkTargetLabel = language === 'en' ? 'Targets' : 'Hedefler';
+      const unknownActor = language === 'en' ? 'A moderator' : 'Bir moderatör';
       const durationLabel = language === 'en' ? '5M' : '5DK';
 
       for (const kind of kinds) {
@@ -286,8 +284,9 @@ describe('message-view safe rendering', () => {
               }));
               const text = row.textContent ?? '';
 
-              expect(text).toContain(moderatorLabel);
-              expect(text).toContain(form.name === 'single' ? `${targetLabel}:` : `${bulkTargetLabel} (`);
+              expect(text).toContain(moderator ?? unknownActor);
+              expect(text).toContain(form.name === 'single' ? 'target-one' : String(form.count));
+              expect(text).not.toContain(' | ');
               expect(text).not.toContain('__kickflow_');
               if (kind === 'timeout' && durationMin !== null) expect(text).toContain(durationLabel);
 
@@ -630,7 +629,7 @@ describe('message-view safe rendering', () => {
     const row = buildMessageElement(captured);
 
     expect(row.classList.contains('kickflow-event-row--celebration')).toBe(true);
-    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('⭐');
+    expect(row.querySelector('.kickflow-event-row__icon')?.querySelector('svg')).not.toBeNull();
     expect(row.querySelector('.kickflow-event-row__username')?.textContent).toBe('ErenCekic02');
     expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('32');
     expect(row.querySelector('.kickflow-celebration__message')?.textContent).toContain('Oooo 32. ay gelmiş');
@@ -655,10 +654,10 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(row.classList.contains('kickflow-event-row--gifted-subscription')).toBe(true);
-    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('🎁');
+    expect(row.querySelector('.kickflow-event-row__icon')?.querySelector('svg')).not.toBeNull();
     expect(row.querySelector('.kickflow-event-row__username')?.textContent).toBe('violet_demo<script>');
     expect(row.querySelector('.kickflow-event-row__recipient')?.textContent).toBe('<img src=x onerror=alert(1)>');
-    expect(row.textContent).toBe('🎁violet_demo<script>, <img src=x onerror=alert(1)> kullanıcısına abonelik hediye etti');
+    expect(row.textContent).toBe('violet_demo<script>, <img src=x onerror=alert(1)> kullanıcısına abonelik hediye etti');
     expect(row.querySelector('.kickflow-event-row__count')).toBeNull();
     expect(row.querySelector('script')).toBeNull();
     expect(row.querySelector('img')).toBeNull();
@@ -677,7 +676,7 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('3');
-    expect(row.textContent).toBe('🎁cozy_mert 3 kişiye abonelik hediye etti: nova_88, ayla_k, demir42');
+    expect(row.textContent).toBe('cozy_mert 3 kişiye abonelik hediye etti: nova_88, ayla_k, demir42');
     expect(row.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
   });
 
@@ -694,7 +693,7 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(row.querySelector('.kickflow-event-row__count')?.textContent).toBe('10');
-    expect(row.textContent).toBe('🎁cozy_mert 10 kişiye abonelik hediye etti: nova_88, ayla_k, demir42 ve 7 kişi daha');
+    expect(row.textContent).toBe('cozy_mert 10 kişiye abonelik hediye etti: nova_88, ayla_k, demir42 ve 7 kişi daha');
     expect(row.querySelectorAll('.kickflow-event-row__recipient')).toHaveLength(3);
     // The full list is NOT hidden in a hover-only title; it lives behind a visible affordance.
     expect(row.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
@@ -706,7 +705,7 @@ describe('message-view safe rendering', () => {
     more!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(row.querySelectorAll('.kickflow-event-row__recipient')).toHaveLength(10);
     expect(row.querySelector('.kickflow-event-row__more')).toBeNull();
-    expect(row.textContent).toBe(`🎁cozy_mert 10 kişiye abonelik hediye etti: ${names.join(', ')}`);
+    expect(row.textContent).toBe(`cozy_mert 10 kişiye abonelik hediye etti: ${names.join(', ')}`);
   });
 
   it('expands the bulk recipient list on Enter/Space for keyboard users', () => {
@@ -735,14 +734,14 @@ describe('message-view safe rendering', () => {
         giftedUsernames: ['one', 'two', 'three', 'four', 'five'],
       },
     }));
-    expect(row.textContent).toBe('🎁gifter 20 kişiye abonelik hediye etti: one, two, three ve 17 kişi daha');
+    expect(row.textContent).toBe('gifter 20 kişiye abonelik hediye etti: one, two, three ve 17 kişi daha');
     const more = row.querySelector<HTMLElement>('.kickflow-event-row__more');
     more!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(row.querySelectorAll('.kickflow-event-row__recipient')).toHaveLength(5);
     // Trigger is now inert text — no button role, and it left the __more class.
     const inert = row.querySelector('.kickflow-event-row__more');
     expect(inert).toBeNull();
-    expect(row.textContent).toBe('🎁gifter 20 kişiye abonelik hediye etti: one, two, three, four, five ve 15 kişi daha');
+    expect(row.textContent).toBe('gifter 20 kişiye abonelik hediye etti: one, two, three, four, five ve 15 kişi daha');
   });
 
   it('never shows a number that contradicts the visible names when count and names disagree', () => {
@@ -758,7 +757,7 @@ describe('message-view safe rendering', () => {
         giftedUsernames: ['one', 'two', 'three'],
       },
     }));
-    expect(countAhead.textContent).toBe('🎁gifter 5 kişiye abonelik hediye etti: one, two, three ve 2 kişi daha');
+    expect(countAhead.textContent).toBe('gifter 5 kişiye abonelik hediye etti: one, two, three ve 2 kişi daha');
     expect(countAhead.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
 
     // Fewer names than the cap: the remainder still reconciles against the headline total.
@@ -767,7 +766,7 @@ describe('message-view safe rendering', () => {
       type: 'gifted-subscription',
       systemEvent: { kind: 'gifted-subscription', username: 'gifter', giftCount: 3, giftedUsernames: ['one'] },
     }));
-    expect(oneNamed.textContent).toBe('🎁gifter 3 kişiye abonelik hediye etti: one ve 2 kişi daha');
+    expect(oneNamed.textContent).toBe('gifter 3 kişiye abonelik hediye etti: one ve 2 kişi daha');
 
     // More names than Kick's stated total: five real names outrank a smaller number.
     const namesAhead = buildMessageElement(message('', undefined, {
@@ -781,12 +780,12 @@ describe('message-view safe rendering', () => {
       },
     }));
     expect(namesAhead.querySelector('.kickflow-event-row__count')?.textContent).toBe('5');
-    expect(namesAhead.textContent).toBe('🎁gifter 5 kişiye abonelik hediye etti: one, two, three ve 2 kişi daha');
+    expect(namesAhead.textContent).toBe('gifter 5 kişiye abonelik hediye etti: one, two, three ve 2 kişi daha');
     // The two names beyond the cap are reachable by clicking the visible trigger, not via hover.
     expect(namesAhead.querySelector('.kickflow-event-row__recipients')?.getAttribute('title')).toBeNull();
     namesAhead.querySelector<HTMLElement>('.kickflow-event-row__more')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(namesAhead.textContent).toBe('🎁gifter 5 kişiye abonelik hediye etti: one, two, three, four, five');
+    expect(namesAhead.textContent).toBe('gifter 5 kişiye abonelik hediye etti: one, two, three, four, five');
   });
 
   it('falls back to the count-only gift row when recipients are empty or missing', () => {
@@ -795,7 +794,7 @@ describe('message-view safe rendering', () => {
       type: 'gifted-subscription',
       systemEvent: { kind: 'gifted-subscription', username: 'violet_demo', giftCount: 3, giftedUsernames: [] },
     }));
-    expect(empty.textContent).toBe('🎁violet_demo 3 kişiye abonelik hediye etti');
+    expect(empty.textContent).toBe('violet_demo 3 kişiye abonelik hediye etti');
     expect(empty.querySelector('.kickflow-event-row__recipients')).toBeNull();
 
     // A malformed producer (missing array) must degrade to the same row, never crash.
@@ -809,7 +808,7 @@ describe('message-view safe rendering', () => {
         giftedUsernames: undefined as unknown as string[],
       },
     }));
-    expect(missing.textContent).toBe('🎁violet_demo 3 kişiye abonelik hediye etti');
+    expect(missing.textContent).toBe('violet_demo 3 kişiye abonelik hediye etti');
   });
 
   it('renders a kicks row with safe user text, grouped amount, and optional fields', () => {
@@ -820,10 +819,10 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(basic.classList.contains('kickflow-event-row--kicks')).toBe(true);
-    expect(basic.querySelector('.kickflow-event-row__icon')?.textContent).toBe('💰');
+    expect(basic.querySelector('.kickflow-event-row__icon')?.querySelector('svg')).not.toBeNull();
     expect(basic.querySelector('.kickflow-event-row__username')?.textContent).toBe('TallSkydiver');
     expect(basic.querySelector('.kickflow-event-row__count')?.textContent).toBe('500');
-    expect(basic.textContent).toBe('💰TallSkydiver 500 KICKs hediye etti');
+    expect(basic.textContent).toBe('TallSkydiver 500 KICKs hediye etti');
 
     const rich = buildMessageElement(message('', undefined, {
       id: 'kicks:txn-2',
@@ -847,7 +846,8 @@ describe('message-view safe rendering', () => {
     expect(rich.querySelector<HTMLImageElement>('.kickflow-event-row__note img.kickflow-emote')?.src)
       .toBe('https://files.kick.com/emotes/456/fullsize');
     expect(rich.textContent).toContain('<script>alert(1)</script>');
-    expect(rich.querySelector('script, svg')).toBeNull();
+    expect(rich.querySelector('.kickflow-event-row__note')?.querySelector('script, svg')).toBeNull();
+    expect(rich.querySelectorAll('.kickflow-event-row__icon svg')).toHaveLength(1);
   });
 
   it('renders host rows with safe user text, Turkish viewer formatting, and a viewerless fallback', () => {
@@ -874,12 +874,12 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(withViewers.classList.contains('kickflow-event-row--host')).toBe(true);
-    expect(withViewers.querySelector('.kickflow-event-row__icon')?.textContent).toBe('📡');
+    expect(withViewers.querySelector('.kickflow-event-row__icon')?.querySelector('svg')).not.toBeNull();
     expect(withViewers.querySelector('.kickflow-event-row__username')?.textContent).toBe(unsafeUsername);
     expect(withViewers.querySelector('.kickflow-event-row__count')?.textContent).toBe('12.345');
-    expect(withViewers.textContent).toBe(`📡${unsafeUsername} 12.345 izleyiciyle host etti`);
+    expect(withViewers.textContent).toBe(`${unsafeUsername} 12.345 izleyiciyle host etti`);
     expect(withViewers.querySelector('img, script')).toBeNull();
-    expect(withoutViewers.textContent).toBe('📡Mr_Jelal host etti');
+    expect(withoutViewers.textContent).toBe('Mr_Jelal host etti');
     expect(withoutViewers.querySelector('.kickflow-event-row__count')).toBeNull();
   });
 
@@ -892,7 +892,7 @@ describe('message-view safe rendering', () => {
     }));
 
     expect(row.classList.contains('kickflow-event-row--mode')).toBe(true);
-    expect(row.querySelector('.kickflow-event-row__icon')?.textContent).toBe('⚙');
+    expect(row.querySelector('.kickflow-event-row__icon')?.querySelector('svg')).not.toBeNull();
     expect(row.querySelector('.kickflow-event-row__text')?.textContent).toBe(unsafeText);
     expect(row.querySelector('script')).toBeNull();
   });
@@ -1177,7 +1177,9 @@ describe('message-view safe rendering', () => {
     expect(row.classList.contains('kickflow-deleted')).toBe(false);
     expect(row.classList.contains('kickflow-banned')).toBe(true);
     expect(row.querySelectorAll('.kickflow-status-label')).toHaveLength(1);
-    expect(row.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI');
+    expect(row.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI· ban-mod');
+    expect(row.querySelector('.kickflow-status-label')?.parentElement?.className).toBe('kickflow-message__identity');
+    expect(row.querySelector('.kickflow-mod-label')?.parentElement?.classList.contains('kickflow-status-label')).toBe(true);
     expect(row.querySelector('.kickflow-mod-label')?.textContent).toBe('· ban-mod');
   });
 
@@ -1237,8 +1239,8 @@ describe('message-view safe rendering', () => {
       metadata: '{"message_ref":"1784233982451"}',
       sender: {
         id: 1628,
-        slug: 'viewer_one',
-        username: 'viewer_one',
+        slug: 'laureth',
+        username: 'laureth',
         identity: {
           color: '#AAA9FF',
           badges: [
@@ -1265,7 +1267,7 @@ describe('message-view safe rendering', () => {
     const badges = row.querySelector('.kickflow-message__badges');
 
     expect(row.classList.contains('kickflow-message')).toBe(true);
-    expect(row.querySelector('.kickflow-message__username')?.textContent).toBe('viewer_one');
+    expect(row.querySelector('.kickflow-message__username')?.textContent).toBe('laureth');
     expect(badges?.querySelector('img[src*="/chat/badges/34_"]')).toBeNull();
     expect(badges?.querySelector('.kickflow-badge-role')?.getAttribute('aria-label')).toContain('Abone');
   });

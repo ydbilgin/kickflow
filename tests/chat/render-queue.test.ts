@@ -34,6 +34,44 @@ afterEach(() => {
 });
 
 describe('RenderQueue', () => {
+  it('commits an ordered live batch once and keeps existing row identity and listeners', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const registry = new ChatDomRegistry();
+    const queue = new RenderQueue({ getContainer: () => container, registry });
+    const first = message('existing'); first.createdAt = '2026-10-23T00:00:00Z';
+    queue.enqueue(first); queue.flushPending();
+    const existing = container.firstElementChild!;
+    const click = vi.fn(); existing.addEventListener('click', click);
+    const observer = new MutationObserver(() => {}); observer.observe(container, { childList: true });
+    for (let i = 0; i < 50; i++) {
+      const row = message('live-' + i); row.createdAt = new Date(Date.parse(first.createdAt) + i + 1).toISOString(); queue.enqueue(row);
+    }
+    const additions = observer.takeRecords();
+    expect(additions).toHaveLength(1);
+    expect(additions[0].addedNodes.length).toBe(50);
+    expect(container.firstElementChild).toBe(existing);
+    existing.dispatchEvent(new Event('click')); expect(click).toHaveBeenCalledOnce();
+    expect(registry.getElementForMessageId('existing')).toBe(existing);
+    observer.disconnect(); queue.dispose();
+  });
+
+  it('inserts delayed and out-of-order history stably across batches', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const container = document.createElement('div');
+    const queue = new RenderQueue({ getContainer: () => container, registry: new ChatDomRegistry() });
+    const add = (id: string, time: string) => { const row = message(id); row.createdAt = time; queue.enqueue(row); };
+    const early = '2026-10-23T00:00:01Z', late = '2026-10-23T00:00:03Z';
+    add('late', late); queue.flushPending();
+    add('middle', '2026-10-23T00:00:02Z'); add('early-a', early); add('early-b', early); queue.flushPending();
+    add('last', '2026-10-23T00:00:04Z'); queue.flushPending();
+    expect(Array.from(container.children).map(row => (row as HTMLElement).dataset.messageId)).toEqual(['early-a', 'early-b', 'middle', 'late', 'last']);
+    queue.dispose();
+  });
+
   it('meters ten hovered rows at one row per interval and cancels its wake-up on dispose', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

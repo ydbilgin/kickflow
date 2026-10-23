@@ -3,6 +3,16 @@ const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
 const SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
 
+let liveTimeFormatter: Intl.DateTimeFormat | null = null;
+
+/** Match the browser's live chat clock without constructing a locale formatter per row. */
+export function formatLiveChatTimestamp(createdAt: string): string {
+  const date = new Date(createdAt);
+  if (!Number.isFinite(date.getTime())) return '';
+  liveTimeFormatter ??= new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+  return liveTimeFormatter.format(date);
+}
+
 const padTwoDigits = (value: number): string =>
   String(value).padStart(TWO_DIGIT_WIDTH, '0');
 

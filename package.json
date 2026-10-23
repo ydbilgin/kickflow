@@ -1,6 +1,6 @@
 {
   "name": "kickflow",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "private": true,
   "description": "Chrome extension for Kick.com: chat context and player controls.",
   "scripts": {

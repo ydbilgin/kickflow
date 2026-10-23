@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ChatHistoryBackfill, fetchChatHistory, fetchChatHistoryResult } from '../../src/content/chat/history';
+import { ChatHistoryBackfill, fetchChatHistoryResult } from '../../src/content/chat/history';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
 
 function response(status: number, body?: unknown): Response {
@@ -26,7 +26,7 @@ function rawMessage(id: string, createdAt: string): unknown {
   };
 }
 
-describe('fetchChatHistory', () => {
+describe('fetchChatHistoryResult', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -47,13 +47,15 @@ describe('fetchChatHistory', () => {
       }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const pending = fetchChatHistory(123);
+    const pending = fetchChatHistoryResult(123);
     await vi.advanceTimersByTimeAsync(800);
-    const messages = await pending;
+    const result = await pending;
+    expect(result.status).toBe('success');
+    if (result.status !== 'success') throw new Error('History fetch failed');
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://web.kick.com/api/v1/chat/123/history');
-    expect(messages.map((message) => message.id)).toEqual(['earlier', 'later']);
+    expect(result.messages.map((message) => message.id)).toEqual(['earlier', 'later']);
   });
 
   it('distinguishes a legitimate empty history from a terminal response', async () => {
@@ -110,9 +112,11 @@ describe('fetchChatHistory', () => {
       data: { messages: [historyReply] },
     })));
 
-    const messages = await fetchChatHistory(25602397);
+    const result = await fetchChatHistoryResult(25602397);
+    expect(result.status).toBe('success');
+    if (result.status !== 'success') throw new Error('History fetch failed');
 
-    expect(messages[0]?.replyContext).toMatchObject({
+    expect(result.messages[0]?.replyContext).toMatchObject({
       replyToUser: 'Alcheyham',
       replyToText: 'MUSTAFA KEMAL ATATÜRK',
       replyToMessageId: 'parent-uuid',

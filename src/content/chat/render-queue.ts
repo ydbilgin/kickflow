@@ -177,6 +177,7 @@ export class RenderQueue {
           timestampText,
           onOpenRemovedPanel: this.options.onOpenRemovedPanel,
         });
+        element.dataset.createdAt = message.createdAt;
         this.options.registry.register(element, message);
         fragment.appendChild(element);
         appended.push(element);
@@ -185,7 +186,30 @@ export class RenderQueue {
       }
     }
     if (appended.length > 0) {
-      container.appendChild(fragment);
+      // Live batches normally follow the current tail. Commit their fragment once rather
+      // than re-reading and parsing the entire live child collection for every message.
+      let previous = container.lastElementChild instanceof HTMLElement
+        ? Date.parse(container.lastElementChild.dataset.createdAt ?? '') : -Infinity;
+      const orderedTail = appended.every((element) => {
+        const at = Date.parse(element.dataset.createdAt!);
+        const follows = Number.isFinite(at) && at >= previous;
+        previous = at;
+        return follows;
+      });
+      if (orderedTail) {
+        container.appendChild(fragment);
+      } else {
+        // Delayed history still belongs before live rows. Snapshot and parse existing
+        // timestamps once; include each inserted row so equal timestamps stay stable.
+        const ordered = Array.from(container.children).filter((child): child is HTMLElement => child instanceof HTMLElement)
+          .map((element) => ({ element, at: Date.parse(element.dataset.createdAt ?? '') }));
+        for (const element of appended) {
+          const at = Date.parse(element.dataset.createdAt!);
+          const index = Number.isFinite(at) ? ordered.findIndex((entry) => entry.at > at) : -1;
+          container.insertBefore(element, index < 0 ? null : ordered[index].element);
+          ordered.splice(index < 0 ? ordered.length : index, 0, { element, at });
+        }
+      }
       try {
         this.options.onFlush?.(appended, wasAtBottom);
       } catch (error) {

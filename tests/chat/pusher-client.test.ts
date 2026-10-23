@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  PusherClient,
+  PusherClient as NativePusherClient,
   normalizeBanPayload,
   normalizeChatroomUpdatedPayload,
   normalizeChannelSubscriptionPayload,
@@ -12,6 +12,14 @@ import {
   normalizePinnedMessagePayload,
   normalizeSubscriptionPayload,
 } from '../../src/content/chat/pusher-client';
+import { logger } from '../../src/content/shared/logger';
+
+// Retired protocol coverage opts in explicitly. Production uses Kick's socket only.
+class PusherClient extends NativePusherClient {
+  constructor(room: number, channel: number, callbacks: ConstructorParameters<typeof NativePusherClient>[2]) {
+    super(room, channel, callbacks, { legacyPusher: true });
+  }
+}
 
 class FakeWebSocket extends EventTarget {
   static readonly OPEN = 1;
@@ -1190,5 +1198,55 @@ describe('PusherClient lifecycle', () => {
       senderMessage: 'gg wp',
     });
     client.dispose();
+  });
+});
+
+// 2026-10-20 (errors-page noise report): each self-healing reconnect used to put a
+// warning on the extension errors page (sleep/wake, network blips). Now: debug until four attempts in
+// a row fail, then one warning for that outage.
+describe('pusher-client reconnect noise', () => {
+  it('keeps the first three handshake timeouts off the errors page and warns once on the fourth', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const client = new PusherClient(1, 2, { onMessage: vi.fn(), onUserBanned: vi.fn() });
+    client.connect();
+    const timeouts = (): number => warn.mock.calls.filter((call) => String(call[0]).includes('establishment timed out')).length;
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      expect(FakeWebSocket.instances).toHaveLength(attempt);
+      vi.advanceTimersByTime(12_000);
+      expect(timeouts()).toBe(attempt < 4 ? 0 : 1);
+      vi.advanceTimersByTime(Math.min(1_000 * 2 ** (attempt - 1), 15_000));
+    }
+    expect(debug.mock.calls.filter((call) => String(call[0]).includes('establishment timed out')).length).toBe(5);
+    client.dispose();
+    warn.mockRestore();
+    debug.mockRestore();
+  });
+});
+
+// 2026-10-20: closing a still-connecting socket made Chrome log "WebSocket is closed before the
+// connection is established" against the extension on every channel switch.
+describe('pusher-client teardown of a connecting socket', () => {
+  it('waits for open before closing, so no connecting socket is closed', () => {
+    class ConnectingWebSocket extends FakeWebSocket {
+      connecting = true;
+      constructor(url: string) {
+        super(url);
+        Object.defineProperty(this, 'readyState', { get: () => (this.connecting ? 0 : 1) });
+      }
+    }
+    vi.stubGlobal('WebSocket', ConnectingWebSocket);
+    const client = new PusherClient(1, 2, { onMessage: vi.fn(), onUserBanned: vi.fn() });
+    client.connect();
+    const socket = FakeWebSocket.instances[0] as ConnectingWebSocket;
+    client.dispose();
+    expect(socket.closeCalls).toBe(0);
+    socket.connecting = false;
+    socket.dispatchEvent(new Event('open'));
+    expect(socket.closeCalls).toBe(1);
+    socket.dispatchEvent(new Event('open'));
+    expect(socket.closeCalls).toBe(1);
   });
 });

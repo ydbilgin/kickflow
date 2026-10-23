@@ -35,7 +35,7 @@ function createOverflowIcon(): SVGSVGElement {
 
 export function createOverflowControl(lifecycle: Lifecycle, rows: () => readonly HTMLElement[]): OverflowControl {
   const group = document.createElement('span');
-  group.className = 'kickflow-player-group';
+  group.className = 'kickflow-player-group kickflow-player-group--overflow';
 
   const button = document.createElement('button');
   button.type = 'button';
@@ -51,6 +51,20 @@ export function createOverflowControl(lifecycle: Lifecycle, rows: () => readonly
         const row = document.createElement('div');
         row.className = 'kickflow-overflow-menu__row';
         row.append(control);
+        // FINAL 6.3 moment 3: the folded menu names every control and its key. The name is the
+        // control's own title ("Ekran görüntüsü al (S)"), split into a label and a key cap.
+        const title = control.querySelector('button')?.title ?? '';
+        const match = /^(.*?)\s*\(([^()]+)\)$/.exec(title);
+        const name = document.createElement('span');
+        name.className = 'kickflow-overflow-menu__name';
+        name.textContent = match ? match[1] : title;
+        row.append(name);
+        if (match) {
+          const key = document.createElement('kbd');
+          key.className = 'kickflow-player-kbd';
+          key.textContent = match[2];
+          row.append(key);
+        }
         root.append(row);
       }
     },

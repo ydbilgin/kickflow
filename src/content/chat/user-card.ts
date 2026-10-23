@@ -70,6 +70,7 @@ export interface UserCardViewModel {
 let channelSlug: string | null = null;
 const cache = new Map<string, Promise<UserCardViewModel | null>>();
 let activeCard: HTMLElement | null = null;
+let activeOpener: HTMLElement | null = null;
 export function configureUserCardSession(slug: string | null): void {
   channelSlug = slug && SAFE_SLUG_RE.test(slug) ? slug : null;
   cache.clear();
@@ -187,10 +188,18 @@ async function fetchUserCard(username: string, fallbackName: string): Promise<Us
   const cached = cache.get(username);
   if (cached) return cached;
 
-  const getJson = (url: string): Promise<unknown> =>
-    fetch(url, { headers: { accept: 'application/json' } })
-      .then((response) => (response.ok ? response.json() : null))
-      .catch(() => null);
+  const getJson = async (url: string): Promise<unknown> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal });
+      return response.ok ? await response.json() : null;
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  };
 
   // Card endpoint = this-channel relationship (following/subscribed/badges); channel endpoint =
   // the user's own profile (avatar, bio, follower count, verified). Fetch both in parallel + merge.
@@ -244,6 +253,8 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   const card = document.createElement('section');
   card.className = CARD_CLASS;
   card.tabIndex = -1;
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-label', model.username);
 
   // Persistent card: an explicit close button — the owner dismisses it when they want.
   const close = document.createElement('button');
@@ -409,12 +420,11 @@ export function resolveCardPlacement(input: CardPlacementInput): { left: number;
 
 /** Must run while the card is in the document — placement needs its measured size. */
 function positionCard(card: HTMLElement, x: number, y: number): void {
-  const rect = card.getBoundingClientRect();
   const { left, top } = resolveCardPlacement({
     anchorX: x,
     anchorY: y,
-    cardWidth: rect.width,
-    cardHeight: rect.height,
+    cardWidth: card.offsetWidth,
+    cardHeight: card.offsetHeight,
     viewportWidth: window.innerWidth,
     viewportHeight: window.innerHeight,
   });
@@ -430,16 +440,36 @@ function installDismissHandlers(card: HTMLElement): void {
     if (event.key === 'Escape') dismissUserCard();
   };
   document.addEventListener('keydown', key);
+  const clamp = () => clampCardToViewport(card);
+  window.addEventListener('resize', clamp);
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(clamp) : null;
+  observer?.observe(card);
   card.addEventListener('kickflow:dismiss', () => {
     document.removeEventListener('keydown', key);
+    window.removeEventListener('resize', clamp);
+    observer?.disconnect();
   }, { once: true });
+}
+
+function clampCardToViewport(card: HTMLElement): void {
+  const rect = card.getBoundingClientRect();
+  const margin = CARD_VIEWPORT_MARGIN_PX;
+  const left = parseFloat(card.style.left) || rect.left;
+  const top = parseFloat(card.style.top) || rect.top;
+  card.style.left = `${Math.max(margin, Math.min(left, window.innerWidth - rect.width - margin))}px`;
+  const nextTop = Math.max(margin, Math.min(top, window.innerHeight - rect.height - margin));
+  card.style.top = `${nextTop}px`;
+  card.style.maxHeight = `${Math.max(0, window.innerHeight - nextTop - margin)}px`;
 }
 
 export function dismissUserCard(): void {
   if (!activeCard) return;
+  const restoreFocus = activeCard.contains(document.activeElement) && activeOpener?.isConnected;
   activeCard.dispatchEvent(new Event('kickflow:dismiss'));
   activeCard.remove();
   activeCard = null;
+  if (restoreFocus) activeOpener?.focus({ preventScroll: true });
+  activeOpener = null;
 }
 
 function isUsableUserId(userId: number | null): userId is number {
@@ -477,6 +507,8 @@ export async function openUserCard(
   clientY: number,
   userId: number | null,
 ): Promise<void> {
+  const opener = activeCard?.contains(document.activeElement) ? activeOpener
+    : document.activeElement instanceof HTMLElement ? document.activeElement : null;
   dismissUserCard();
   // Built once and reused for both cards: the archive is a live object, so re-querying it after
   // the await could hand the two cards different rows for the same click.
@@ -487,19 +519,34 @@ export async function openUserCard(
   installDismissHandlers(loading);
   scrollUserMessageListToLatest(loading);
   activeCard = loading;
+  activeOpener = opener;
+  loading.focus({ preventScroll: true });
 
   const model = await fetchUserCard(username, displayName);
   if (activeCard !== loading) return;
-  const next = model
-    ? buildUserCardElement({ ...model, userId, messages })
-    : buildMinimalCard(displayName, username, messages);
-  // The entrance animation belongs to the click, not to the fetch finishing. Replaying it on the
-  // swap would read as a second card appearing a fifth of a second after the first.
-  next.classList.add('kickflow-user-card--instant');
-  loading.dispatchEvent(new Event('kickflow:dismiss'));
-  loading.replaceWith(next);
-  activeCard = next;
-  scrollUserMessageListToLatest(next);
-  positionCard(next, clientX, clientY);
-  installDismissHandlers(next);
+  if (!model) return;
+  const next = buildUserCardElement({ ...model, userId, messages });
+  // Hydrate facts in place: root, close button, drag handle, profile link and message rows
+  // belong to the user's active pointer gesture. Replacing them swallowed clicks and tore
+  // down an in-progress drag whenever either request finished.
+  loading.setAttribute('aria-label', model.username);
+  const header = loading.querySelector<HTMLElement>('.kickflow-user-card__header')!;
+  const name = header.querySelector<HTMLElement>('.kickflow-user-card__name')!;
+  name.textContent = model.username;
+  const avatar = next.querySelector('.kickflow-user-card__avatar');
+  if (avatar) header.prepend(avatar);
+  const verified = next.querySelector('.kickflow-user-card__verified');
+  if (verified) name.parentElement?.append(verified);
+  const role = next.querySelector('.kickflow-user-card__role');
+  if (role) header.querySelector('.kickflow-user-card__title')?.append(role);
+  const oldFacts = loading.querySelector('.kickflow-user-card__facts')!;
+  const bio = next.querySelector('.kickflow-user-card__bio');
+  if (bio) oldFacts.before(bio);
+  oldFacts.replaceWith(next.querySelector('.kickflow-user-card__facts')!);
+  const badges = next.querySelector('.kickflow-user-card__badges');
+  if (badges) loading.querySelector('.kickflow-user-card__facts')?.after(badges);
+  // Growth uses the available space below the original top. Do not flip the card again
+  // after its close button is already under the mouse.
+  const top = parseFloat(loading.style.top) || CARD_VIEWPORT_MARGIN_PX;
+  loading.style.maxHeight = `${Math.max(0, window.innerHeight - top - CARD_VIEWPORT_MARGIN_PX)}px`;
 }

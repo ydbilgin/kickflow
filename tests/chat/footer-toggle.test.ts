@@ -65,7 +65,7 @@ describe('FooterToggleButton', () => {
     document.body.innerHTML = '';
   });
 
-  it('injects #kickflow-footer-toggle before send-message-button\'s previous sibling', () => {
+  it('mounts #kickflow-footer-toggle under body without changing native footer children', () => {
     installSendButton();
     const lifecycle = new FakeLifecycle();
     new FooterToggleButton(lifecycle as unknown as Lifecycle, new FakePanel());
@@ -76,8 +76,9 @@ describe('FooterToggleButton', () => {
 
     const cluster = document.querySelector('.ml-auto');
     const children = Array.from(cluster?.children ?? []);
-    // Lands before the gear button (send's previousElementSibling), i.e. first in the cluster.
-    expect(children[0]).toBe(button);
+    expect(children.map(child => child.id)).toEqual(['some-gear-button', 'send-message-button']);
+    expect(button?.parentElement).toBe(document.body);
+    expect(button?.style.position).toBe('fixed');
   });
 
   it('does nothing (no throw, no button) when #send-message-button is not present yet', () => {
