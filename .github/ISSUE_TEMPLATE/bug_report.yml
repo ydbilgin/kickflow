@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in KickFlow does not work as described.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Kick changes its site from time to time, so please include what the popup's
+        **Diagnostics** section shows. Do not paste account names, cookies or anything private.
+  - type: input
+    id: version
+    attributes:
+      label: KickFlow version
+      description: Shown on the KickFlow card in chrome://extensions.
+      placeholder: "1.12.1"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: "Chrome 142 on Windows 11"
+    validations:
+      required: true
+  - type: dropdown
+    id: chat-view
+    attributes:
+      label: Chat view
+      options:
+        - Kick chat (with KickFlow additions)
+        - KickFlow list
+        - Not chat related
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a live channel
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Copy the Diagnostics section from the popup, and any KickFlow lines from the extension's error page.
+      render: text

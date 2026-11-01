@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an improvement for KickFlow.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe what you are trying to do on Kick and what gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like KickFlow to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have tried
+  - type: input
+    id: version
+    attributes:
+      label: KickFlow and browser version
+      placeholder: "1.12.1, Chrome 142"

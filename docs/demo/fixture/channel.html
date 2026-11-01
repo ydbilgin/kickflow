@@ -1,0 +1,142 @@
+<!doctype html>
+<!--
+  Local demo page for the README recording (docs/media/kickflow-demo.gif). It is NOT kick.com.
+  It copies only the few structural hooks KickFlow looks for on a channel page (#video-player inside a
+  player wrapper, the bottom `z-controls` bar with a LIVE button, #channel-content and
+  #chatroom-messages) and uses its own neutral styling: no Kick logos, fonts, images or assets.
+  capture.mjs serves it at https://kick.com/demo-channel through Playwright's request routing, so the
+  real, unmodified extension build can run on it without any network access.
+
+  The tiny chat client at the bottom plays the part of Kick's own chat: it listens on the realtime
+  socket (also simulated by capture.mjs) and, like the real site, removes a message when a moderator
+  deletes it or times its author out.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>demo-channel (local demo page)</title>
+<style>
+  :root { --bg: #101214; --panel: #17191c; --line: #26292d; --text: #e9ecef; --muted: #8d949b; --accent: #7fd1b9; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: Inter, "Segoe UI", system-ui, sans-serif; font-size: 13px; overflow: hidden; }
+  #demo-banner { height: 30px; display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: #3a2f12; color: #f3d98a; font-size: 12.5px; font-weight: 600; letter-spacing: .1px;
+    border-bottom: 1px solid #5a4818; }
+  #demo-banner span { font-weight: 400; color: #e7cf86; }
+  nav { height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px;
+    border-bottom: 1px solid var(--line); background: #0c0d0f; }
+  nav .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: #cfd5da; }
+  nav .brand i { width: 22px; height: 22px; border-radius: 6px; background: #2b3036; display: inline-block; }
+  nav .search { width: 240px; height: 26px; border-radius: 6px; background: #1c1f23; border: 1px solid var(--line); }
+  #channel-content { position: absolute; top: 72px; left: 0; right: 0; bottom: 0; display: flex; }
+  #stage { flex: 1 1 auto; min-width: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  #player-wrapper { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: calc(100% - 64px);
+    background: #000; border-radius: 6px; overflow: hidden; }
+  #video-player { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .z-controls.grid-row-1 { position: absolute; inset: 0; pointer-events: none; }
+  .z-controls.bottom-0 { position: absolute; left: 0; right: 0; bottom: 0; height: 44px; display: flex;
+    align-items: center; justify-content: space-between; padding: 0 8px;
+    background: linear-gradient(transparent, rgba(0,0,0,.72)); }
+  .flex { display: flex; } .items-center { align-items: center; } .gap-1 { gap: 4px; }
+  .z-controls button { height: 32px; min-width: 32px; padding: 0 6px; border: 0; border-radius: 5px;
+    background: transparent; color: #fff; font: 700 12px Inter, system-ui, sans-serif; display: inline-flex;
+    align-items: center; justify-content: center; gap: 5px; cursor: pointer; }
+  .z-controls button svg { width: 18px; height: 18px; fill: currentColor; }
+  .z-controls button.live-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; }
+  #stream-meta { display: flex; align-items: center; gap: 10px; }
+  #stream-meta .avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #3d6f8a, #2a3f52); }
+  #stream-meta b { display: block; font-size: 14px; }
+  #stream-meta small { color: var(--muted); font-size: 12px; }
+  #chat-panel { width: 318px; flex: 0 0 318px; display: flex; flex-direction: column; border-left: 1px solid var(--line);
+    background: var(--panel); position: relative; }
+  #chat-panel header { height: 38px; display: flex; align-items: center; justify-content: center; font-weight: 600;
+    border-bottom: 1px solid var(--line); }
+  #chat-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #chatroom-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 10px; display: flex;
+    flex-direction: column; justify-content: flex-end; }
+  .native-row { padding: 3px 4px; line-height: 1.5; word-break: break-word; }
+  .native-row .name { font-weight: 700; }
+  #composer { padding: 10px; border-top: 1px solid var(--line); }
+  #composer textarea { width: 100%; height: 36px; resize: none; border-radius: 6px; border: 1px solid var(--line);
+    background: #1e2125; color: var(--muted); padding: 8px 10px; font: 13px Inter, system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<div id="demo-banner">Demo page <span>— local fixture imitating the Kick layout, not kick.com</span></div>
+<nav>
+  <div class="brand"><i></i>demo site</div>
+  <div class="search"></div>
+  <div class="flex items-center gap-1" style="color:var(--muted)">viewer</div>
+</nav>
+<main id="channel-content">
+  <section id="stage">
+    <div id="player-wrapper">
+      <video id="video-player" muted autoplay loop playsinline src="/demo-media/stream.webm"></video>
+      <div class="z-controls relative grid-row-1"></div>
+      <div class="z-controls absolute bottom-0 left-0 flex">
+        <div class="flex items-center gap-1">
+          <button aria-label="Pause"><svg viewBox="0 0 20 20"><rect x="5" y="4" width="3.5" height="12" rx="1"/><rect x="11.5" y="4" width="3.5" height="12" rx="1"/></svg></button>
+          <button aria-label="Volume"><svg viewBox="0 0 20 20"><path d="M3 8h3l4-3v10l-4-3H3z"/><path d="M13 7a4 4 0 0 1 0 6" stroke="#fff" stroke-width="1.6" fill="none"/></svg></button>
+          <button class="live-dot">LIVE</button>
+        </div>
+        <div class="flex items-center gap-1">
+          <button aria-label="Settings"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="3"/><path d="M10 2v3M10 15v3M2 10h3M15 10h3M4.3 4.3l2.1 2.1M13.6 13.6l2.1 2.1M4.3 15.7l2.1-2.1M13.6 6.4l2.1-2.1" stroke="#fff" stroke-width="1.6"/></svg></button>
+          <button data-testid="video-player-theatre-mode" aria-label="Theatre Mode (t)"><svg viewBox="0 0 20 20"><rect x="2" y="5" width="16" height="10" rx="1.5" stroke="#fff" stroke-width="1.6" fill="none"/></svg></button>
+          <button data-testid="video-player-fullscreen" aria-label="Fullscreen"><svg viewBox="0 0 20 20"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5" stroke="#fff" stroke-width="1.8" fill="none"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div id="stream-meta">
+      <div class="avatar"></div>
+      <div><b>demo-channel</b><small>Synthetic test video · invented chat</small></div>
+    </div>
+  </section>
+  <aside id="chat-panel">
+    <header>Chat</header>
+    <div id="chat-body">
+      <div id="chatroom-messages"></div>
+      <div id="composer"><textarea placeholder="Send a message" disabled></textarea></div>
+    </div>
+  </aside>
+</main>
+<script>
+  // Stand-in for the site's own chat client: same socket, same event names, and on a deletion or a
+  // timeout the message simply disappears, as it does on the real site without KickFlow.
+  (() => {
+    const list = document.getElementById('chatroom-messages');
+    const rows = new Map();
+    const render = (m) => {
+      const row = document.createElement('div');
+      row.className = 'native-row';
+      row.dataset.messageId = m.id;
+      row.dataset.userId = String(m.sender.id);
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.style.color = m.sender.identity?.color || '#9ad';
+      name.textContent = m.sender.username;
+      const text = document.createElement('span');
+      text.textContent = ': ' + m.content;
+      row.append(name, text);
+      list.append(row);
+      rows.set(m.id, row);
+      list.scrollTop = list.scrollHeight;
+    };
+    const socket = new WebSocket('wss://realtime.demo.platform.kick.com/connection/websocket');
+    socket.addEventListener('message', (event) => {
+      for (const line of String(event.data).split('\n')) {
+        let frame; try { frame = JSON.parse(line); } catch { continue; }
+        const pub = frame?.push?.pub?.data;
+        if (!pub) continue;
+        const data = typeof pub.data === 'string' ? JSON.parse(pub.data) : pub.data;
+        if (pub.event === 'App\\Events\\ChatMessageEvent') render(data);
+        if (pub.event === 'App\\Events\\MessageDeletedEvent') { rows.get(data.message?.id)?.remove(); }
+        if (pub.event === 'App\\Events\\UserBannedEvent') {
+          for (const row of list.querySelectorAll(`[data-user-id="${data.user?.id}"]`)) row.remove();
+        }
+      }
+    });
+  })();
+</script>
+</body>
+</html>

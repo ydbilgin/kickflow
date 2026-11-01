@@ -1,203 +1,200 @@
-# KickFlow
+<p align="center"><img src="icons/icon-128.png" alt="KickFlow icon" width="96"></p>
+<h1 align="center">KickFlow</h1>
+<p align="center">
+  <strong>Kick chat that keeps its context.</strong><br>
+  A Chrome extension that keeps deleted and timed-out messages readable, makes channel events easy to follow, and adds rewind, speed and capture controls to the Kick player.
+</p>
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img alt="Platform: Chrome (MV3)" src="https://img.shields.io/badge/platform-Chrome%20(MV3)-53FC18">
+  <a href="https://github.com/ydbilgin/kickflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ydbilgin/kickflow?include_prereleases&sort=semver"></a>
+</p>
+<p align="center"><img src="docs/media/kickflow-demo.gif" alt="Recording: chat messages arrive; a moderator deletes one and it stays, struck through and labelled deleted; a 10-minute timeout keeps the user's messages with a timeout label; KickFlow's rewind, speed, live and capture buttons appear in the player bar and rewind is clicked; then the KickFlow popup shows the session counts" width="860"></p>
+<p align="center"><sub>Real extension build running in Chromium against a local demo page that imitates the Kick layout (not kick.com). Names, messages and video are invented; the caption strip was added afterwards.</sub></p>
+<p align="center">
+  <a href="#what-it-does"><b>What it does</b></a> ·
+  <a href="#install"><b>Install</b></a> ·
+  <a href="#use"><b>Use</b></a> ·
+  <a href="#privacy-and-permissions"><b>Privacy</b></a> ·
+  <a href="#how-it-works"><b>How it works</b></a> ·
+  <a href="#build-from-source"><b>Build</b></a> ·
+  <a href="#türkçe"><b>Türkçe</b></a>
+</p>
 
-**Keep Kick chat readable and get real playback controls, in Chrome.**
-
-KickFlow is a free Chrome extension for [Kick](https://kick.com). It keeps deleted and moderated messages
-readable with a label, makes chat events easy to read, and adds rewind, return-to-live, speed, quality and frame
-capture buttons to the player. English and Turkish. [Türkçe özet aşağıda.](#türkçe)
-
-![Animated demo: a deleted message stays readable with a DELETED label, a timed-out message gets a TIMEOUT label, the player rewinds 10 seconds and returns to live, then the KickFlow popup](docs/demo.gif)
-
-## The problem
+> **Unofficial, personal-use project.** KickFlow is not affiliated with, endorsed by or supported by Kick.
+> It reads and extends the Kick web page in your own browser, and a change on Kick's side can break a feature
+> until KickFlow is updated.
 
 On Kick, when a moderator deletes a message or times someone out, the text disappears and the replies around it
-stop making sense. And the player has no quick way to jump back a few seconds to catch what you just missed,
-then return to live.
+stop making sense. The player also has no quick way to jump back a few seconds and then return to live.
+KickFlow fixes both inside the page you already have open. English and Turkish interface.
 
 ## What it does
 
-- **Chat context:** messages you already saw stay readable after a deletion, ban or timeout, struck through and
-  labelled (for example `DELETED` or `TIMEOUT 10M`, with the moderator when that is known). Use Kick's own chat
-  view with these additions, or KickFlow's own chat list.
-- **Readable events:** subscriptions, gifted subs with an expandable list of recipients, Kicks gifts, hosts,
-  raids and chat-mode changes. Pins and polls stay with Kick.
-- **Finding messages:** search this session's chat, see one person's messages, and follow a reply back to its
-  message. Mentions, replies, moderators and VIPs can each be highlighted.
-- **Player:** back and forward 10 seconds (as far as the stream's buffer allows), back to live, automatic
-  catch-up, playback speed, the highest available quality, and save the current frame as a PNG. Optional
-  theater mode and a caption-preference guard.
-- **Shortcuts:** `Left` and `Right` seek, `L` goes live, `S` saves a frame; change them in the popup. They
-  do nothing while you type in chat or any text field.
-- **Optional reward clicks:** two switches that click Kick's own claim buttons for eligible rewards on the
-  page. Both are off by default, and a click does not prove the reward was credited.
-
-![Preserved chat context, mentions and replies](docs/media/chat-context.png)
-
-## Install
-
-KickFlow is not on the Chrome Web Store. The built files are in this repository, so you can load it directly:
-
-1. [Download this repository as a ZIP](https://github.com/ydbilgin/kickflow/archive/refs/heads/main.zip) and
-   extract it, or `git clone https://github.com/ydbilgin/kickflow.git`.
-2. Open `chrome://extensions` and turn on **Developer mode** (top right).
-3. Click **Load unpacked** and choose the folder that holds `manifest.json`, `popup.html` and `dist/`.
-4. Open any Kick channel. KickFlow is active right away.
-
-**Updating:** replace the files with the new ones, click **Reload** on the KickFlow card in
-`chrome://extensions`, and refresh open Kick tabs.
-
-**Building it yourself** (Node.js and npm):
-
-```sh
-npm ci
-node node_modules/typescript/bin/tsc --noEmit
-node node_modules/vitest/vitest.mjs run
-node build.mjs
-```
-
-Then reload the extension and refresh the channel tab.
-
-## Using it
-
-Click the KickFlow icon in the toolbar on a Kick tab to open the popup:
-
-<p align="center">
-  <img src="docs/media/popup-en.png" alt="KickFlow popup: status line, three session numbers (messages seen, kept after removal, kept from bans), chat view choice, tabs Chat, Player, Rewards and Shortcuts, and the chat switches" width="372">
-</p>
-
-- **Top:** whether KickFlow is active and which chat view is in use, then three numbers for this session:
-  messages seen, messages kept after removal, and messages kept from bans.
-- **Chat view:** Kick's own chat with KickFlow's additions, or the KickFlow list.
-- **Tabs:** **Chat** (deleted messages, inline bans, event types, scrolling under the pointer), **Player**
-  (rewind, catch-up, quality, frame capture, speed, theater mode), **Rewards** (the two optional claim clicks)
-  and **Shortcuts** (turn each key on or off and change it). Use the arrow keys to move between tabs.
-- **Diagnostics** (closed by default) shows technical counters if something looks wrong.
-
-Every change applies immediately and is kept after a reload. The settings panel inside the Kick page has the
-same switches plus the language (English or Turkish), highlight colours and the session search.
+| Feature | What it does |
+| --- | --- |
+| **Deleted messages stay** | Messages KickFlow already received stay readable after a deletion: struck through and labelled *deleted*, with the moderator when Kick sends the name. |
+| **Bans and timeouts** | A banned or timed-out user's messages stay in place with a *banned* or *timeout 10m* style label, and a short moderator-action row says who did it. |
+| **Two chat views** | Use Kick's own chat with these additions, or switch to KickFlow's own chat list (as in the recording). |
+| **Readable events** | Subscriptions, gifted subs with an expandable list of recipients, Kicks gifts, hosts, raids and chat-mode changes as clear rows. Pins and polls stay with Kick. |
+| **Find and highlight** | Search this session's chat (Ctrl+F on the page), list one person's messages, follow a reply back to its message. Mentions, replies, moderators and VIPs can be highlighted in your own colours. |
+| **Player controls** | Back and forward 10 seconds (within the stream's buffer), back to live, automatic catch-up, playback speed, and the highest available quality. |
+| **Frame and clip capture** | Save the current frame as a PNG, or record the next 15 seconds of the picture as a local WebM clip with a preview before you save it. |
+| **Shortcuts** | `Left` / `Right` seek, `L` goes live, `S` saves a frame, `Shift+S` records a clip. Each can be changed or turned off, and they do nothing while you type. |
+| **Optional extras** | Theater mode on open, a guard that keeps Kick's auto-captions from switching on by themselves, and two reward switches that click Kick's own claim buttons. Theater mode and both reward clicks are off by default. |
 
 <details>
-<summary><strong>More pictures</strong></summary>
+<summary><strong>More pictures</strong> (component renders from offline test pages)</summary>
+
+![Preserved chat context, mentions and replies](docs/media/chat-context.png)
 
 ![Expanded gifted-subscription recipients](docs/media/chat-gifts.png)
 
 ![Playback-speed menu](docs/media/player-speed.png)
 
-![Chat and player controls side by side](docs/media/overview.png)
+![Gift list, rewind button and speed menu](docs/media/chat-and-player.gif)
 
-![Gift list, rewind button and speed menu in action](docs/media/chat-and-player.gif)
-
-These pictures come from offline test pages that use KickFlow's real chat renderer, player controls and
-styles, with made-up names and messages. They show how the parts look, not that the live site is unchanged.
+These come from offline test pages that use KickFlow's real chat renderer, player controls and styles with
+made-up names and messages. They show how the parts look, not that the live site is unchanged.
+See [docs/media/README.md](docs/media/README.md) for how each picture was made.
 </details>
 
-## Questions and troubleshooting
+## Install
 
-**Nothing changes on the page.**
-Refresh the Kick tab after installing or reloading the extension. Check that KickFlow is turned on in
-`chrome://extensions`. The popup's top line says whether it is active on the current tab.
+KickFlow is not on the Chrome Web Store; you load it as an unpacked extension.
 
-**A removed message did not stay.**
-KickFlow can only keep messages it saw arrive. Messages from before you opened the tab, or that never reached
-your browser, cannot be brought back. Check that **Show deleted messages** and **Inline bans** are on.
+1. Download `KickFlow-vX.Y.Z.zip` from the [latest release](https://github.com/ydbilgin/kickflow/releases/latest)
+   and extract it. (Or clone this repository: the built files in `dist/` are committed.)
+2. Open `chrome://extensions` and turn on **Developer mode** (top right).
+3. Click **Load unpacked** and choose the folder that holds `manifest.json`, `popup.html` and `dist/`.
+4. Open any Kick channel. KickFlow is active right away.
 
-**Rewind does nothing or stops early.**
-Rewind works inside the stream's buffer. Right after joining, or on some streams, there is little to go back to.
+**Updating:** replace the files, click **Reload** on the KickFlow card in `chrome://extensions`, and refresh open
+Kick tabs. Chrome-based browsers that support Manifest V3 unpacked extensions should work the same way; Chrome is
+the one it is tested in.
 
-**A shortcut types into chat instead.**
-That is on purpose: shortcuts are ignored while a text field has focus. Click on the player first.
+## Use
 
-**Something broke after Kick changed its site.**
-Kick changes its page from time to time, and that can break features until KickFlow is updated. Open
-**Diagnostics** in the popup and include what it shows when you report the problem in
-[Issues](https://github.com/ydbilgin/kickflow/issues).
+Click the KickFlow icon in the toolbar on a Kick tab:
 
-## Permissions
+<p align="center">
+  <img src="docs/media/popup-en.png" alt="KickFlow popup: status line, three session numbers (messages seen, kept after removal, kept from bans), chat view choice, tabs Chat, Player, Rewards and Shortcuts, and the chat switches" width="340">
+</p>
+
+- **Top:** whether KickFlow is active and which chat view is in use, then three numbers for this session:
+  messages seen, kept after removal, and kept from bans.
+- **Chat view:** Kick's own chat with KickFlow's additions, or the KickFlow list.
+- **Tabs:** **Chat**, **Player**, **Rewards** and **Shortcuts** hold every switch. **Diagnostics** (closed by
+  default) shows technical counters if something looks wrong.
+
+Changes apply at once and survive a reload. The settings panel inside the Kick page has the same switches plus
+the language (English or Turkish), highlight colours and the session search.
+
+<details>
+<summary><strong>Troubleshooting</strong></summary>
+
+**Nothing changes on the page.** Refresh the Kick tab after installing or reloading the extension, and check
+that KickFlow is on in `chrome://extensions`. The popup's top line says whether it is active on the current tab.
+
+**A removed message did not stay.** KickFlow can only keep messages it saw arrive. Messages from before you
+opened the tab, or that never reached your browser, cannot be brought back. Check that **Show deleted messages**
+and **Inline bans** are on.
+
+**Rewind does nothing or stops early.** Rewind works inside the stream's buffer; right after joining there is
+little to go back to.
+
+**A shortcut types into chat instead.** On purpose: shortcuts are ignored while a text field has focus. Click
+the player first.
+
+**Something broke after Kick changed its site.** Open **Diagnostics** in the popup and include what it shows in
+an [issue](https://github.com/ydbilgin/kickflow/issues).
+</details>
+
+## Privacy and permissions
 
 | Access | Why |
 | --- | --- |
-| `storage` | Save your settings, language, shortcuts, highlight colours, an optional manual username and the catch-up preference, locally. |
-| `activeTab` | Let the popup talk to KickFlow on the tab you are looking at, for status and settings. |
+| `storage` | Your settings, language, shortcuts, highlight colours, an optional manual username and the catch-up preference, saved locally. |
+| `activeTab` | Lets the popup talk to KickFlow on the tab you are looking at, for status and settings. |
 | Content scripts on `https://kick.com/*` | Read and extend Kick's chat and player. Two small scripts run in the page itself to see Kick's own chat events; the main script runs in the extension's separate space. |
 
-No background worker, no optional permissions and no other sites.
+No background worker, no optional permissions and no other sites. KickFlow has no analytics, ads or server of its own.
 
-## Privacy
-
-KickFlow has no telemetry, analytics, ads or remote collection service.
-
-- **Chat stays in memory** for the channel session: at most 30,000 messages, three hours, and 500 messages per
-  person (search shows up to 100 results). It is not a permanent chat backup.
-- **Settings** are saved in `chrome.storage.local`. The caption guard changes Kick's own caption setting in the
-  site's local storage. A layout watchdog can keep a small local record (page address, time, layout sizes) in
-  the site's local storage; it is never uploaded.
-- **Saved frames** go to your browser's download folder.
-- **Network:** in normal use your browser loads Kick's own channel, profile, history and video data and chat
-  images, and an older chat fallback can connect to the public Pusher service that Kick's chat uses. These
-  requests come from your browser, as on any Kick page. "No telemetry" does not mean "no network requests".
-- **Optional Extension Helper:** KickFlow can pass short diagnostic codes (for example `quality-lock-gave-up`)
-  to a separate, optional "Extension Helper" extension on the same computer. A report holds only the code, its
-  level and the page origin (`https://kick.com`), never message text, page content or account data. Without
-  that helper installed the attempt simply fails and nothing is sent.
+- **Chat stays in memory** for the channel session only: at most 30,000 messages, three hours, and 500 messages
+  per person (search shows up to 100 results). It is not a chat backup.
+- **Settings** stay in `chrome.storage.local`. The caption guard changes Kick's own caption setting in the site's
+  local storage, and a layout watchdog can keep a small local record (page address, time, layout sizes) there.
+- **Saved frames and clips** go to your browser's download folder, only when you save them.
+- **Network:** your browser loads Kick's own channel, profile, chat-history and video data and chat images, as on
+  any Kick page. These requests go to Kick, from your browser.
+- **Diagnostic codes to a helper extension.** KickFlow's content script and popup pass short diagnostic codes to
+  one specific, separately installed browser extension (the "Extension Helper", Chrome ID
+  `idoajpmlahhhlamballfmbkggmfmmidh`, not part of this repository) through Chrome's extension messaging. This
+  happens when KickFlow logs a warning or error, or one of its own scripts throws. A report holds only a code from a fixed list (for example
+  `quality-lock-gave-up`, or `unclassified`), its level and the page origin (`https://kick.com`); never message
+  text, page content, URLs beyond the origin, or account data. It is capped at 60 reports per 10 minutes. KickFlow
+  makes no network request for this. If that helper is not installed, which is the normal case, Chrome rejects
+  the message and nothing is delivered. What the helper does with a report is up to the helper. Code:
+  [`src/extension-helper.mjs`](src/extension-helper.mjs), [`src/extension-helper-reporter.mjs`](src/extension-helper-reporter.mjs).
 
 Removing the extension clears its own storage; Kick's site data is cleared through Chrome's site-data settings.
+More limits: labels are local context, not official moderation records (the page-event bridge cannot be
+authenticated against other scripts on the page); quality selection cannot unlock locked options; frame capture
+can fail if the browser blocks reading the video; the sidebar stays Kick's own.
 
-## Limits
+## How it works
 
-KickFlow is provided as-is and is not affiliated with or endorsed by Kick.
+```mermaid
+flowchart LR
+  WS["Kick's chat socket<br/>(in the page)"] --> BR["native-chat.js<br/>page bridge"]
+  BR -- "public chat events" --> CS["content.js<br/>chat store"]
+  CS --> NV["Kick's chat<br/>+ labels"]
+  CS --> OL["KickFlow<br/>chat list"]
+  CS --> PL["player controls<br/>in Kick's bar"]
+  PU["popup.html"] <-- "status / settings" --> CS
+  CS <--> ST[("chrome.storage<br/>.local")]
+```
 
-- It can only keep messages it has received.
-- The bridge to Kick's page events is not authenticated against other scripts on the same page, so labels are
-  local context, not official moderation records.
-- Quality selection cannot unlock locked options, and frame capture can fail when the browser blocks reading
-  the video.
-- In the KickFlow chat list, starting a native reply and some moderation actions may need Kick's own chat.
-- The sidebar stays Kick's own.
+A small script in the page watches the chat socket Kick already opens and forwards only public chat events
+(messages, deletions, bans, subscriptions, gifts) to the content script. The content script keeps the session's
+messages in memory, so when a deletion or ban arrives it can mark the message instead of losing it, either on
+Kick's own rows or in its own list. Player controls are mounted into Kick's native control bar.
 
-## For developers
+## Build from source
 
-- `src/` holds the TypeScript source, `dist/` the built files Chrome loads, `tests/` the Vitest suite.
-- `node build.mjs` builds, and `node node_modules/vitest/vitest.mjs run` tests.
-- The README demo is drawn from `docs/demo/scene.html`; re-render it with `node docs/demo/render.mjs`
-  (see [docs/demo/README-demo.md](docs/demo/README-demo.md)).
+Needs Node.js and npm.
 
-## Licence
+```sh
+npm ci
+npm run typecheck   # tsc --noEmit
+npx vitest run      # unit tests
+npm run build       # writes dist/
+```
 
-[MIT License](LICENSE). Copyright (c) 2026 Yasin Derya Bilgin. Dependencies keep their own licences.
+Then reload the extension in `chrome://extensions` and refresh the Kick tab. The source is TypeScript in `src/`,
+tests are in `tests/`, and [TESTING.md](TESTING.md) explains which check answers which question, including the
+live probes under `tests/playwright/`. The README recording is reproducible with
+`node docs/demo/fixture/capture.mjs` (see the header of that file).
+
+## Contributing, security, license
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to build, test and propose a change.
+- [SECURITY.md](SECURITY.md): report a vulnerability privately.
+- [MIT License](LICENSE). Copyright (c) 2026 Yasin Derya Bilgin. Dependencies keep their own licences.
 
 ---
 
 ## Türkçe
 
-KickFlow, Kick sohbetini okunur tutan ve oynatıcıya gerçek kontroller ekleyen ücretsiz bir Chrome eklentisidir.
-Arayüzü Türkçe ve İngilizcedir.
+KickFlow, Kick sohbetinde silinen ve zaman aşımı alan mesajları okunur tutan, kanal olaylarını anlaşılır
+satırlarda gösteren ve oynatıcıya geri sarma, hız ve kayıt düğmeleri ekleyen ücretsiz bir Chrome eklentisidir.
+**Resmî değildir; Kick ile bağlantısı yoktur.** Arayüz Türkçe ve İngilizcedir.
 
-**Ne yapar**
-
-- Silinen, banlanan veya zaman aşımı alan mesajları üstü çizili ve etiketli olarak gösterir (`DELETED`,
-  `TIMEOUT 10M`); konuşmanın bağlamı kaybolmaz. Yalnızca eklentinin gördüğü mesajlar korunabilir.
-- Abonelik, hediye abonelik (alıcı listesi açılır), Kicks hediyesi, host/raid ve sohbet modu değişikliklerini
-  okunur satırlarda gösterir. Oturum içinde arama, kişinin mesajları ve yanıtları takip etme vardır.
-- Oynatıcıya 10 saniye geri/ileri, canlıya dönüş, otomatik yetişme, hız, en yüksek kalite ve PNG kare kaydı
-  ekler. Kısayollar: `Sol`/`Sağ` sarma, `L` canlı, `S` kare kaydı; yazı alanlarında devreye girmez.
-- İki isteğe bağlı ödül tıklama ayarı vardır; ikisi de varsayılan olarak kapalıdır.
-
-**Kurulum**
-
-1. [Depoyu ZIP olarak indirin](https://github.com/ydbilgin/kickflow/archive/refs/heads/main.zip) ve çıkarın.
-2. Chrome'da `chrome://extensions` sayfasını açıp **Geliştirici modu**nu açın.
-3. **Paketlenmemiş öğe yükle** ile `manifest.json`, `popup.html` ve `dist/` içeren klasörü seçin.
-4. Bir Kick kanalı açın. Güncellemeden sonra eklentiyi yeniden yükleyip sekmeyi yenileyin.
-
-**Kullanım:** araç çubuğundaki KickFlow simgesi açılır pencereyi açar. Üstte bu oturumun üç sayısı (görülen
-mesaj, silinse de korunan, bandan korunan), altında **Sohbet**, **Oynatıcı**, **Ödüller** ve **Kısayollar**
-sekmeleri vardır. **Tanılama** bölümü teknik sayaçları gösterir ve kapalı başlar.
-Dil, Kick sayfasındaki KickFlow ayarlar panelinden değiştirilir.
-
-**Gizlilik:** telemetri, analiz veya uzaktan veri toplama yoktur. Sohbet yalnızca oturum boyunca bellekte
-tutulur (en fazla 30.000 mesaj, üç saat). Ayarlar `chrome.storage.local` içinde kalır. Tarayıcı normal kullanımda
-Kick'in servislerine ve Kick sohbetinin kullandığı Pusher servisine istek yapar; bunlar her Kick sayfasında olduğu gibi tarayıcınızdan gider.
-İsteğe bağlı "Extension Helper" eklentisi kuruluysa ona yalnızca
-kısa tanılama kodu, düzeyi ve sayfa kökeni (`https://kick.com`) gider; mesaj metni veya hesap bilgisi gitmez.
-
-Kick ile bağlantılı değildir; site değişiklikleri özellikleri bozabilir. [MIT Lisansı](LICENSE).
+- **Ne yapar:** silinen mesajlar üstü çizili ve *silindi* etiketiyle, banlanan veya susturulan kullanıcının
+  mesajları etiketle yerinde kalır. Oynatıcıya 10 sn geri/ileri, canlıya dönüş, hız, en yüksek kalite, PNG kare
+  ve 15 sn yerel klip kaydı ekler. Kısayollar: `Sol`/`Sağ`, `L`, `S`, `Shift+S`.
+- **Kurulum:** [son sürümden](https://github.com/ydbilgin/kickflow/releases/latest) ZIP dosyasını indirip çıkarın,
+  `chrome://extensions` sayfasında **Geliştirici modu**nu açın ve **Paketlenmemiş öğe yükle** ile klasörü seçin.
+- **Gizlilik:** analiz veya sunucu yoktur; sohbet yalnızca oturum boyunca bellekte tutulur. Ayrıntılar ve
+  isteğe bağlı yardımcı eklentiye giden kısa tanılama kodları için [Privacy and permissions](#privacy-and-permissions).
+- Ayrıntılar: [What it does](#what-it-does) · [Use](#use) · [Build from source](#build-from-source)

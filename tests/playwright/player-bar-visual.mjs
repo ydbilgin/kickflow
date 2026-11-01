@@ -30,7 +30,7 @@ const recordedPlayer = process.argv.includes('--vod');
 // --flat measures the fallback with the cinema strip off; --shots also writes the design moments.
 const flatBar = process.argv.includes('--flat');
 const designShots = process.argv.includes('--shots');
-// --bright puts a near-white picture with burned-in chat text under the bar (his 2026-10-21
+// --bright puts a near-white picture with burned-in chat text under the bar (a 2026-10-21 bug report
 // screenshot: a bright stream, "zu..fg: b..." text behind pause and mute) and adds the
 // readability assertion (6): every enabled control's glyph keeps 4.5:1 against what is behind it.
 const brightPicture = process.argv.includes('--bright');
