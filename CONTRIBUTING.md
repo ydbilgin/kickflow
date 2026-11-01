@@ -30,6 +30,8 @@ Playwright gates under `tests/playwright/`.
   user-facing text through `src/content/shared/i18n.ts` with both English and Turkish.
 - Do not commit a logged-in browser profile, credentials or anything from `output/`.
 - Commit `dist/` only when you are preparing a release.
+- The README hero, feature table, picture gallery and social preview are generated from
+  `docs/showcase/showcase.yml`; see [docs/showcase/UPDATING.md](docs/showcase/UPDATING.md) before editing them.
 
 ## Be kind
 

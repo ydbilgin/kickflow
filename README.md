@@ -1,3 +1,4 @@
+<!-- showcase:hero:start (generated from docs/showcase/showcase.yml) -->
 <p align="center"><img src="icons/icon-128.png" alt="KickFlow icon" width="96"></p>
 <h1 align="center">KickFlow</h1>
 <p align="center">
@@ -7,9 +8,9 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="Platform: Chrome (MV3)" src="https://img.shields.io/badge/platform-Chrome%20(MV3)-53FC18">
-  <a href="https://github.com/ydbilgin/kickflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ydbilgin/kickflow?include_prereleases&sort=semver"></a>
+  <a href="https://github.com/ydbilgin/kickflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ydbilgin/kickflow?include_prereleases&amp;sort=semver"></a>
 </p>
-<p align="center"><img src="docs/media/kickflow-demo.gif" alt="Recording: chat messages arrive; a moderator deletes one and it stays, struck through and labelled deleted; a 10-minute timeout keeps the user's messages with a timeout label; KickFlow's rewind, speed, live and capture buttons appear in the player bar and rewind is clicked; then the KickFlow popup shows the session counts" width="860"></p>
+<p align="center"><img src="docs/media/kickflow-demo.gif" alt="Recording: chat messages arrive; a moderator deletes one and it stays, struck through and labelled deleted; a 10-minute timeout keeps the user&#x27;s messages with a timeout label; KickFlow&#x27;s rewind, speed, live and capture buttons appear in the player bar and rewind is clicked; then the KickFlow popup shows the session counts" width="860"></p>
 <p align="center"><sub>Real extension build running in Chromium against a local demo page that imitates the Kick layout (not kick.com). Names, messages and video are invented; the caption strip was added afterwards.</sub></p>
 <p align="center">
   <a href="#what-it-does"><b>What it does</b></a> ·
@@ -20,6 +21,7 @@
   <a href="#build-from-source"><b>Build</b></a> ·
   <a href="#türkçe"><b>Türkçe</b></a>
 </p>
+<!-- showcase:hero:end -->
 
 > **Unofficial, personal-use project.** KickFlow is not affiliated with, endorsed by or supported by Kick.
 > It reads and extends the Kick web page in your own browser, and a change on Kick's side can break a feature
@@ -31,28 +33,35 @@ KickFlow fixes both inside the page you already have open. English and Turkish i
 
 ## What it does
 
+<!-- showcase:features:start (generated from docs/showcase/showcase.yml) -->
 | Feature | What it does |
 | --- | --- |
 | **Deleted messages stay** | Messages KickFlow already received stay readable after a deletion: struck through and labelled *deleted*, with the moderator when Kick sends the name. |
-| **Bans and timeouts** | A banned or timed-out user's messages stay in place with a *banned* or *timeout 10m* style label, and a short moderator-action row says who did it. |
-| **Two chat views** | Use Kick's own chat with these additions, or switch to KickFlow's own chat list (as in the recording). |
+| **Bans and timeouts** | A banned or timed-out user&#x27;s messages stay in place with a *banned* or *timeout 10m* style label, and a short moderator-action row says who did it. |
+| **Two chat views** | Use Kick&#x27;s own chat with these additions, or switch to KickFlow&#x27;s own chat list (as in the recording). |
 | **Readable events** | Subscriptions, gifted subs with an expandable list of recipients, Kicks gifts, hosts, raids and chat-mode changes as clear rows. Pins and polls stay with Kick. |
-| **Find and highlight** | Search this session's chat (Ctrl+F on the page), list one person's messages, follow a reply back to its message. Mentions, replies, moderators and VIPs can be highlighted in your own colours. |
-| **Player controls** | Back and forward 10 seconds (within the stream's buffer), back to live, automatic catch-up, playback speed, and the highest available quality. |
+| **Find and highlight** | Search this session&#x27;s chat (Ctrl+F on the page), list one person&#x27;s messages, follow a reply back to its message. Mentions, replies, moderators and VIPs can be highlighted in your own colours. |
+| **Player controls** | Back and forward 10 seconds (within the stream&#x27;s buffer), back to live, automatic catch-up, playback speed, and the highest available quality. |
 | **Frame and clip capture** | Save the current frame as a PNG, or record the next 15 seconds of the picture as a local WebM clip with a preview before you save it. |
 | **Shortcuts** | `Left` / `Right` seek, `L` goes live, `S` saves a frame, `Shift+S` records a clip. Each can be changed or turned off, and they do nothing while you type. |
-| **Optional extras** | Theater mode on open, a guard that keeps Kick's auto-captions from switching on by themselves, and two reward switches that click Kick's own claim buttons. Theater mode and both reward clicks are off by default. |
+| **Optional extras** | Theater mode on open, a guard that keeps Kick&#x27;s auto-captions from switching on by themselves, and two reward switches that click Kick&#x27;s own claim buttons. Theater mode and both reward clicks are off by default. |
+<!-- showcase:features:end -->
 
 <details>
 <summary><strong>More pictures</strong> (component renders from offline test pages)</summary>
 
-![Preserved chat context, mentions and replies](docs/media/chat-context.png)
-
-![Expanded gifted-subscription recipients](docs/media/chat-gifts.png)
-
-![Playback-speed menu](docs/media/player-speed.png)
-
-![Gift list, rewind button and speed menu](docs/media/chat-and-player.gif)
+<!-- showcase:gallery:start (generated from docs/showcase/showcase.yml) -->
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/media/chat-context.png" alt="Preserved deletions, a timeout, mention and reply highlights" width="100%"><br><sub>Preserved deletions, a timeout, mention and reply highlights</sub></td>
+<td width="50%" valign="top"><img src="docs/media/chat-gifts.png" alt="Gifted-subscription row with its recipients expanded" width="100%"><br><sub>Gifted-subscription row with its recipients expanded</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/media/player-speed.png" alt="The playback-speed menu in the player bar" width="100%"><br><sub>The playback-speed menu in the player bar</sub></td>
+<td width="50%" valign="top"><img src="docs/media/chat-and-player.gif" alt="Gift list, rewind button and speed menu" width="100%"><br><sub>Gift list, rewind button and speed menu</sub></td>
+</tr>
+</table>
+<!-- showcase:gallery:end -->
 
 These come from offline test pages that use KickFlow's real chat renderer, player controls and styles with
 made-up names and messages. They show how the parts look, not that the live site is unchanged.
@@ -78,7 +87,8 @@ the one it is tested in.
 Click the KickFlow icon in the toolbar on a Kick tab:
 
 <p align="center">
-  <img src="docs/media/popup-en.png" alt="KickFlow popup: status line, three session numbers (messages seen, kept after removal, kept from bans), chat view choice, tabs Chat, Player, Rewards and Shortcuts, and the chat switches" width="340">
+  <img src="docs/media/popup-en.png" alt="KickFlow popup: status line, three session numbers (messages seen, kept after removal, kept from bans), chat view choice, tabs Chat, Player, Rewards and Shortcuts, and the chat switches" width="340"><br>
+  <sub>The real <code>popup.html</code> rendered with made-up session numbers.</sub>
 </p>
 
 - **Top:** whether KickFlow is active and which chat view is in use, then three numbers for this session:
