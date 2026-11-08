@@ -13,11 +13,10 @@ by construction, so this file exists to say which check answers which question.
 | The question | Run | Answers in |
 |---|---|---|
 | Did I break the code? | the offline gate (§2) | ~30 s |
-| A feature seems dead on kick.com | the anchor probe (§3.1) | ~2 min |
-| Does the player really open at the highest quality? | the quality-selection probe (§3.2) | ~2 min |
-| Do our own player-bar buttons still mount? | the hover probe (§3.3) | ~2 min |
+| A feature seems dead on kick.com | the anchor probe (§3) | ~2 min |
 | Did a player-bar change break the layout at some width? | the geometry gate (§2.1) | ~50 s |
-| Before a release | §2, then §3.1, then §3.2 | ~5 min |
+| Did a chat change break layout, pointer or hydration? | the chat gates (§7) | ~2 min |
+| Before a release | §2, then §3 | ~3 min |
 
 **The offline gate can be fully green while every feature is dead on the live site.** That is not a
 hypothetical: the quality lock was dead for weeks with a green suite, twice.
@@ -37,8 +36,8 @@ npm run build          # writes dist/
 matches kick.com. A unit test builds its own DOM, so it agrees with itself.
 
 **The extension the browser runs is `dist/`, not `src/`.** After changing anything under `src/`,
-`npm run build` or you are testing yesterday's code. The owner also has to press ↻ on
-`chrome://extensions` — a released version he has not reloaded is still the old code, and stale
+`npm run build` or you are testing yesterday's code. Then press ↻ on the KickFlow card in
+`chrome://extensions` — an extension that has not been reloaded is still the old code, and stale
 entries stay on the extension's error page until "Clear all" is pressed.
 
 ### 2.1 The geometry gate — run this after ANY change to the player bar or its CSS
@@ -60,25 +59,23 @@ sweeps 128 viewport widths (800px up to 1996px) and asserts, at every one of the
 Every number is a real `getBoundingClientRect()`. **Never let it assert against a width, padding
 or min-width constant that `bootstrap.ts` also owns** — a gate computed from the layout's own
 constants agrees with itself while the screen is broken. The fixture's Kick-side geometry is a
-dated snapshot (`docs/RULING_kick_ui_layout.md` §7.2); §3.3's live probe is what keeps it honest.
+dated snapshot of the live bar, so it can drift from kick.com; only a live run notices that.
 
 Screenshots for a human land in `output/playwright/player-bar-<width>.png`. **They are not the
 evidence** — the assertions are.
 
 ---
 
-## 3. The live probes — these are what catch Kick-side rot
-
-All three load the real extension into a real Chromium against a real live channel. They discover a
-live channel themselves from Kick's public livestreams endpoint; pass a slug to pin one.
-
-### 3.1 Anchor probe — "which of our ~31 anchors still match?"
+## 3. The live anchor probe — this is what catches Kick-side rot
 
 ```
-node tests/playwright/kick-anchor-probe.mjs [channelSlug]
+node tests/playwright/kick-anchor-probe.mjs [channelSlug] [--headless]
 ```
 
-Prints one line per anchor and exits **non-zero** if anything is `MISS` or `UNLOADABLE`.
+Loads the real extension into a real Chromium against a real live channel. It discovers a live
+channel itself from Kick's public livestreams endpoint; pass a slug to pin one. It prints one line
+per anchor ("which of our ~31 anchors still match?") and exits **non-zero** if anything is `MISS`
+or `UNLOADABLE`.
 
 - `MATCH` — the anchor still matches live Kick.
 - `MISS` — **real rot.** The evidence block in `output/playwright/kick-anchor-probe.json` carries the
@@ -93,57 +90,28 @@ Prints one line per anchor and exits **non-zero** if anything is `MISS` or `UNLO
 Reference results: logged out **18 MATCH / 13 NOT_CHECKABLE**, logged in **21 / 10**, both with
 0 MISS (2026-08-28).
 
-### 3.2 Quality-selection probe — "does the player actually end up at the highest quality?"
-
-```
-node tests/playwright/quality-selection-probe.mjs [channelSlug]
-```
-
-Reads `output/playwright/quality-lock-round101-probe.json`:
-
-- `qualityAfterExtension.rows` — which row is `checked: true`. **The probe never clicks a resolution
-  row**, so anything selected was selected by `quality-lock.ts`.
-- `gearBy` — `shipped-prefix` means a known cog path matched; `fallback-no-testid` means the icon
-  rotted and the structural fallback carried it. **Fallback still means the feature works**, but the
-  console warning names the new path — add it to `KNOWN_GEAR_PATH_PREFIXES` and re-run.
-- Logged OUT, `1080p60` carries "Giriş gerekli" and **720p60 is the correct answer**. Only a
-  logged-in run can show `1080p60`.
-
-### 3.3 Hover probe — "do our own controls mount into Kick's bar?"
-
-```
-node tests/playwright/native-bar-hover-probe.mjs [channelSlug]
-```
-
-Measures twice on one page load: with no pointer interaction, then after hovering the player.
-
-**Kick mounts its control bar only on pointer movement over the player.** With no hover there is no
-bar, 0 buttons and none of our controls — that is normal, not a defect. After hovering, expect the
-bar plus all four of `kickflow-rewind-controls`, `kickflow-catchup-controls`,
-`kickflow-speed-controls`, `kickflow-screenshot-controls`, and `warnings: []`.
-
-The run then narrows to **1024x760**, Kick's own desktop floor, and reports `narrow`:
-`outsideBar` MUST be empty — that is the live half of §2.1's assertion 3, and the one that says
-whether Kick's geometry still matches the fixture's dated snapshot. Expect `overflowPresent: true`
-and a SHORTER `mountedControls` list there: at that width the width budget collapses controls into
-the `⋯` menu on purpose.
+Its mandatory realtime anchor runs the production `isKickRealtimeUrl` validator against observed
+sockets. It rejects the legacy Pusher endpoint, viewer sockets, lookalike hosts and missing
+observations. This checks the current native chat boundary; it does not prove message delivery
+or account-gated surfaces. Socket evidence omits query strings and URL credentials.
 
 ---
 
-## 4. Getting a logged-in session (needed for §3.2's 1080p60 and the session-gated anchors)
+## 4. Getting a logged-in session (needed for the session-gated anchors)
 
-**Kick refuses an automated login — always `429 POST /mobile/login`.** It is not bot detection
-(that is 403), not the browser build, not the exit IP; the owner's own Chrome logs in fine at the
-same moment. Do not fight it. Create the session by hand instead:
+**Kick refuses an automated login (`429 POST /mobile/login`).** It is not bot detection (that is
+403), and a normal browser logs in fine at the same moment. Do not fight it. Create the session by
+hand instead:
 
-1. `Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--user-data-dir=<repo>\output\playwright\kickflow-owner-profile","--no-first-run","https://kick.com/"`
-   — a plain Chrome. No Playwright, no CDP, no automation flags.
-2. The owner logs in by hand, then **closes the window**.
-3. Run any probe with `KICK_PROFILE_DIR=<that path>`. Reading through the session was never blocked.
+1. Start a plain Chrome (no Playwright, no automation flags) with a **new, separate** profile
+   directory, for example `--user-data-dir=<repo>/output/playwright/kick-test-profile`, and open
+   `https://kick.com/`.
+2. Log in by hand, then **close the window**.
+3. Run the probe with `KICK_PROFILE_DIR=<that directory>`.
 
-Never type a credential yourself, and never use the owner's own Chrome profile: one profile
-directory admits ONE browser process, so his running Chrome would block it and a probe would hang
-with no browser at all.
+Never type a credential into a script, and never point a probe at your everyday Chrome profile:
+one profile directory admits ONE browser process, so a running Chrome would block it and the probe
+would hang with no browser at all. The `output/` folder is git-ignored; keep it that way.
 
 ---
 
@@ -159,9 +127,6 @@ with no browser at all.
   outcome as having no probe.
 - **Throttle live runs.** kick.com rate-limits, and the limit is easy to hit with a handful of runs
   in half an hour. Pin a channel and run once rather than looping.
-- **Check the secret scan's coverage line, not just its verdict** — `secrets_audit.py` skips
-  out-of-scope extensions and still prints "No findings". `[coverage] examined 0 file(s)` is not a
-  clean scan.
 
 ---
 
@@ -205,10 +170,3 @@ headless animation-frame measurements do not establish native stream or physical
 Pass `--output=<directory>` to these chat gates to choose an artifact directory. Set
 `KICKFLOW_TEST_CHROMIUM` to an existing test Chromium executable if needed. As with the earlier
 offline gate, these checks complement a live probe; they cannot detect future changes to Kick.
-
-The live anchor probe also accepts `--headless`, for example
-`node tests/playwright/kick-anchor-probe.mjs channelSlug --headless`.
-Its mandatory realtime anchor runs the production `isKickRealtimeUrl` validator against observed
-sockets. It rejects the legacy Pusher endpoint, viewer sockets, lookalike hosts and missing
-observations. This checks the current native chat boundary; it does not prove message delivery
-or account-gated surfaces. Socket evidence omits query strings and URL credentials.

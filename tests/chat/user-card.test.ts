@@ -315,8 +315,8 @@ describe('user-card', () => {
 
   it('omits an explicitly unselected badges_v2 entry from the user card', () => {
     const model = mapUserCardResponse({
-      username: 'laureth',
-      slug: 'laureth',
+      username: 'streamerx',
+      slug: 'streamerx',
       badges: [{ type: 'subscriber', text: 'Subscriber', count: 1, sort_order: 9 }],
       badges_v2: [{
         name: 'level',
@@ -326,7 +326,7 @@ describe('user-card', () => {
         metadata: { level: 34 },
         sort_order: 1,
       }],
-    }, {}, 'laureth', 'laureth');
+    }, {}, 'streamerx', 'streamerx');
 
     expect(model.badges).toEqual([expect.objectContaining({ type: 'subscriber', count: 1 })]);
   });

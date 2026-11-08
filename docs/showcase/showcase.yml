@@ -1,0 +1,74 @@
+# Content for the README hero, feature table, picture gallery and the social preview.
+# Design lives in docs/showcase/templates/. Edit this file, then run: python3 docs/showcase/showcase.py
+# (see docs/showcase/UPDATING.md)
+name: KickFlow
+repo: ydbilgin/kickflow
+tagline: Kick chat that keeps its context.
+description: A Chrome extension that keeps deleted and timed-out messages readable, makes channel events easy to follow, and adds rewind, speed and capture controls to the Kick player.
+icon: icons/icon-128.png
+readmes:
+  - README.md
+
+badges:
+  - alt: "License: MIT"
+    image: https://img.shields.io/badge/license-MIT-green
+    link: LICENSE
+  - alt: "Platform: Chrome (MV3)"
+    image: https://img.shields.io/badge/platform-Chrome%20(MV3)-53FC18
+  - alt: Latest release
+    image: https://img.shields.io/github/v/release/ydbilgin/kickflow?include_prereleases&sort=semver
+    link: https://github.com/ydbilgin/kickflow/releases/latest
+
+hero:
+  media: docs/media/kickflow-demo.gif
+  alt: "Recording: chat messages arrive; a moderator deletes one and it stays, struck through and labelled deleted; a 10-minute timeout keeps the user's messages with a timeout label; KickFlow's rewind, speed, live and capture buttons appear in the player bar and rewind is clicked; then the KickFlow popup shows the session counts"
+  caption: Real extension build running in Chromium against a local demo page that imitates the Kick layout (not kick.com). Names, messages and video are invented; the caption strip was added afterwards.
+  nav:
+    - label: What it does
+      link: "#what-it-does"
+    - label: Install
+      link: "#install"
+    - label: Use
+      link: "#use"
+    - label: Privacy
+      link: "#privacy-and-permissions"
+    - label: How it works
+      link: "#how-it-works"
+    - label: Build
+      link: "#build-from-source"
+    - label: Türkçe
+      link: "#türkçe"
+
+features:
+  - name: Deleted messages stay
+    text: "Messages KickFlow already received stay readable after a deletion: struck through and labelled *deleted*, with the moderator when Kick sends the name."
+  - name: Bans and timeouts
+    text: A banned or timed-out user's messages stay in place with a *banned* or *timeout 10m* style label, and a short moderator-action row says who did it.
+  - name: Two chat views
+    text: Use Kick's own chat with these additions, or switch to KickFlow's own chat list (as in the recording).
+  - name: Readable events
+    text: Subscriptions, gifted subs with an expandable list of recipients, Kicks gifts, hosts, raids and chat-mode changes as clear rows. Pins and polls stay with Kick.
+  - name: Find and highlight
+    text: Search this session's chat (Ctrl+F on the page), list one person's messages, follow a reply back to its message. Mentions, replies, moderators and VIPs can be highlighted in your own colours.
+  - name: Player controls
+    text: Back and forward 10 seconds (within the stream's buffer), back to live, automatic catch-up, playback speed, and the highest available quality.
+  - name: Frame and clip capture
+    text: Save the current frame as a PNG, or record the next 15 seconds of the picture as a local WebM clip with a preview before you save it.
+  - name: Shortcuts
+    text: "`Left` / `Right` seek, `L` goes live, `S` saves a frame, `Shift+S` records a clip. Each can be changed or turned off, and they do nothing while you type."
+  - name: Optional extras
+    text: Theater mode on open, a guard that keeps Kick's auto-captions from switching on by themselves, and two reward switches that click Kick's own claim buttons. Theater mode and both reward clicks are off by default.
+
+gallery:
+  - file: docs/media/chat-context.png
+    caption: Preserved deletions, a timeout, mention and reply highlights
+  - file: docs/media/chat-gifts.png
+    caption: Gifted-subscription row with its recipients expanded
+  - file: docs/media/player-speed.png
+    caption: The playback-speed menu in the player bar
+  - file: docs/media/chat-and-player.gif
+    caption: Gift list, rewind button and speed menu
+
+# Social preview card (design: templates/social.svg; the chat panel in it is a crop of the demo GIF)
+social_blurb: Deleted and timed-out messages stay readable, labelled. Player controls next to Kick's own.
+social_subtitle: Chrome extension · unofficial

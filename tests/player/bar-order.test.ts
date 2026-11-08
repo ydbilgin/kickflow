@@ -91,7 +91,7 @@ describe('player bar order', () => {
   });
 });
 
-// His 2026-10-21 screenshot: Kick's bar over a bright stream, chat text burned into the picture
+// A 2026-10-21 bug-report screenshot: Kick's bar over a bright stream, chat text burned into the picture
 // behind pause and mute. The dark fade (FINAL row 15, layer 1) must not depend on the cinema strip
 // flag, or the flat fallback is unreadable again. The pixel proof is player-bar-visual.mjs --bright.
 describe("dark fade under Kick's bar", () => {

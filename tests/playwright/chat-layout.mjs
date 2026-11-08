@@ -39,7 +39,7 @@ header{height:42px;flex:none;padding:12px;text-align:center;border-bottom:1px so
 #footer{flex:none;background:#0b0e0f;position:relative;z-index:40;padding:8px 16px}
 #slow,#emotes,#reply{height:0;overflow:hidden}#input{height:50px;border:2px solid #efeff1;border-radius:5px;padding:12px}
 #send-message-button{display:block;margin:8px 0 0 auto;background:#53fc18;border:0;padding:8px 20px;border-radius:4px}
-${css}</style><div id="panel"><header>KickFlow chat layout harness</header><div id="body"><div id="events" class="absolute w-full"></div><div id="chatroom-messages"><div>Native fallback chat</div></div></div><div id="footer"><div id="reply">Replying to laureth</div><div id="slow">◴ Yavaş mod aktif</div><div id="emotes">🟢 🐸 🟢 🐸 🟢 🐸 🟢 🐸 🟢</div><div id="input" contenteditable="true">Bir mesaj gönderin</div><button id="send-message-button">Gönder</button></div></div><script src="harness.js"></script>`;
+${css}</style><div id="panel"><header>KickFlow chat layout harness</header><div id="body"><div id="events" class="absolute w-full"></div><div id="chatroom-messages"><div>Native fallback chat</div></div></div><div id="footer"><div id="reply">Replying to streamerx</div><div id="slow">◴ Yavaş mod aktif</div><div id="emotes">🟢 🐸 🟢 🐸 🟢 🐸 🟢 🐸 🟢</div><div id="input" contenteditable="true">Bir mesaj gönderin</div><button id="send-message-button">Gönder</button></div></div><script src="harness.js"></script>`;
 await fs.writeFile(path.join(out, 'harness.html'), html);
 const browser = await chromium.launch({ headless: true,
   executablePath: process.env.KICKFLOW_TEST_CHROMIUM, args: ['--mute-audio'] });

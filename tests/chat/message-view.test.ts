@@ -1239,8 +1239,8 @@ describe('message-view safe rendering', () => {
       metadata: '{"message_ref":"1784233982451"}',
       sender: {
         id: 1628,
-        slug: 'laureth',
-        username: 'laureth',
+        slug: 'streamerx',
+        username: 'streamerx',
         identity: {
           color: '#AAA9FF',
           badges: [
@@ -1267,7 +1267,7 @@ describe('message-view safe rendering', () => {
     const badges = row.querySelector('.kickflow-message__badges');
 
     expect(row.classList.contains('kickflow-message')).toBe(true);
-    expect(row.querySelector('.kickflow-message__username')?.textContent).toBe('laureth');
+    expect(row.querySelector('.kickflow-message__username')?.textContent).toBe('streamerx');
     expect(badges?.querySelector('img[src*="/chat/badges/34_"]')).toBeNull();
     expect(badges?.querySelector('.kickflow-badge-role')?.getAttribute('aria-label')).toContain('Abone');
   });
