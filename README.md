@@ -47,6 +47,14 @@ KickFlow fixes both inside the page you already have open. English and Turkish i
 | **Optional extras** | Theater mode on open, a guard that keeps Kick&#x27;s auto-captions from switching on by themselves, and two reward switches that click Kick&#x27;s own claim buttons. Theater mode and both reward clicks are off by default. |
 <!-- showcase:features:end -->
 
+<p align="center">
+  <img src="docs/media/explain-chat.gif" alt="Drawn animation: the same chat in two panels. A moderator deletes a spam message: without KickFlow it disappears and the next question about it loses its context; with KickFlow it stays struck through, labelled deleted with the moderator, and a moderator-action row appears. A 10-minute timeout then removes a user's messages on the left and labels them in place on the right" width="860">
+</p>
+<p align="center">
+  <img src="docs/media/explain-player.gif" alt="Drawn animation: the Left arrow jumps back 10 seconds twice and the playhead moves back on a buffer timeline while the Live button shows minus 20 seconds; Right goes forward 10; S saves the current frame as a PNG; L returns to the live edge" width="860">
+</p>
+<p align="center"><sub>Drawn explainers with invented names, not recordings of kick.com. How they are made: <a href="docs/explain/README.md">docs/explain</a>.</sub></p>
+
 <details>
 <summary><strong>More pictures</strong> (component renders from offline test pages)</summary>
 
@@ -175,7 +183,8 @@ npm run build       # writes dist/
 Then reload the extension in `chrome://extensions` and refresh the Kick tab. The source is TypeScript in `src/`,
 tests are in `tests/`, and [TESTING.md](TESTING.md) explains which check answers which question, including the
 live probes under `tests/playwright/`. The README recording is reproducible with
-`node docs/demo/fixture/capture.mjs` (see the header of that file).
+`node docs/demo/fixture/capture.mjs` (see the header of that file), and the two drawn explainers with
+`node docs/explain/render.mjs chat` and `node docs/explain/render.mjs player`.
 
 ## Contributing, security, license
 

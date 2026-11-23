@@ -1,0 +1,216 @@
+<!doctype html>
+<!--
+  KickFlow explainer: the same chat on two sides. On the left, a chat that drops removed messages; on the right,
+  the same messages with KickFlow, which keeps what it already received and labels it.
+  A drawn illustration with invented names; it does not use Kick's interface or assets.
+  Rendered to ../media/explain-chat.gif by `node docs/explain/render.mjs chat` (see README.md here).
+  Every frame is a pure function of time.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 960px; height: 500px; overflow: hidden; background: #0e1012; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="500"></canvas>
+<img id="icon" src="../../icons/icon-48.png" alt="" style="display:none">
+<script>
+// ---------------------------------------------------------------- TIMELINE (edit here)
+window.DEMO = { width: 960, height: 500, fps: 15, duration: 14 };
+
+const C = {
+  ground: '#0e1012', panel: '#15181c', line: '#262b31', text: '#e6e9ec', muted: '#8a929c', faint: '#5b636d',
+  green: '#45d64a', amber: '#e7a53c', struck: '#6c747e',
+};
+const FONT = '"Inter", "Segoe UI", system-ui, sans-serif';
+const USER_COLOURS = { river_fox: '#7fb4f0', quiet_lynx: '#c9a3f0', pixel_crow: '#e8a46a', mint_owl: '#6fd3b5', sunny_heron: '#e9d36b' };
+
+// Messages and moderator actions. Times in seconds; t < 0 means already there when the film starts.
+const EVENTS = [
+  { t: -1, id: 'a', user: 'river_fox', text: 'good evening chat' },
+  { t: -1, id: 'b', user: 'quiet_lynx', text: 'that comeback in round 3 was unreal' },
+  { t: 0.8, id: 'spam', user: 'pixel_crow', text: 'FREE SUBS here >>> totally-legit.example' },
+  { t: 1.9, id: 'song', user: 'mint_owl', text: 'anyone know the song?' },
+  { t: 3.1, del: 'spam', by: 'mod_sage' },
+  { t: 4.4, id: 'q', user: 'sunny_heron', text: 'wait, what did pixel_crow post?' },
+  { t: 5.7, id: 'caps', user: 'mint_owl', text: 'MODS ARE ASLEEP POST CAPS' },
+  { t: 7.0, timeout: 'mint_owl', by: 'mod_sage', dur: '10m' },
+  { t: 8.4, id: 'z', user: 'river_fox', text: 'back to the game' },
+];
+const CAPTIONS = [
+  [0.0, 3.0, 'The same chat on both sides', 'Messages arrive as usual'],
+  [3.0, 6.9, 'A moderator deletes a message', 'Without KickFlow it is gone, and the next question loses its context'],
+  [6.9, 10.0, 'A 10-minute timeout', 'With KickFlow every message from that user stays in place, labelled'],
+  [10.0, 14.0, 'The conversation still makes sense', 'KickFlow keeps what it already received in this session, in memory only'],
+];
+const RESET = [13.2, 13.6];   // fade the panels out and back in to the opening state, for a clean loop
+// ---------------------------------------------------------------- end of TIMELINE
+
+const PANELS = [
+  { x: 24, y: 64, w: 444, h: 340, kept: false, title: 'Without KickFlow' },
+  { x: 492, y: 64, w: 444, h: 340, kept: true, title: 'With KickFlow' },
+];
+const ROW = 22;          // line height
+const GAP = 7;           // between rows
+const PAD = 14;
+
+const cv = document.getElementById('c');
+const g = cv.getContext('2d');
+const icon = document.getElementById('icon');
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const smooth = (p) => p * p * (3 - 2 * p);
+const fade = (t, a, b, f = 0.3) => clamp(Math.min((t - a) / f, (b - t) / f));
+
+function roundRect(x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+
+// The rows one side shows at time t. Each row: { kind, user, text, tag, struck, born, gone }.
+function rows(kept, t) {
+  const out = [];
+  for (const e of EVENTS) {
+    if (e.t > t) break;
+    if (e.user) out.push({ kind: 'msg', user: e.user, text: e.text, born: e.t, id: e.id });
+    else if (e.del) {
+      const r = out.find((x) => x.id === e.del);
+      if (kept) {
+        r.struck = e.t; r.tag = { text: `deleted · ${e.by}`, colour: C.muted, at: e.t };
+        out.push({ kind: 'mod', text: `${e.by} deleted a message from ${r.user}`, born: e.t + 0.15 });
+      } else r.gone = e.t;
+    } else if (e.timeout) {
+      for (const r of out) {
+        if (r.kind !== 'msg' || r.user !== e.timeout) continue;
+        if (kept) r.tag = { text: `timeout ${e.dur} · ${e.by}`, colour: C.amber, at: e.t };
+        else r.gone = e.t;
+      }
+      if (kept) out.push({ kind: 'mod', text: `${e.by} timed out ${e.timeout} for 10 minutes`, born: e.t + 0.15 });
+    }
+  }
+  return out;
+}
+
+// Lay out one row's pieces (user, tag, words) into lines that fit the panel width.
+function layout(r, width) {
+  const pieces = [];
+  if (r.kind === 'mod') {
+    pieces.push({ text: r.text, font: `400 13px ${FONT}`, colour: C.muted, mod: true });
+  } else {
+    pieces.push({ text: r.user, font: `600 14px ${FONT}`, colour: USER_COLOURS[r.user] || C.text, gapAfter: 8 });
+    if (r.tag) pieces.push({ text: r.tag.text, font: `500 11.5px ${FONT}`, colour: r.tag.colour, tag: r.tag, gapAfter: 8 });
+    for (const w of r.text.split(' ')) pieces.push({ text: w, font: `400 14px ${FONT}`, colour: r.struck != null ? C.struck : C.text, word: true, struck: r.struck });
+  }
+  const lines = [[]]; let x = 0;
+  for (const p of pieces) {
+    g.font = p.font;
+    p.w = g.measureText(p.text).width + (p.tag ? 14 : 0);
+    const space = p.word ? g.measureText(' ').width : 0;
+    if (x > 0 && x + p.w > width) { lines.push([]); x = 0; }
+    p.x = x; lines[lines.length - 1].push(p);
+    x += p.w + (p.gapAfter || space);
+  }
+  return lines;
+}
+
+function drawPanel(P, t, alpha) {
+  roundRect(P.x, P.y, P.w, P.h, 10); g.fillStyle = C.panel; g.fill();
+  g.strokeStyle = P.kept ? '#2c3a2e' : C.line; g.lineWidth = 1.2; g.stroke();
+  // Header.
+  g.textAlign = 'left';
+  if (P.kept && icon.complete) g.drawImage(icon, P.x + PAD, P.y + 11, 20, 20);
+  g.fillStyle = P.kept ? C.text : C.muted; g.font = `600 14.5px ${FONT}`;
+  g.fillText(P.title, P.x + PAD + (P.kept ? 28 : 0), P.y + 26);
+  g.fillStyle = C.line; g.fillRect(P.x + 1, P.y + 41, P.w - 2, 1);
+
+  g.save(); roundRect(P.x, P.y + 42, P.w, P.h - 42, 10); g.clip();
+  g.globalAlpha = alpha;
+  const width = P.w - PAD * 2;
+  // Build heights first; new rows push from the bottom like a chat.
+  const list = rows(P.kept, t).map((r) => {
+    const lines = layout(r, width);
+    const full = lines.length * ROW + GAP;
+    let k = smooth(clamp((t - r.born) / 0.3));
+    if (r.gone != null) k *= 1 - smooth(clamp((t - r.gone) / 0.45));
+    return { r, lines, h: full * k, k };
+  });
+  // Keep the newest row in view, like a chat that follows the bottom.
+  const total = list.reduce((sum, item) => sum + item.h, 0);
+  const room = P.h - 42 - 22;
+  let y = P.y + 54 - Math.max(0, total - room);
+  for (const item of list) {
+    const { r, lines, k } = item;
+    if (item.h < 0.5) { y += item.h; continue; }
+    g.globalAlpha = alpha * k;
+    lines.forEach((line, li) => {
+      const ly = y + li * ROW + 15;
+      if (r.kind === 'mod') { g.fillStyle = C.line; g.fillRect(P.x + PAD, y + li * ROW, 2, ROW - 2); }
+      for (const p of line) {
+        const px = P.x + PAD + p.x + (r.kind === 'mod' ? 10 : 0);
+        g.font = p.font;
+        if (p.tag) {
+          const on = clamp((t - p.tag.at) / 0.3);
+          g.globalAlpha = alpha * k * on;
+          roundRect(px, ly - 12.5, p.w, 17, 4); g.strokeStyle = p.colour; g.lineWidth = 1; g.stroke();
+          g.fillStyle = p.colour; g.fillText(p.text, px + 7, ly);
+          g.globalAlpha = alpha * k;
+          continue;
+        }
+        g.fillStyle = p.colour; g.fillText(p.text, px, ly);
+        if (p.struck != null) {
+          const s = clamp((t - p.struck) / 0.35);
+          g.fillStyle = C.struck; g.fillRect(px, ly - 4.5, p.w * s + (s > 0.99 ? 3 : 0), 1.3);
+        }
+      }
+    });
+    // A short green wash on rows KickFlow just changed, so the eye finds them.
+    if (P.kept && r.tag) {
+      const wash = 1 - clamp((t - r.tag.at) / 1.2);
+      if (wash > 0) { g.globalAlpha = alpha * 0.10 * wash; g.fillStyle = C.green; g.fillRect(P.x + 4, y - 3, P.w - 8, item.h - GAP + 6); }
+    }
+    y += item.h;
+  }
+  // Rows scrolling out under the header fade instead of being cut.
+  g.globalAlpha = 1;
+  const top = g.createLinearGradient(0, P.y + 42, 0, P.y + 66);
+  top.addColorStop(0, C.panel); top.addColorStop(1, 'rgba(21,24,28,0)');
+  g.fillStyle = top; g.fillRect(P.x + 1, P.y + 42, P.w - 2, 24);
+  g.restore(); g.globalAlpha = 1;
+}
+
+window.renderAt = (time) => {
+  // Loop: fade out near the end, then show the opening state again.
+  const mid = (RESET[0] + RESET[1]) / 2;
+  let t = time; let alpha = 1;
+  if (time >= RESET[0] && time < mid) alpha = 1 - (time - RESET[0]) / (mid - RESET[0]);
+  else if (time >= mid && time < RESET[1]) { t = 0; alpha = (time - mid) / (RESET[1] - mid); }
+  else if (time >= RESET[1]) t = 0;
+
+  g.fillStyle = C.ground; g.fillRect(0, 0, 960, 500);
+  g.textAlign = 'left'; g.fillStyle = C.text; g.font = `600 18px ${FONT}`;
+  g.fillText('KickFlow', 24, 40);
+  const bw = g.measureText('KickFlow').width;
+  g.fillStyle = C.muted; g.font = `400 15px ${FONT}`;
+  g.fillText('what a chat keeps when moderators act', 24 + bw + 12, 40);
+  g.fillStyle = C.faint; g.font = `400 12.5px ${FONT}`; g.textAlign = 'right';
+  g.fillText('Illustration with invented names, not Kick’s interface', 936, 40);
+
+  for (const P of PANELS) drawPanel(P, t, alpha);
+
+  const cap = CAPTIONS.find(([a, b]) => time >= a && time < b);
+  if (cap) {
+    g.globalAlpha = cap[0] === 0 ? clamp((cap[1] - time) / 0.25) : fade(time, cap[0], cap[1], 0.25);
+    if (cap[1] === window.DEMO.duration) g.globalAlpha = clamp((time - cap[0]) / 0.25);
+    g.textAlign = 'left'; g.fillStyle = C.text; g.font = `600 17px ${FONT}`;
+    g.fillText(cap[2], 24, 442);
+    g.fillStyle = C.muted; g.font = `400 13.5px ${FONT}`;
+    g.fillText(cap[3], 24, 464);
+    g.globalAlpha = 1;
+  }
+};
+window.renderAt(0);
+</script>
+</body>
+</html>

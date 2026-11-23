@@ -1,0 +1,231 @@
+<!doctype html>
+<!--
+  KickFlow explainer: the player keys against the stream's buffer. Left and Right jump 10 seconds inside what
+  the stream has already buffered, S saves the current frame, L goes back to live.
+  A drawn illustration: the "video" is a generated picture with its own clock, the channel name is invented,
+  and nothing here is Kick's interface or artwork.
+  Rendered to ../media/explain-player.gif by `node docs/explain/render.mjs player` (see README.md here).
+  Every frame is a pure function of time.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 960px; height: 500px; overflow: hidden; background: #0e1012; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="500"></canvas>
+<script>
+// ---------------------------------------------------------------- TIMELINE (edit here)
+window.DEMO = { width: 960, height: 500, fps: 15, duration: 13 };
+
+const C = {
+  ground: '#0e1012', panel: '#15181c', line: '#262b31', text: '#e6e9ec', muted: '#8a929c', faint: '#5b636d',
+  green: '#45d64a', key: '#1d2126', keyLine: '#333a42',
+};
+const FONT = '"Inter", "Segoe UI", system-ui, sans-serif';
+const MONO = '"DejaVu Sans Mono", "Cascadia Mono", Consolas, monospace';
+
+// Key presses: [time, key, seconds behind live afterwards (null = unchanged)].
+const PRESSES = [
+  [1.5, 'left', 10], [2.5, 'left', 20], [3.6, 'right', 10],
+  [5.2, 's', null],
+  [8.0, 'l', 0],
+];
+const CAPTIONS = [
+  [0.0, 1.4, 'Watching live', 'KickFlow’s buttons sit in the player’s own bar'],
+  [1.4, 4.8, 'Left and Right jump 10 seconds', 'Back or forward inside what the stream has already buffered'],
+  [4.8, 7.7, 'S saves the current frame as a PNG', 'Shift + S records the next 15 seconds as a local clip'],
+  [7.7, 13.0, 'L goes back to live', 'While you are behind, the Live button shows by how much'],
+];
+const STREAM_START = 3734;      // the stream clock at t = 0, in seconds (1:02:14)
+const BUFFER = 60;              // seconds of buffer drawn on the timeline
+// ---------------------------------------------------------------- end of TIMELINE
+
+const V = { x: 24, y: 62, w: 600, h: 300 };     // video
+const BAR_H = 40;
+const cv = document.getElementById('c');
+const g = cv.getContext('2d');
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const smooth = (p) => p * p * (3 - 2 * p);
+const fade = (t, a, b, f = 0.3) => clamp(Math.min((t - a) / f, (b - t) / f));
+
+function roundRect(x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+
+// Seconds behind live at time t; a jump eases over 0.25 s so the eye can follow the playhead.
+function behind(t) {
+  let value = 0; let from = 0; let at = -10;
+  for (const [pt, , after] of PRESSES) {
+    if (pt > t) break;
+    if (after === null) continue;
+    from = value; value = after; at = pt;
+  }
+  const p = smooth(clamp((t - at) / 0.25));
+  return from + (value - from) * p;
+}
+
+const clock = (s) => {
+  const v = Math.max(0, Math.floor(s));
+  return `${Math.floor(v / 3600)}:${String(Math.floor((v % 3600) / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+};
+
+// The made-up stream picture: a slow gradient field, a few drifting discs and the stream's own clock.
+function video(t, b) {
+  const st = STREAM_START + t - b;            // stream time on screen
+  g.save(); roundRect(V.x, V.y, V.w, V.h, 10); g.clip();
+  const bg = g.createLinearGradient(V.x, V.y, V.x + V.w, V.y + V.h);
+  bg.addColorStop(0, '#16222b'); bg.addColorStop(1, '#211a2b');
+  g.fillStyle = bg; g.fillRect(V.x, V.y, V.w, V.h);
+  for (let i = 0; i < 5; i += 1) {
+    const ph = st * 0.18 + i * 1.7;
+    const x = V.x + V.w * (0.15 + 0.7 * ((Math.sin(ph * 0.9 + i) + 1) / 2));
+    const y = V.y + V.h * (0.25 + 0.4 * ((Math.cos(ph * 0.7 + i * 2) + 1) / 2));
+    g.fillStyle = ['#2b4150', '#3a2f4a', '#2f4a44', '#4a3b2f', '#33405a'][i];
+    g.beginPath(); g.arc(x, y, 26 + 10 * i, 0, Math.PI * 2); g.fill();
+  }
+  g.fillStyle = 'rgba(10,12,14,0.55)'; roundRect(V.x + 16, V.y + 16, 150, 30, 6); g.fill();
+  g.fillStyle = C.text; g.font = `600 15px ${MONO}`; g.textAlign = 'left';
+  g.fillText(`stream ${clock(st)}`, V.x + 26, V.y + 36);
+  // Frame capture flash.
+  const flash = 1 - clamp((t - 5.2) / 0.35);
+  if (t >= 5.2 && flash > 0) { g.fillStyle = `rgba(255,255,255,${0.35 * flash})`; g.fillRect(V.x, V.y, V.w, V.h); }
+  g.restore();
+}
+
+function button(x, y, label, opts = {}) {
+  g.font = `600 13px ${FONT}`;
+  const w = Math.max(opts.min || 0, g.measureText(label).width + 22);
+  const hot = opts.hot || 0;
+  roundRect(x, y, w, 26, 6);
+  g.fillStyle = hot ? `rgba(69,214,74,${0.18 + 0.2 * hot})` : 'rgba(255,255,255,0.06)'; g.fill();
+  if (hot) { g.strokeStyle = C.green; g.lineWidth = 1; g.stroke(); }
+  if (opts.dot) { g.fillStyle = opts.dot; g.beginPath(); g.arc(x + 12, y + 13, 3.5, 0, Math.PI * 2); g.fill(); }
+  g.fillStyle = opts.colour || C.text; g.textAlign = 'left';
+  g.fillText(label, x + (opts.dot ? 21 : 11), y + 17.5);
+  return w;
+}
+
+const pressedAt = (t, key) => {
+  let last = -10;
+  for (const [pt, k] of PRESSES) if (k === key && pt <= t) last = pt;
+  return 1 - clamp((t - last) / 0.6);
+};
+
+function controls(t, b) {
+  const y = V.y + V.h - BAR_H;
+  g.save(); roundRect(V.x, V.y, V.w, V.h, 10); g.clip();
+  const shade = g.createLinearGradient(0, y - 20, 0, V.y + V.h);
+  shade.addColorStop(0, 'rgba(0,0,0,0)'); shade.addColorStop(1, 'rgba(0,0,0,0.75)');
+  g.fillStyle = shade; g.fillRect(V.x, y - 20, V.w, BAR_H + 20);
+  g.restore();
+  // Pause glyph and volume, then KickFlow's buttons.
+  let x = V.x + 14; const by = y + 7;
+  g.fillStyle = C.text; g.fillRect(x + 2, by + 6, 4, 14); g.fillRect(x + 10, by + 6, 4, 14);
+  x += 30;
+  const live = b < 0.5;
+  x += button(x, by, live ? 'Live' : `−${Math.round(b)} s`, { dot: live ? C.green : C.faint, colour: live ? C.text : C.muted, min: 70, hot: pressedAt(t, 'l') }) + 8;
+  x += button(x, by, '− 10 s', { hot: pressedAt(t, 'left') }) + 6;
+  x += button(x, by, '+ 10 s', { hot: pressedAt(t, 'right') }) + 6;
+  x += button(x, by, '1×') + 6;
+  x += button(x, by, 'Frame', { hot: pressedAt(t, 's') }) + 6;
+  button(x, by, 'Clip');
+}
+
+// The buffer under the video: where the playhead is against the live edge.
+function timeline(t, b) {
+  const x0 = V.x; const x1 = V.x + V.w; const y = V.y + V.h + 34;
+  g.font = `500 12.5px ${FONT}`; g.fillStyle = C.muted; g.textAlign = 'left';
+  g.fillText(`Already buffered (last ${BUFFER} s)`, x0, y - 12);
+  g.textAlign = 'right'; g.fillText('live edge', x1, y - 12);
+  roundRect(x0, y, x1 - x0, 6, 3); g.fillStyle = '#262c33'; g.fill();
+  const px = x1 - ((x1 - x0) * b) / BUFFER;
+  roundRect(x0, y, px - x0, 6, 3); g.fillStyle = '#4b535c'; g.fill();
+  g.fillStyle = C.green; g.fillRect(x1 - 2, y - 5, 2, 16);
+  g.fillStyle = C.text; g.beginPath(); g.arc(px, y + 3, 7, 0, Math.PI * 2); g.fill();
+  g.textAlign = 'center'; g.font = `600 12.5px ${FONT}`; g.fillStyle = b < 0.5 ? C.green : C.text;
+  const label = b < 0.5 ? 'live' : `−${Math.round(b)} s`;
+  g.fillText(label, clamp(px, x0 + 20, x1 - 30), y + 28);
+}
+
+function keycap(x, y, label, w, hot) {
+  roundRect(x, y, w, 30, 6); g.fillStyle = hot ? `rgba(69,214,74,${0.15 + 0.25 * hot})` : C.key; g.fill();
+  g.strokeStyle = hot ? C.green : C.keyLine; g.lineWidth = 1.1; g.stroke();
+  g.fillStyle = hot ? C.green : C.text; g.font = `600 13px ${FONT}`; g.textAlign = 'center';
+  g.fillText(label, x + w / 2, y + 20);
+}
+
+// The keys, as a legend that lights up when used.
+function keys(t) {
+  const x = 660; let y = 74;
+  g.textAlign = 'left'; g.fillStyle = C.muted; g.font = `500 12.5px ${FONT}`;
+  g.fillText('Keys (each can be changed or turned off)', x, y - 4);
+  y += 12;
+  const rowsDef = [
+    [[['←', 34, 'left'], ['→', 34, 'right']], '10 seconds back or forward'],
+    [[['L', 34, 'l']], 'back to live'],
+    [[['S', 34, 's']], 'save the current frame'],
+    [[['Shift', 52, null], ['S', 34, null]], 'record a 15-second clip'],
+  ];
+  for (const [caps, text] of rowsDef) {
+    let cx = x;
+    for (const [label, w, key] of caps) { keycap(cx, y, label, w, key ? pressedAt(t, key) : 0); cx += w + 6; }
+    g.fillStyle = C.text; g.font = `400 13.5px ${FONT}`; g.textAlign = 'left';
+    g.fillText(text, x + 104, y + 20);
+    y += 44;
+  }
+}
+
+// After S: the saved file as a small note, with a thumbnail that settles into place.
+function saved(t) {
+  const o = fade(t, 5.35, 7.9, 0.3);
+  if (o <= 0) return;
+  const x = 660; const y = 288;
+  g.globalAlpha = o;
+  roundRect(x, y, 276, 58, 8); g.fillStyle = C.panel; g.fill(); g.strokeStyle = C.line; g.lineWidth = 1; g.stroke();
+  const thumb = g.createLinearGradient(x + 10, y + 10, x + 70, y + 48);
+  thumb.addColorStop(0, '#16222b'); thumb.addColorStop(1, '#211a2b');
+  roundRect(x + 10, y + 11, 64, 36, 4); g.fillStyle = thumb; g.fill();
+  g.fillStyle = C.text; g.font = `600 13px ${FONT}`; g.textAlign = 'left';
+  g.fillText('Frame saved', x + 84, y + 25);
+  g.fillStyle = C.muted; g.font = `400 11.5px ${MONO}`;
+  g.fillText('demo-channel_…_20-14-05.png', x + 84, y + 43);
+  g.globalAlpha = 1;
+}
+
+window.renderAt = (t) => {
+  g.fillStyle = C.ground; g.fillRect(0, 0, 960, 500);
+  g.textAlign = 'left'; g.fillStyle = C.text; g.font = `600 18px ${FONT}`;
+  g.fillText('KickFlow', 24, 40);
+  const bw = g.measureText('KickFlow').width;
+  g.fillStyle = C.muted; g.font = `400 15px ${FONT}`;
+  g.fillText('player keys and the stream’s buffer', 24 + bw + 12, 40);
+  g.fillStyle = C.faint; g.font = `400 12.5px ${FONT}`; g.textAlign = 'right';
+  g.fillText('Illustration, not Kick’s interface', 936, 40);
+
+  const b = behind(t);
+  video(t, b);
+  controls(t, b);
+  timeline(t, b);
+  keys(t);
+  saved(t);
+
+  const cap = CAPTIONS.find(([a, z]) => t >= a && t < z);
+  if (cap) {
+    g.globalAlpha = cap[0] === 0 ? clamp((cap[1] - t) / 0.25) : fade(t, cap[0], cap[1], 0.25);
+    if (cap[1] === window.DEMO.duration) g.globalAlpha = clamp((t - cap[0]) / 0.25);
+    g.textAlign = 'left'; g.fillStyle = C.text; g.font = `600 17px ${FONT}`;
+    g.fillText(cap[2], 24, 458);
+    g.fillStyle = C.muted; g.font = `400 13.5px ${FONT}`;
+    g.fillText(cap[3], 24, 480);
+    g.globalAlpha = 1;
+  }
+};
+window.renderAt(0);
+</script>
+</body>
+</html>

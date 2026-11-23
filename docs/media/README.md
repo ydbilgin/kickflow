@@ -16,6 +16,13 @@ realtime chat socket is simulated, and everything else is blocked, so nothing re
 
 Re-record with `node docs/demo/fixture/capture.mjs` (needs ffmpeg and a Playwright Chromium; see the file header).
 
+## `explain-chat.gif` and `explain-player.gif`, drawn explainers
+
+Not recordings. Each is a small page in `docs/explain/` (`chat.html`, `player.html`) that draws any moment of the
+film on a canvas; `docs/explain/render.mjs` steps through it in a headless Chromium and ffmpeg builds the GIF.
+Names, messages, the channel and the "video" are invented, and nothing in them is Kick's interface or artwork.
+They explain behaviour; the recording above and the component pictures below show the real extension.
+
 ## Component pictures
 
 Captured in headless Chromium from offline fixtures that use KickFlow's production message renderer, styles
