@@ -205,6 +205,6 @@ satırlarda gösteren ve oynatıcıya geri sarma, hız ve kayıt düğmeleri ekl
   ve 15 sn yerel klip kaydı ekler. Kısayollar: `Sol`/`Sağ`, `L`, `S`, `Shift+S`.
 - **Kurulum:** [son sürümden](https://github.com/ydbilgin/kickflow/releases/latest) ZIP dosyasını indirip çıkarın,
   `chrome://extensions` sayfasında **Geliştirici modu**nu açın ve **Paketlenmemiş öğe yükle** ile klasörü seçin.
-- **Gizlilik:** analiz veya sunucu yoktur; sohbet yalnızca oturum boyunca bellekte tutulur. Ayrıntılar ve
-  isteğe bağlı yardımcı eklentiye giden kısa tanılama kodları için [Privacy and permissions](#privacy-and-permissions).
+- **Gizlilik:** analiz veya sunucu yoktur; sohbet yalnızca oturum boyunca bellekte tutulur. Ayrıntılar için
+  [Privacy and permissions](#privacy-and-permissions).
 - Ayrıntılar: [What it does](#what-it-does) · [Use](#use) · [Build from source](#build-from-source)

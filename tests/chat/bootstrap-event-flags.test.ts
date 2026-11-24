@@ -41,12 +41,53 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  bootstrap.initSiteLifecycle().lifecycle.dispose();
   Object.assign(featureFlags, originalFlags);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('bootstrap event display flags', () => {
+  it('does not show a failure at 15 seconds while channel resolution is still in flight', async () => {
+    vi.useFakeTimers();
+    const lifecycle = new Lifecycle();
+    const oldMode = featureFlags.chatMode;
+    featureFlags.chatMode = 'own';
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    try {
+      bootstrap.initChatIntegrity({ kind: 'live', slug: 'slow-resolution', sessionKey: 'live:slow-resolution' }, lifecycle);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect(document.body.textContent).not.toContain('KickFlow başlatılamadı');
+      // All three lookup attempts fail before the first automatic session retry.
+      await vi.advanceTimersByTimeAsync(6400);
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      expect(document.body.textContent).not.toContain('KickFlow başlatılamadı');
+    } finally {
+      lifecycle.dispose();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      fetchSpy.mockRestore();
+      vi.useRealTimers();
+      featureFlags.chatMode = oldMode;
+      document.body.replaceChildren();
+    }
+  });
+  it('retries a successful channel payload whose chatroom has not mounted yet', async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 2, chatroom: null }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 2, chatroom: { id: 1 } }) } as Response);
+    try {
+      const pending = bootstrap.resolveChannel('mount-race');
+      await vi.advanceTimersByTimeAsync(800);
+      expect(await pending).toMatchObject({ chatroomId: 1, channelId: 2 });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally { fetchSpy.mockRestore(); vi.useRealTimers(); }
+  });
   it('step 6: retries a transient channel lookup 403 and resolves the next response', async () => {
     vi.useFakeTimers();
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
@@ -655,8 +696,12 @@ describe('bootstrap event display flags', () => {
       modFrameColor: '#33CC66',
       vipFrameColor: '#CC33CC',
       manualUsername: '  Alice  ',
+      qualityMode: '720p60',
+      aspectMode: 'stretch',
     };
     const enumBad: Record<string, string> = {
+      qualityMode: 'ultra',
+      aspectMode: 'zoom',
       chatMode: 'mixed',
       hoverFollowMode: 'uniform',
       mentionHighlightStyle: 'glow',
@@ -1255,5 +1300,95 @@ describe('bootstrap event display flags', () => {
       document.body.innerHTML = previousBody;
       window.history.replaceState({}, '', previousHref);
     }
+  });
+});
+
+// Quality design B (2026-10-29): the old "Highest quality" choice becomes the
+// first of three choices, stored as kf_flag_qualityMode. qualityLock stays the on/off switch
+// for the whole quality button, like the switches of the other player buttons.
+describe('quality design B settings', () => {
+  it('migrates the old "Highest quality" setting to "En iyi görüntü" once and drops the old key', async () => {
+    const remove = vi.fn(async () => undefined);
+    (chrome.storage.local as unknown as { remove: typeof remove }).remove = remove;
+    storageSet.mockClear();
+    featureFlags.qualityMode = 'auto';
+    storageGet.mockResolvedValueOnce({ kf_flag_qualityLock: true, 'kickflow.qualityPreference': 'highest' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.qualityLock).toBe(true);
+    expect(featureFlags.qualityMode).toBe('best');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_qualityMode: 'best' });
+    expect(remove).toHaveBeenCalledWith('kickflow.qualityPreference');
+  });
+
+  it('keeps a saved choice and does not migrate again', async () => {
+    storageSet.mockClear();
+    storageGet.mockResolvedValueOnce({ kf_flag_qualityMode: '720p60', 'kickflow.qualityPreference': 'highest' });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.qualityMode).toBe('720p60');
+    expect(storageSet).not.toHaveBeenCalledWith({ kf_flag_qualityMode: 'best' });
+  });
+
+  it('a user who had the setting off keeps it off; switched on, it starts as "En iyi görüntü"', async () => {
+    storageGet.mockResolvedValueOnce({ kf_flag_qualityLock: false });
+    await bootstrap.applySavedFlags();
+    expect(featureFlags.qualityLock).toBe(false);
+    expect(featureFlags.qualityMode).toBe('best');
+    featureFlags.qualityLock = true;
+  });
+
+  it('"always highest" is a stored switch: the fallback bar starts at best, a stored pick returns when it is off', async () => {
+    storageSet.mockClear();
+    expect(featureFlags.qualityAlwaysBest).toBe(true);
+    await bootstrap.applyFlagChange('qualityMode', '480p');
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('best');
+    expect(await bootstrap.applyFlagChange('qualityAlwaysBest', false)).toBe(true);
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_qualityAlwaysBest: false });
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('480p');
+    await bootstrap.applyFlagChange('qualityAlwaysBest', true);
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('best');
+    await bootstrap.applyFlagChange('qualityMode', 'best');
+  });
+
+  it('review K-3: with the quality button off, "always highest" still tells the fallback bar best', async () => {
+    await bootstrap.applyFlagChange('qualityLock', false);
+    expect(featureFlags.qualityAlwaysBest).toBe(true);
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('best');
+    await bootstrap.applyFlagChange('qualityAlwaysBest', false);
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('auto');
+    await bootstrap.applyFlagChange('qualityAlwaysBest', true);
+    await bootstrap.applyFlagChange('qualityLock', true);
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('best');
+  });
+
+  it('persists a choice, rejects junk, and tells the fallback bar through <html>', async () => {
+    storageSet.mockClear();
+    await bootstrap.applyFlagChange('qualityAlwaysBest', false);
+    expect(await bootstrap.applyFlagChange('qualityMode', 'saver')).toBe(true);
+    expect(featureFlags.qualityMode).toBe('saver');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_qualityMode: 'saver' });
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('saver');
+    expect(await bootstrap.applyFlagChange('qualityMode', 'ultra')).toBe(false);
+    expect(featureFlags.qualityMode).toBe('saver');
+    // With the quality button off KickFlow leaves quality alone; the fallback lets hls choose.
+    await bootstrap.applyFlagChange('qualityLock', false);
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('auto');
+    await bootstrap.applyFlagChange('qualityLock', true);
+    await bootstrap.applyFlagChange('qualityMode', 'best');
+    expect(document.documentElement.getAttribute('data-kickflow-quality')).toBe('best');
+    await bootstrap.applyFlagChange('qualityAlwaysBest', true);
+  });
+
+  it('the bar chip\'s pick reaches the same flag path as the settings panel', async () => {
+    storageSet.mockClear();
+    bootstrap.initSiteLifecycle();
+    const saved = await new Promise<boolean>((resolve) => {
+      window.dispatchEvent(new CustomEvent('kickflow:setFlag', {
+        detail: { key: 'qualityMode', value: 'auto', onSaved: resolve },
+      }));
+    });
+    expect(saved).toBe(true);
+    expect(featureFlags.qualityMode).toBe('auto');
+    expect(storageSet).toHaveBeenCalledWith({ kf_flag_qualityMode: 'auto' });
+    await bootstrap.applyFlagChange('qualityMode', 'best');
   });
 });

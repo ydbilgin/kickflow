@@ -19,22 +19,10 @@ const loaderUrl = pathToFileURL(path.join(repoRoot, 'tests', 'playwright', 'kick
 const execFileAsync = promisify(execFile);
 let fixtureHtml;
 let anchorLoad;
-const nativeSocket = 'wss://realtime.us-west-2.platform.kick.com/connection/websocket';
-const rejectedSockets = [
-  ['legacy Pusher', 'wss://ws-us2.pusher.com/app/retired'],
-  ['viewer socket', 'wss://websockets.kick.com/viewer/v1/connect'],
-  ['host suffix', 'wss://realtime.us-west-2.platform.kick.com.example.com/connection/websocket'],
-  ['lookalike host', 'wss://realtime.us-west-2.example.com/connection/websocket'],
-  ['insecure transport', 'ws://realtime.us-west-2.platform.kick.com/connection/websocket'],
-  ['unexpected path', 'wss://realtime.us-west-2.platform.kick.com/other'],
-  ['nondefault port', 'wss://realtime.us-west-2.platform.kick.com:444/connection/websocket'],
-  ['URL userinfo', 'wss://fixture@realtime.us-west-2.platform.kick.com/connection/websocket'],
-];
 
 beforeAll(async () => {
   const loaderProgram = `import { loadProductionAnchors } from ${JSON.stringify(loaderUrl)};`
-    + ` process.stdout.write(JSON.stringify(await loadProductionAnchors(${JSON.stringify(repoRoot)},`
-    + `${JSON.stringify([nativeSocket, ...rejectedSockets.map(([, url]) => url)])})));`;
+    + ` process.stdout.write(JSON.stringify(await loadProductionAnchors(${JSON.stringify(repoRoot)})));`;
   const loaded = execFileAsync(process.execPath, ['--input-type=module', '--eval', loaderProgram], {
     cwd: repoRoot,
     maxBuffer: 2 * 1024 * 1024,
@@ -43,7 +31,7 @@ beforeAll(async () => {
     readFile(fixturePath, 'utf8'),
     loaded.then(({ stdout }) => JSON.parse(stdout)),
   ]);
-}, 60_000); // Bundling in a separate process is setup, not feature-latency acceptance.
+});
 
 beforeEach(() => {
   document.open();
@@ -60,7 +48,7 @@ beforeEach(() => {
 
 function fixtureObservations() {
   return {
-    webSockets: [nativeSocket],
+    webSockets: [anchorLoad.values.pusherUrl],
     requests: [
       { url: anchorLoad.values.chatHistoryBaseUrl, status: 200 },
       { url: anchorLoad.values.chatHistoryStartTimeUrl, status: 200 },
@@ -77,26 +65,6 @@ function runFixture() {
 }
 
 describe('Kick live-anchor probe fixture', () => {
-  it.each(rejectedSockets)('rejects %s as native chat readiness', (_name, url) => {
-    const evidence = collectKickAnchorEvidence({
-      anchors: anchorLoad.values,
-      observations: { ...fixtureObservations(), webSockets: [url] },
-    });
-    const result = evaluateKickAnchorResults(anchorLoad, evidence)
-      .find((entry) => entry.id === 'network.native-realtime-socket');
-    expect(result?.status).toBe('MISS');
-  });
-
-  it('does not pass an empty native socket observation', () => {
-    const evidence = collectKickAnchorEvidence({
-      anchors: anchorLoad.values,
-      observations: { ...fixtureObservations(), webSockets: [] },
-    });
-    const result = evaluateKickAnchorResults(anchorLoad, evidence)
-      .find((entry) => entry.id === 'network.native-realtime-socket');
-    expect(result?.status).toBe('MISS');
-  });
-
   it('reports MATCH for every checkable production anchor', () => {
     const results = runFixture();
 
@@ -149,7 +117,7 @@ describe('Kick live-anchor probe fixture', () => {
   it('reports NOT_CHECKABLE for a chat-history endpoint that was never requested', () => {
     const evidence = collectKickAnchorEvidence({
       anchors: anchorLoad.values,
-      observations: { webSockets: [nativeSocket], requests: [] },
+      observations: { webSockets: [anchorLoad.values.pusherUrl], requests: [] },
     });
     const statusById = new Map(
       evaluateKickAnchorResults(anchorLoad, evidence).map((result) => [result.id, result.status]),

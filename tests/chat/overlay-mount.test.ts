@@ -221,6 +221,156 @@ describe('ChatOverlayMount takeover readiness', () => {
     FakeMutationObserver.reset();
   });
 
+  it.each(['overlap', 'hit-test'])('keeps own chat during the chat identity Radix tooltip (%s)', (mode) => {
+    addAnchor();
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setPrimaryReady();
+    expect(mount.state).toBe('active');
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-radix-popper-content-wrapper', '');
+    // Radix renders the visible label plus a hidden semantic tooltip inside its content.
+    wrapper.innerHTML = '<div data-state="delayed-open">Sohbet kimligi<span role="tooltip">Sohbet kimligi</span></div>';
+    vi.spyOn(wrapper, 'getBoundingClientRect').mockReturnValue(rect(110, 30, 10, 460));
+    document.body.append(wrapper);
+    if (mode === 'hit-test') {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => wrapper.firstElementChild });
+      Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: () => [wrapper.firstElementChild!, mount.ownList] });
+    }
+    try {
+      FakeMutationObserver.triggerChildList(document.body, [wrapper]);
+      mount.syncNow();
+      expect(mount.state).toBe('active');
+      expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(true);
+      wrapper.remove();
+      mount.syncNow();
+      expect(mount.state).toBe('active');
+    } finally {
+      delete (document as Partial<Document>).elementFromPoint;
+      delete (document as Partial<Document>).elementsFromPoint;
+      lifecycle.dispose();
+    }
+  });
+
+  it.each(['overlap', 'hit-test'])('keeps own chat while its removed-messages panel is open (%s)', (mode) => {
+    addAnchor();
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setPrimaryReady();
+    const panel = document.createElement('div');
+    panel.className = 'kickflow-panel';
+    panel.innerHTML = '<section role="dialog"><button>close</button></section>';
+    const dialog = panel.firstElementChild as HTMLElement;
+    vi.spyOn(dialog, 'getBoundingClientRect').mockReturnValue(rect(110, 30, 10, 460));
+    document.body.append(panel);
+    if (mode === 'hit-test') {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => dialog });
+      Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: () => [dialog, mount.ownList] });
+    }
+    try {
+      mount.syncNow();
+      expect(mount.state).toBe('active');
+      expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(true);
+    } finally {
+      delete (document as Partial<Document>).elementFromPoint;
+      delete (document as Partial<Document>).elementsFromPoint;
+      lifecycle.dispose();
+    }
+  });
+
+  it.each(['chatters', 'rewards'])('keeps own chat under Kick %s, but still rejects an unrelated blocker', (kind) => {
+    addAnchor();
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setPrimaryReady();
+    const surface = document.createElement('section');
+    surface.setAttribute('role', 'dialog');
+    surface.innerHTML = kind === 'chatters'
+      ? '<input type="search" class="h-8 pl-11 pr-3"><ul><li><button><span class="truncate">Alice</span></button></li></ul>'
+      : '<div class="aspect-1348/1080"><video></video></div><button class="w-full bg-primary-base">View</button>';
+    document.body.append(surface);
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue(rect());
+    const blocker = document.createElement('section');
+    blocker.setAttribute('role', 'dialog');
+    blocker.innerHTML = '<button>Unrelated confirmation</button>';
+    vi.spyOn(blocker, 'getBoundingClientRect').mockReturnValue(rect());
+    const backdrop = document.createElement('div');
+    backdrop.dataset.state = 'open';
+    backdrop.setAttribute('aria-hidden', 'true');
+    backdrop.style.position = 'fixed';
+    document.body.append(backdrop);
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: () =>
+      blocker.isConnected ? [surface.firstElementChild!, blocker, backdrop, mount.ownList] : [surface.firstElementChild!, backdrop, mount.ownList] });
+    try {
+      mount.syncNow();
+      expect(mount.state).toBe('active');
+      expect(mount.assertActiveInvariant()).toBe(true);
+      document.body.append(blocker);
+      mount.syncNow();
+      expect(mount.state).toBe('fallback');
+      blocker.remove();
+      mount.syncNow();
+      expect(mount.state).toBe('active');
+      surface.remove();
+      backdrop.remove();
+      mount.syncNow();
+      expect(mount.state).toBe('active');
+    } finally {
+      delete (document as Partial<Document>).elementsFromPoint;
+      lifecycle.dispose();
+    }
+  });
+
+  it('retains own chat during native collapse, restores the same rows immediately, and still fails open on transport loss', () => {
+    const anchor = addAnchor();
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    const row = addOwnRow(mount, 'before-collapse');
+    mount.noteContentAppended([row]);
+    const reopen = document.createElement('div');
+    reopen.className = 'z-controls absolute right-7 top-7';
+    reopen.innerHTML = '<button>Chat</button>';
+    vi.spyOn(reopen, 'getBoundingClientRect').mockReturnValue(rect(50, 30));
+    document.body.append(reopen);
+    anchor.remove();
+    mount.syncNow();
+    expect(mount.state).toBe('active');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(true);
+    expect(mount.root.style.display).toBe('none');
+    expect(mount.assertActiveInvariant()).toBe(true);
+    const later = addOwnRow(mount, 'arrived-while-collapsed');
+    mount.noteContentAppended([later]);
+    expect(mount.state).toBe('active');
+    document.body.append(anchor);
+    reopen.remove();
+    mount.syncNow();
+    expect(mount.state).toBe('active');
+    expect(mount.root.style.display).not.toBe('none');
+    expect(row.parentElement).toBe(mount.ownList);
+    document.body.append(reopen);
+    anchor.remove();
+    mount.syncNow();
+    mount.setPrimaryUnavailable('socket-lost-while-collapsed');
+    expect(mount.state).toBe('fallback');
+    expect(document.documentElement.classList.contains('kickflow-chat-active')).toBe(false);
+    lifecycle.dispose();
+  });
+
+  it('still releases chat for an interactive identity popover even when it has a tooltip', () => {
+    addAnchor();
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    mount.setPrimaryReady();
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-radix-popper-content-wrapper', '');
+    wrapper.innerHTML = '<div role="dialog"><button>Identity</button><span role="tooltip">Hint</span></div>';
+    vi.spyOn(wrapper, 'getBoundingClientRect').mockReturnValue(rect(110, 30, 10, 460));
+    document.body.append(wrapper);
+    mount.syncNow();
+    expect(mount.state).toBe('fallback');
+    lifecycle.dispose();
+  });
+
   it('mounts the popout chat at full column width below its native event strip and releases native rows on failure', () => {
     const anchorRect = rect(340, 540, 0, 83);
     const stackRect = rect(340, 12, 0, 83);
@@ -667,6 +817,22 @@ describe('ChatOverlayMount takeover readiness', () => {
     expect(mount.state).toBe('active');
     expect(mount.root.style.width).toBe('360px');
     lifecycle.dispose();
+  });
+
+  it('marks only the selected main chat, and releases the mark on replacement and disposal', () => {
+    const main = addAnchor();
+    const lifecycle = new Lifecycle();
+    const mount = new ChatOverlayMount(lifecycle);
+    const side = addAnchor();
+    mount.syncNow();
+    expect(main.hasAttribute('data-kickflow-main-chat')).toBe(true);
+    expect(side.hasAttribute('data-kickflow-main-chat')).toBe(false);
+    main.remove();
+    mount.syncNow();
+    expect(main.hasAttribute('data-kickflow-main-chat')).toBe(false);
+    expect(side.hasAttribute('data-kickflow-main-chat')).toBe(true);
+    lifecycle.dispose();
+    expect(side.hasAttribute('data-kickflow-main-chat')).toBe(false);
   });
 
   it('fails open across an anchor gap and reactivates only when readiness can be re-proven', () => {

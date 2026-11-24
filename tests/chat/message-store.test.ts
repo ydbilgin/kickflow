@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ChatIntegrityStore, GLOBAL_CAPACITY, mergeIdentityBadges, type ChatMessage } from '../../src/content/chat/message-store';
+import { ChatIntegrityStore, GLOBAL_CAPACITY, LimitedQueue, mergeIdentityBadges, REMOVED_LEDGER_CAPACITY, type ChatMessage } from '../../src/content/chat/message-store';
 import { MAX_NON_PRESERVED_NODES_PAUSED } from '../../src/content/chat/dom-window';
 
 // `preserveMessage` stamps `preservedAt` from the real clock, not from the `now` these tests
@@ -409,5 +409,79 @@ describe('ChatIntegrityStore observers', () => {
     expect(store.getMessageById('safe')).toBeDefined();
     expect(() => store.markMessageDeleted('safe')).not.toThrow();
     expect(store.getMessageById('safe')).toMatchObject({ preserved: true, preservedReason: 'deleted' });
+  });
+});
+
+// 2026-11-11: the ban list must stay when the chat history is cleared. The chat history may
+// expire, trim and reset; the session's list of bans, timeouts and deletes must not.
+describe('removed ledger (the session ban/delete list)', () => {
+  it('survives the preserved TTL, the 50-entry preserved cap, ring eviction and a history reset', () => {
+    const store = new ChatIntegrityStore();
+    for (let i = 0; i < 60; i++) {
+      store.addMessage(message(`ban-${i}`, 1_000 + i));
+      store.markUserBanned(1_000 + i, { permanent: false, durationMin: 10, bannedBy: 'mod' });
+    }
+    store.addMessage(message('deleted-line', 7));
+    store.markMessageDeleted('deleted-line', { deletedBy: 'mod2' });
+    expect(store.getPreserved()).toHaveLength(50);
+    expect(store.removed.size).toBe(61);
+
+    store.sweepExpiredPreserved(Date.now() + 11 * 60 * 1000 + PRESERVED_SWEEP_MARGIN_MS);
+    expect(store.getPreserved()).toHaveLength(0);
+    for (let i = 0; i < GLOBAL_CAPACITY * 2; i++) store.addMessage(message(`later-${i}`, 5));
+    expect(store.getMessageById('ban-0')).toBeUndefined();
+    store.reset();
+
+    expect(store.removed.size).toBe(61);
+    const first = store.removed.get('ban-0');
+    expect(first).toMatchObject({ id: 'ban-0', content: 'ban-0', preserved: true, preservedReason: 'banned' });
+    expect(first?.preservedMeta).toMatchObject({ permanent: false, durationMin: 10, bannedBy: 'mod' });
+    expect(store.removed.get('deleted-line')).toMatchObject({ preservedReason: 'deleted', preservedMeta: { deletedBy: 'mod2' } });
+    expect(store.getPreservedForSlug('user1000').map(({ id }) => id)).toEqual(['ban-0']);
+  });
+
+  it('is bounded: the oldest record leaves first, and a new session starts empty', () => {
+    const store = new ChatIntegrityStore();
+    for (let i = 0; i < REMOVED_LEDGER_CAPACITY + 5; i++) {
+      store.addMessage(message(`removed-${i}`, 2_000 + i));
+      store.markMessageDeleted(`removed-${i}`);
+    }
+    expect(store.removed.size).toBe(REMOVED_LEDGER_CAPACITY);
+    expect(store.removed.get('removed-4')).toBeUndefined();
+    expect(store.removed.get('removed-5')).toBeDefined();
+    expect(store.removed.toArray().at(-1)?.id).toBe(`removed-${REMOVED_LEDGER_CAPACITY + 4}`);
+    expect(new ChatIntegrityStore().removed.size).toBe(0);
+  });
+
+  it('upgrades a delete to a ban in place and takes richer metadata from a later event', () => {
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('line', 3));
+    store.markMessageDeleted('line');
+    const version = store.removed.version;
+    store.markMessageDeleted('line');
+    expect(store.removed.version).toBe(version); // nothing new, nothing to redraw
+    store.markUserBanned(3, { permanent: true, bannedBy: 'mod3' });
+    expect(store.removed.size).toBe(1);
+    expect(store.removed.get('line')).toMatchObject({ preservedReason: 'banned', preservedMeta: { permanent: true, bannedBy: 'mod3' } });
+    expect(Object.isFrozen(store.removed.get('line'))).toBe(true);
+  });
+});
+
+describe('LimitedQueue ring', () => {
+  it('keeps FIFO order and returns each evicted item across many wraps', () => {
+    const queue = new LimitedQueue<number>(3);
+    const evicted: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const out = queue.push(i);
+      if (out !== undefined) evicted.push(out);
+    }
+    expect(evicted).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(queue.toArray()).toEqual([7, 8, 9]);
+    expect(queue.includes(8)).toBe(true);
+    expect(queue.includes(6)).toBe(false);
+    queue.clear();
+    expect(queue.size).toBe(0);
+    queue.push(42);
+    expect(queue.toArray()).toEqual([42]);
   });
 });

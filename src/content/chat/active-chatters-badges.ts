@@ -1,3 +1,4 @@
+import { visibleInterval } from '../shared/coalesce';
 import type { Lifecycle } from '../shared/lifecycle';
 import { t } from '../shared/i18n';
 import { logger } from '../shared/logger';
@@ -115,7 +116,7 @@ export class ActiveChattersBadgesController {
   ) {
     const attach = (): void => this.attachToCurrentPanel();
     attach();
-    lifecycle.setInterval(attach, 1000);
+    visibleInterval(lifecycle, attach, 1000);
     lifecycle.add(() => this.dispose());
   }
 

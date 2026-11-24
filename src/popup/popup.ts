@@ -12,7 +12,7 @@ import {
   type HotkeyUpdateResult,
 } from '../content/player/hotkey-registry';
 import type { KickFlowStatusSnapshot } from '../content/status';
-import { hotkeyLabel, loadLang, setLang, t, type MessageKey } from '../content/shared/i18n';
+import { hotkeyLabel, loadLang, localizeStatusLine, setLang, t, type MessageKey } from '../content/shared/i18n';
 import type { HoverFollowMode } from '../content/chat/feature-flags';
 
 interface StatusResponse extends KickFlowStatusSnapshot {
@@ -30,10 +30,12 @@ interface StatusResponse extends KickFlowStatusSnapshot {
     showHostRaid: boolean;
     showModeChanges: boolean;
     showChattersBadges: boolean;
+    hideQuickEmoteBar: boolean;
     autoTheater: boolean;
     rewindControls: boolean;
     liveCatchup: boolean;
     qualityLock: boolean;
+    qualityAlwaysBest: boolean;
     screenshot: boolean;
     speedControls: boolean;
     autoClaimDrops: boolean;
@@ -101,9 +103,11 @@ function applyStaticTranslations(): void {
     ['t-kicks', 'setting.kicks'], ['t-host-raid', 'setting.host_raid'],
     ['t-mode-changes', 'setting.mode_changes'],
     ['t-chatters-badges', 'setting.chatters_badges'],
+    ['t-hide-quick-emotes', 'setting.hide_quick_emotes'],
     ['t-debug', 'popup.debug_log'], ['t-auto-theater', 'setting.auto_theater'],
     ['t-rewind-controls', 'setting.seek'], ['t-live-catchup', 'setting.live_catchup'],
-    ['t-quality-lock', 'setting.quality_lock'], ['t-screenshot', 'setting.screenshot'],
+    ['t-quality-lock', 'setting.quality_lock'], ['t-quality-always-best', 'setting.quality_always_best'],
+    ['t-screenshot', 'setting.screenshot'],
     ['t-speed-controls', 'setting.speed'],
     ['t-auto-claim-drops', 'setting.auto_claim_drops'],
     ['t-auto-claim-daily-reward', 'setting.auto_claim_daily_reward'],
@@ -186,7 +190,7 @@ function render(res: StatusResponse | null, error?: string): void {
   $('reason').textContent = activeReasonNotice()
     ?? (res.active
       ? t('popup.active', { mode: t(res.flags.chatMode === 'own' ? 'popup.mode_own' : 'popup.mode_native') })
-      :res.reason.split('\u2014').join('·'));
+      : localizeStatusLine(res.reason).split('\u2014').join('·'));
 
   setStatValue('slug', res.slug);
   setStatValue('chatroomId', res.chatroomId);
@@ -209,10 +213,12 @@ function render(res: StatusResponse | null, error?: string): void {
   (($('t-host-raid') as HTMLInputElement)).checked = res.flags.showHostRaid;
   (($('t-mode-changes') as HTMLInputElement)).checked = res.flags.showModeChanges;
   (($('t-chatters-badges') as HTMLInputElement)).checked = res.flags.showChattersBadges;
+  (($('t-hide-quick-emotes') as HTMLInputElement)).checked = res.flags.hideQuickEmoteBar;
   (($('t-auto-theater') as HTMLInputElement)).checked = res.flags.autoTheater;
   (($('t-rewind-controls') as HTMLInputElement)).checked = res.flags.rewindControls;
   (($('t-live-catchup') as HTMLInputElement)).checked = res.flags.liveCatchup;
   (($('t-quality-lock') as HTMLInputElement)).checked = res.flags.qualityLock;
+  (($('t-quality-always-best') as HTMLInputElement)).checked = res.flags.qualityAlwaysBest !== false;
   (($('t-screenshot') as HTMLInputElement)).checked = res.flags.screenshot;
   (($('t-speed-controls') as HTMLInputElement)).checked = res.flags.speedControls;
   (($('t-auto-claim-drops') as HTMLInputElement)).checked = res.flags.autoClaimDrops;
@@ -240,13 +246,13 @@ async function refresh(): Promise<void> {
 }
 
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'hideQuickEmoteBar' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'qualityAlwaysBest' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward',
   value: boolean,
 ): Promise<void>;
 async function setFlag(key: 'chatMode', value: 'native' | 'own'): Promise<void>;
 async function setFlag(key: 'hoverFollowMode', value: HoverFollowMode): Promise<void>;
 async function setFlag(
-  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward' | 'chatMode' | 'hoverFollowMode',
+  key: 'showDeletedMessages' | 'preserveBansInline' | 'debugLogging' | 'showSubscriptions' | 'showGiftedSubs' | 'showKicks' | 'showPolls' | 'showHostRaid' | 'showModeChanges' | 'showChattersBadges' | 'hideQuickEmoteBar' | 'autoTheater' | 'rewindControls' | 'liveCatchup' | 'qualityLock' | 'qualityAlwaysBest' | 'screenshot' | 'speedControls' | 'autoClaimDrops' | 'autoClaimDailyReward' | 'chatMode' | 'hoverFollowMode',
   value: boolean | 'native' | 'own' | HoverFollowMode
 ): Promise<void> {
   const revision = ++flagChangeRevision;
@@ -299,10 +305,12 @@ $('t-kicks').addEventListener('change', (e) => setFlag('showKicks', (e.target as
 $('t-host-raid').addEventListener('change', (e) => setFlag('showHostRaid', (e.target as HTMLInputElement).checked));
 $('t-mode-changes').addEventListener('change', (e) => setFlag('showModeChanges', (e.target as HTMLInputElement).checked));
 $('t-chatters-badges').addEventListener('change', (e) => setFlag('showChattersBadges', (e.target as HTMLInputElement).checked));
+$('t-hide-quick-emotes').addEventListener('change', (e) => setFlag('hideQuickEmoteBar', (e.target as HTMLInputElement).checked));
 $('t-auto-theater').addEventListener('change', (e) => setFlag('autoTheater', (e.target as HTMLInputElement).checked));
 $('t-rewind-controls').addEventListener('change', (e) => setFlag('rewindControls', (e.target as HTMLInputElement).checked));
 $('t-live-catchup').addEventListener('change', (e) => setFlag('liveCatchup', (e.target as HTMLInputElement).checked));
 $('t-quality-lock').addEventListener('change', (e) => setFlag('qualityLock', (e.target as HTMLInputElement).checked));
+$('t-quality-always-best').addEventListener('change', (e) => setFlag('qualityAlwaysBest', (e.target as HTMLInputElement).checked));
 $('t-screenshot').addEventListener('change', (e) => setFlag('screenshot', (e.target as HTMLInputElement).checked));
 $('t-speed-controls').addEventListener('change', (e) => setFlag('speedControls', (e.target as HTMLInputElement).checked));
 $('t-auto-claim-drops').addEventListener('change', (e) => setFlag('autoClaimDrops', (e.target as HTMLInputElement).checked));

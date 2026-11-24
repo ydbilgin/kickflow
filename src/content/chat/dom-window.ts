@@ -11,6 +11,15 @@ export const MAX_NON_PRESERVED_NODES = 200;
 // be preserved on ban/delete. If this changes, re-check GLOBAL_CAPACITY too.
 export const MAX_NON_PRESERVED_NODES_PAUSED = 600;
 const BOTTOM_THRESHOLD_PX = 60;
+/** How long after a wheel, key, pointer or touch input an upward offset change still counts as
+ * the reader's own scroll. Scroll events arrive at the next frame, which on a loaded page can be
+ * several hundred ms after the input. */
+export const USER_SCROLL_INPUT_WINDOW_MS = 1_500;
+/** Dispatched on the own list right before KickFlow scrolls it because the reader asked for it from
+ * outside the list (a jump from the user card, the removed panel or the side conversation panel).
+ * It counts as reader input: since 2026-11-10 an upward offset change without input snapped the list
+ * back to the bottom, which undid every such jump while the list was following (2026-11-16). */
+export const READER_SCROLL_EVENT = 'kickflow:reader-scroll';
 
 export type ScrollFollowBehavior = 'auto' | 'smooth';
 
@@ -37,11 +46,20 @@ export interface ScrollFollowControllerOptions {
   createResizeObserver?: (callback: () => void) => RowResizeObserver | null;
   scheduleFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (handle: number) => void;
+  /** Clock for the user-input window. Injectable for tests. */
+  now?: () => number;
 }
 
 /** Owns one chat list's follow state. Upward wheel intent pauses before a queued append or
  * image resize can mask the browser's pending scroll event. Offset changes also cover
- * keyboard/scrollbar input; returning to the bottom resumes following. */
+ * keyboard/scrollbar input; returning to the bottom resumes following.
+ *
+ * 2026-11-10: an upward offset change pauses following only when the reader gave input (wheel,
+ * key, pointer, touch) within USER_SCROLL_INPUT_WINDOW_MS. Our own DOM removals above the
+ * viewport (expired preserved rows, deleted rows, trims) also move the offset up, through scroll
+ * anchoring. Read as intent, they paused a list nobody touched; the paused list then grew to
+ * MAX_NON_PRESERVED_NODES_PAUSED rows and stayed there, so a long stream got heavier
+ * (long soak 2026-11-10: 650 rows, x1.8 DOM nodes and listeners, until the pill was clicked). */
 export class ScrollFollowController {
   private pinned = true;
   private disposed = false;
@@ -49,12 +67,18 @@ export class ScrollFollowController {
   private lastScrollTop: number;
   private programmaticClearFrame: number | null = null;
   private unsettledFollow: UnsettledFollowRequest | null = null;
+  private contentLanded = false;
   private pointerHeld = false;
+  private hoverHeld = false;
   private pointerReleaseFrame: number | null = null;
   private readonly observedRows = new Set<HTMLElement>();
   private readonly resizeObserver: RowResizeObserver | null;
   private readonly scheduleFrame: (callback: FrameRequestCallback) => number;
   private readonly cancelFrame: (handle: number) => void;
+  private readonly now: () => number;
+  private lastUserInputAt = Number.NEGATIVE_INFINITY;
+  /** Middle-button autoscroll moves the offset with no further input events until the next press. */
+  private autoscrollHeld = false;
 
   constructor(
     private readonly container: HTMLElement,
@@ -63,6 +87,7 @@ export class ScrollFollowController {
     this.lastScrollTop = container.scrollTop;
     this.scheduleFrame = options.scheduleFrame ?? ((callback) => window.requestAnimationFrame(callback));
     this.cancelFrame = options.cancelFrame ?? ((handle) => window.cancelAnimationFrame(handle));
+    this.now = options.now ?? (() => performance.now());
     const createResizeObserver = options.createResizeObserver
       ?? ((callback: () => void) => new ResizeObserver(callback));
     this.resizeObserver = createResizeObserver(this.handleRowsResized);
@@ -74,19 +99,47 @@ export class ScrollFollowController {
     container.addEventListener('scrollend', this.handleScrollEnd);
     container.addEventListener('wheel', this.handleWheel, { passive: true });
     container.addEventListener('pointerdown', this.handlePointerDown);
+    container.addEventListener('touchstart', this.noteUserInput, { passive: true });
+    container.addEventListener('touchmove', this.noteUserInput, { passive: true });
+    container.addEventListener(READER_SCROLL_EVENT, this.noteUserInput);
+    // Keyboard scrolling targets the focused element (often <body>), not the list.
+    document.addEventListener('keydown', this.handleKeyDown, true);
     document.addEventListener('pointerup', this.handlePointerRelease);
     document.addEventListener('pointercancel', this.handlePointerRelease);
     window.addEventListener('blur', this.handlePointerRelease);
   }
 
   get isPinned(): boolean {
-    return this.pinned && !this.pointerHeld;
+    return this.pinned && !this.pointerHeld && !this.hoverHeld;
+  }
+
+  /** Suspend automatic motion while aiming, without changing wheel/scrollbar follow intent. */
+  setHoverHeld(held: boolean): void {
+    if (this.disposed || this.hoverHeld === held) return;
+    const wasPinned = this.isPinned;
+    this.hoverHeld = held;
+    if (held) {
+      if (this.unsettledFollow && typeof this.container.scrollTo === 'function') {
+        this.container.scrollTo({ top: this.container.scrollTop, behavior: 'instant' });
+      }
+      this.unsettledFollow = null;
+    }
+    if (wasPinned !== this.isPinned) this.options.onPinnedChange?.(this.isPinned);
+    // Idle/leave may be the last event on a quiet channel: do not wait for another message.
+    if (!held && this.isPinned) this.scrollToBottom();
   }
 
   /** Snap through one marked programmatic-scroll window. Explicit user intent always wins, even
    * if the user starts scrolling upward before the browser delivers our synthetic scroll event. */
   scrollToBottom(behavior: ScrollFollowBehavior = 'auto'): void {
-    if (this.disposed || this.pointerHeld) return;
+    if (this.disposed || this.pointerHeld || this.hoverHeld) return;
+    // Empty startup calls (for example hover-idle) must not consume the first landing.
+    // A hidden list has no usable viewport yet; its first resize after reveal lands it.
+    if (this.container.childElementCount === 0) this.contentLanded = false;
+    else if (this.container.clientHeight > 0) {
+      if (!this.contentLanded) behavior = 'auto';
+      this.contentLanded = true;
+    }
     this.setPinned(true);
     this.programmaticScroll = true;
     const top = this.container.scrollHeight;
@@ -117,6 +170,21 @@ export class ScrollFollowController {
     }
   }
 
+  /** Capture any pending user scroll before a DOM trim, then accept the trim's anchor
+   * correction without mistaking that offset decrease for fresh upward input. */
+  preserveScrollIntent(mutate: () => void): void {
+    if (this.disposed) return;
+    // Only a reader can have a pending upward scroll. Without recent input, skip the read: it
+    // forced a layout of the freshly appended rows on every flush.
+    const readerActive = this.userScrollRecent();
+    if (readerActive) this.handleScroll();
+    mutate();
+    // A pinned list with no reader input is snapped to the bottom by the same flush right after
+    // this, and the snap records the offset. Reading it here forced a second layout per flush
+    // (after the append, then again after the trim) (2026-11-11).
+    if (readerActive || !this.isPinned) this.lastScrollTop = this.container.scrollTop;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -124,6 +192,10 @@ export class ScrollFollowController {
     this.container.removeEventListener('scrollend', this.handleScrollEnd);
     this.container.removeEventListener('wheel', this.handleWheel);
     this.container.removeEventListener('pointerdown', this.handlePointerDown);
+    this.container.removeEventListener('touchstart', this.noteUserInput);
+    this.container.removeEventListener('touchmove', this.noteUserInput);
+    this.container.removeEventListener(READER_SCROLL_EVENT, this.noteUserInput);
+    document.removeEventListener('keydown', this.handleKeyDown, true);
     document.removeEventListener('pointerup', this.handlePointerRelease);
     document.removeEventListener('pointercancel', this.handlePointerRelease);
     window.removeEventListener('blur', this.handlePointerRelease);
@@ -137,8 +209,26 @@ export class ScrollFollowController {
    * A hover meter still releases rows, and smooth follow used to move the target between
    * pointerdown and pointerup. Retain the user's prior follow intent rather than repinning
    * someone who had already wheeled up. */
+  private userScrollRecent(): boolean {
+    return this.pointerHeld || this.autoscrollHeld
+      || this.now() - this.lastUserInputAt <= USER_SCROLL_INPUT_WINDOW_MS;
+  }
+
+  private readonly noteUserInput = (): void => {
+    this.lastUserInputAt = this.now();
+  };
+
+  private readonly handleKeyDown = (): void => {
+    this.autoscrollHeld = false;
+    this.noteUserInput();
+  };
+
   private readonly handlePointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || this.disposed) return;
+    if (this.disposed) return;
+    this.noteUserInput();
+    // Any press ends a running middle-button autoscroll; a middle press starts one.
+    this.autoscrollHeld = event.button === 1;
+    if (event.button !== 0) return;
     if (this.pointerReleaseFrame !== null) this.cancelFrame(this.pointerReleaseFrame);
     this.pointerReleaseFrame = null;
     this.pointerHeld = true;
@@ -157,7 +247,7 @@ export class ScrollFollowController {
       this.pointerReleaseFrame = null;
       if (this.disposed || !this.pointerHeld) return;
       this.pointerHeld = false;
-      if (this.pinned) {
+      if (this.isPinned) {
         this.options.onPinnedChange?.(true);
         this.scrollToBottom();
       }
@@ -165,6 +255,10 @@ export class ScrollFollowController {
   };
 
   private readonly handleWheel = (event: WheelEvent): void => {
+    if (!this.disposed) {
+      this.autoscrollHeld = false;
+      this.noteUserInput();
+    }
     if (this.disposed || event.defaultPrevented || event.ctrlKey || event.deltaY >= 0
       || this.container.scrollHeight <= this.container.clientHeight
       || (this.container.scrollTop <= 0 && !this.unsettledFollow)) return;
@@ -191,6 +285,12 @@ export class ScrollFollowController {
     // only move downward; content growth leaves the offset unchanged or raises it via anchoring.
     if (this.programmaticScroll && !movedUp) return;
     if (!movedUp) return;
+    if (!this.userScrollRecent()) {
+      // Our own DOM removal above the viewport moved the offset up through scroll anchoring.
+      // Nobody scrolled: keep following and put the list back at the bottom.
+      if (this.pinned) this.scrollToBottom(this.options.getScrollFollowBehavior?.() ?? 'auto');
+      return;
+    }
 
     this.programmaticScroll = false;
     this.unsettledFollow = null;
@@ -227,11 +327,15 @@ export class ScrollFollowController {
 
   private pruneObservedRows(): void {
     if (!this.resizeObserver) return;
+    const hadRows = this.observedRows.size > 0;
     for (const row of this.observedRows) {
       if (row.parentElement === this.container) continue;
       this.resizeObserver.unobserve(row);
       this.observedRows.delete(row);
     }
+    // Replay resets can replace every row before the next resize delivery. A trim retains
+    // observed rows, while a fresh content window needs its own instant first landing.
+    if (hadRows && this.observedRows.size === 0) this.contentLanded = false;
   }
 }
 
@@ -239,6 +343,10 @@ export function trimMessageWindow(
   container: HTMLElement,
   registry: ChatDomRegistry,
   maxNodes: number = MAX_NON_PRESERVED_NODES,
+  /** False when the caller snaps to the bottom right after the trim: the reader's offset is then
+   * replaced anyway, so measuring the removed rows and correcting scrollTop would only force two
+   * extra style/layout passes per flush (2026-11-09 profile on a busy channel). */
+  keepOffset: boolean | (() => boolean) = true,
 ): void {
   const messages = (Array.from(container.children) as HTMLElement[]).filter((child) =>
     child.classList.contains(MESSAGE_CLASS)
@@ -247,13 +355,14 @@ export function trimMessageWindow(
   const overflow = nonPreserved.length - maxNodes;
   if (overflow <= 0) return;
 
+  const preserveOffset = typeof keepOffset === 'function' ? keepOffset() : keepOffset;
   let removedHeight = 0;
-  for (let i = 0; i < overflow; i++) {
+  for (let i = 0; preserveOffset && i < overflow; i++) {
     removedHeight += nonPreserved[i].getBoundingClientRect().height;
   }
   // Finish layout reads before removing anything, and keep fractional CSS pixels: summing
   // rounded offsetHeight values makes a paused reader drift during a large trim.
-  const scrollTop = container.scrollTop;
+  const scrollTop = preserveOffset ? container.scrollTop : 0;
   for (let i = 0; i < overflow; i++) {
     const node = nonPreserved[i];
     registry.forget(node);
@@ -301,6 +410,8 @@ export function decideScrollFollow(
 export interface ScrollFollowHoverOptions {
   onHoverChange?: (hovered: boolean) => void;
   onPointerLeave?: () => void;
+  /** Body-level controls over chat and the adjacent native quick-emote strip continue hover. */
+  hoverContinuationSelector?: string;
   /** Behavior used while the pointer is over the list. Defaults to browser smooth. */
   getHoveredBehavior?: () => ScrollFollowBehavior;
 }
@@ -312,6 +423,8 @@ export interface ScrollFollowHoverWiring {
   dispose(): void;
 }
 
+export const HOVER_AIM_IDLE_MS = 2_000;
+
 /** Adds one pointer-state listener pair and transition hooks around the pure follow decision. */
 export function attachScrollFollowHover(
   container: HTMLElement,
@@ -322,6 +435,18 @@ export function attachScrollFollowHover(
   let pointer: { x: number; y: number } | null = null;
   let pointerRow: HTMLElement | null = null;
   let hoverFrame: number | null = null;
+  let idleTimer: number | null = null;
+
+  const releaseHold = (): void => {
+    if (idleTimer !== null) window.clearTimeout(idleTimer);
+    idleTimer = null;
+    follow.setHoverHeld(false);
+  };
+  const holdAim = (): void => {
+    follow.setHoverHeld(true);
+    if (idleTimer !== null) window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(releaseHold, HOVER_AIM_IDLE_MS);
+  };
 
   const markRow = (row: HTMLElement | null): void => {
     if (row === pointerRow && (!row || row.isConnected)) return;
@@ -342,8 +467,9 @@ export function attachScrollFollowHover(
       refreshRow();
     });
   };
-  const onPointerMove = (event: PointerEvent): void => {
-    if (event.pointerType === 'touch') { pointer = null; markRow(null); return; }
+  const onListPointerMove = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') { pointer = null; markRow(null); releaseHold(); return; }
+    if (hovered) holdAim();
     pointer = { x: event.clientX, y: event.clientY };
     refreshRow();
   };
@@ -352,29 +478,108 @@ export function attachScrollFollowHover(
     markRow(null);
   };
   const onVisibilityChange = (): void => {
-    if (document.visibilityState === 'hidden') clearPointerRow();
+    if (document.visibilityState === 'hidden') forceExit();
   };
   const rowObserver = new MutationObserver(scheduleRowRefresh);
   rowObserver.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
-  container.addEventListener('pointermove', onPointerMove);
+  container.addEventListener('pointermove', onListPointerMove);
   container.addEventListener('scroll', scheduleRowRefresh);
-  window.addEventListener('blur', clearPointerRow);
+  const onBlur = (): void => forceExit();
+  window.addEventListener('blur', onBlur);
   document.addEventListener('visibilitychange', onVisibilityChange);
 
-  const onPointerEnter = (): void => {
-    hovered = true;
-    options.onHoverChange?.(true);
+  let overContinuation = false;
+  let pendingFooterExit: number | null = null;
+
+  const cancelFooterExit = (): void => {
+    if (pendingFooterExit === null) return;
+    window.clearTimeout(pendingFooterExit);
+    pendingFooterExit = null;
   };
 
-  const onPointerLeave = (): void => {
+  const setHovered = (next: boolean): void => {
+    if (hovered === next) return;
+    hovered = next;
+    if (next) holdAim();
+    else { clearPointerRow(); releaseHold(); }
+    options.onHoverChange?.(next);
+    if (!next) options.onPointerLeave?.();
+  };
+  const isContinuation = (target: EventTarget | null, event: MouseEvent): boolean => {
+    if (!options.hoverContinuationSelector || !(target instanceof Element)
+      || !target.closest(options.hoverContinuationSelector)) return false;
+    const rect = container.getBoundingClientRect();
+    const isQuickEmoteBar = Boolean(target.closest('[data-kickflow-native-quick-emotes]'));
+    return event.clientX >= rect.left && event.clientX < rect.right
+      && event.clientY >= rect.top && event.clientY < rect.bottom + (isQuickEmoteBar ? 72 : 0);
+  };
+  const isQuickEmoteGap = (event: MouseEvent): boolean => {
+    if (!options.hoverContinuationSelector || !document.querySelector('[data-kickflow-native-quick-emotes]')) return false;
+    const rect = container.getBoundingClientRect();
+    return event.clientX >= rect.left && event.clientX < rect.right
+      && event.clientY >= rect.bottom - 16 && event.clientY < rect.bottom + 72;
+  };
+  const deferFooterExit = (): void => {
+    cancelFooterExit();
+    pendingFooterExit = window.setTimeout(() => {
+      pendingFooterExit = null;
+      setHovered(false);
+    }, 120);
+  };
+
+  const onPointerEnter = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') return;
+    holdAim();
+    cancelFooterExit();
+    overContinuation = false;
+    setHovered(true);
+  };
+
+  const onPointerLeave = (event: PointerEvent): void => {
     clearPointerRow();
-    hovered = false;
-    options.onHoverChange?.(false);
-    options.onPointerLeave?.();
+    overContinuation = isContinuation(event.relatedTarget, event);
+    if (overContinuation) cancelFooterExit();
+    else if (isQuickEmoteGap(event)) deferFooterExit();
+    else { cancelFooterExit(); setHovered(false); }
+  };
+  const onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') return;
+    const next = isContinuation(event.target, event);
+    if (next) { cancelFooterExit(); holdAim(); setHovered(true); }
+    else if (overContinuation && !(event.target instanceof Node && container.contains(event.target))) {
+      if (isQuickEmoteGap(event)) deferFooterExit();
+      else { cancelFooterExit(); setHovered(false); }
+    } else if (pendingFooterExit !== null && !isQuickEmoteGap(event)
+      && !(event.target instanceof Node && container.contains(event.target))) {
+      cancelFooterExit();
+      setHovered(false);
+    }
+    overContinuation = next;
+  };
+  const endContinuation = (): void => {
+    if (!overContinuation && pendingFooterExit === null) return;
+    cancelFooterExit();
+    overContinuation = false;
+    setHovered(false);
+  };
+  const onDocumentExit = (event: PointerEvent): void => {
+    if (event.relatedTarget === null) endContinuation();
+  };
+  const forceExit = (): void => {
+    cancelFooterExit();
+    overContinuation = false;
+    clearPointerRow();
+    releaseHold();
+    setHovered(false);
   };
 
   container.addEventListener('pointerenter', onPointerEnter);
   container.addEventListener('pointerleave', onPointerLeave);
+  if (options.hoverContinuationSelector) {
+    document.addEventListener('pointermove', onPointerMove, true);
+    document.addEventListener('pointerout', onDocumentExit, true);
+    window.addEventListener('blur', endContinuation);
+  }
 
   return {
     get isHovered(): boolean {
@@ -396,12 +601,17 @@ export function attachScrollFollowHover(
       if (hoverFrame !== null) window.cancelAnimationFrame(hoverFrame);
       rowObserver.disconnect();
       clearPointerRow();
-      container.removeEventListener('pointermove', onPointerMove);
+      releaseHold();
+      container.removeEventListener('pointermove', onListPointerMove);
       container.removeEventListener('scroll', scheduleRowRefresh);
-      window.removeEventListener('blur', clearPointerRow);
+      window.removeEventListener('blur', onBlur);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      cancelFooterExit();
       container.removeEventListener('pointerenter', onPointerEnter);
       container.removeEventListener('pointerleave', onPointerLeave);
+      document.removeEventListener('pointermove', onPointerMove, true);
+      document.removeEventListener('pointerout', onDocumentExit, true);
+      window.removeEventListener('blur', endContinuation);
     },
   };
 }

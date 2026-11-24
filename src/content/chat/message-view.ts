@@ -1,7 +1,8 @@
 import { getSeenChatIdentityColor, mergeIdentityBadges, normalizeChatIdentity, type ChatBadge, type ChatMessage, type ChatMessageSender, type PreservedMeta, type SubscriberBadge } from './message-store';
 import type { ModActionKind, ModActionVictim } from './mod-action-feed';
 import { isSafeKickSlug, openUserCard } from './user-card';
-import { jumpToMessage } from './message-jump';
+import { jumpToMessage, playMissCue } from './message-jump';
+import { findMainNativeRow, nativeThreadAvailable, openNativeThread } from './native-thread';
 import { ROLE_BADGE_ASSETS, ROLE_BADGE_FALLBACK_LABELS } from './badge-assets';
 import { openInNewTab } from '../shared/new-tab';
 import { formatDurationMinutes, formatNumber, getLang, t, type MessageKey } from '../shared/i18n';
@@ -9,6 +10,8 @@ import { CONTENT_TOKEN_RE, EMOTE_TOKEN_RE } from './content-tokens';
 import { applyOwnListHighlights } from './message-highlight-apply';
 import { HOVER_TOOLTIP_ATTRIBUTE } from '../shared/hover-tooltip';
 import { formatLiveChatTimestamp } from './timestamp';
+import { updateReplyAvailability, snapshotReplyTarget, type ReplyAction } from './reply-action';
+import { applyBadgePresentation, describeBadgeGroup } from './badge-presentation';
 
 export { extractMentionUsernames } from './content-tokens';
 
@@ -143,6 +146,7 @@ function appendEmote(parent: HTMLElement, id: string, name: string, rawToken: st
   img.alt = name;
   img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, name);
   img.className = 'kickflow-emote';
+  img.dataset.emoteId = id;
   img.loading = 'lazy';
   const box = document.createElement('span');
   box.className = 'kickflow-emote-box';
@@ -193,6 +197,7 @@ export function wireProfileSlugLink(
   displayName: string,
   linkClass: string,
   userId: number | null,
+  nativeUsername: string = slug,
 ): void {
   if (!isSafeKickSlug(slug)) return;
   const profileUrl = `https://kick.com/${slug}`;
@@ -205,7 +210,7 @@ export function wireProfileSlugLink(
     if (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey) {
       openInNewTab(profileUrl);
     } else {
-      void openUserCard(slug, displayName, event.clientX, event.clientY, userId);
+      void openUserCard(slug, displayName, event.clientX, event.clientY, userId, nativeUsername);
     }
   };
   element.addEventListener('click', (event) => { if (event.button === 0) act(event); });
@@ -224,7 +229,7 @@ export function wireProfileSlugLink(
     event.preventDefault();
     event.stopImmediatePropagation();
     const rect = element.getBoundingClientRect();
-    void openUserCard(slug, displayName, rect.left, rect.bottom, userId);
+    void openUserCard(slug, displayName, rect.left, rect.bottom, userId, nativeUsername);
   });
 }
 
@@ -233,8 +238,27 @@ function appendMention(parent: HTMLElement, rawMention: string): void {
   span.className = 'kickflow-mention';
   span.textContent = rawMention;
   const displayName = rawMention.slice(1);
+  span.style.setProperty('--kf-mention-color', identityColor(displayName));
   wireProfileSlugLink(span, displayName.toLowerCase(), displayName, 'kickflow-mention--link', null);
   parent.appendChild(span);
+}
+
+/** Let Kick's own mounted row decide what clicking an emote does. In a reply thread Kick opens
+ * Yan Sohbet; in an ordinary row it may do nothing. A missing/virtualized native row is inert. */
+function wireNativeEmoteClicks(content: HTMLElement, messageId: string): void {
+  content.addEventListener('click', (event) => {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const emote = target.closest<HTMLImageElement>('img.kickflow-emote[data-emote-id]');
+    if (!emote || !content.contains(emote)) return;
+    const nativeRow = findMainNativeRow(messageId);
+    const nativeEmote = Array.from(nativeRow?.querySelectorAll<HTMLElement>('[data-emote-id] img') ?? [])
+      .find((image) => image.closest<HTMLElement>('[data-emote-id]')?.dataset.emoteId === emote.dataset.emoteId);
+    if (!nativeEmote) return;
+    event.stopPropagation();
+    nativeEmote.click();
+  });
 }
 
 export function wireUsernameProfileLink(
@@ -243,7 +267,7 @@ export function wireUsernameProfileLink(
   displayName: string,
   linkClass: string,
 ): void {
-  wireProfileSlugLink(username, sender.slug, displayName, linkClass, sender.id);
+  wireProfileSlugLink(username, sender.slug, displayName, linkClass, sender.id, sender.username);
 }
 
 function groupMessageIdentity(badges: HTMLElement, username: HTMLElement): HTMLSpanElement {
@@ -312,19 +336,19 @@ function contentToPlainText(content: string): string {
 // authentic ones into ROLE_BADGE_ASSETS (./badge-assets) for moderator/vip/og/sub_gifter/
 // verified/staff — those render as real <img>s below. Types with no captured asset yet
 // (broadcaster/founder/sidekick/bot/trainwreckstv) fall back to our own compact colored chip.
-// Colors are our own, chosen to be distinct & readable on dark chat.
-interface RoleBadgeFallbackStyle { glyph: string; color: string; }
+// Semantic colors are shared with image badges in badge-presentation.ts.
+interface RoleBadgeFallbackStyle { glyph: string; }
 const ROLE_BADGE_FALLBACK_STYLES: Record<string, RoleBadgeFallbackStyle> = {
-  broadcaster:   { glyph: '★', color: '#E9113C' },
-  founder:       { glyph: '♛', color: '#F97316' },
-  sidekick:      { glyph: '✦', color: '#8B5CF6' },
-  bot:           { glyph: '⚙', color: '#64748B' },
-  trainwreckstv: { glyph: '▲', color: '#F59E0B' },
+  broadcaster:   { glyph: '★' },
+  founder:       { glyph: '♛' },
+  sidekick:      { glyph: '✦' },
+  bot:           { glyph: '⚙' },
+  trainwreckstv: { glyph: '▲' },
 };
 // Subscriber has no bundled role-level asset — Kick serves the CHANNEL's own custom image
 // instead (resolveSubscriberBadge below). This is its chip fallback for when that image isn't
 // available (channel has no subscriber_badges yet, or the count doesn't clear a tier).
-const SUBSCRIBER_FALLBACK_STYLE: RoleBadgeFallbackStyle = { glyph: '★', color: '#3B82F6' };
+const SUBSCRIBER_FALLBACK_STYLE: RoleBadgeFallbackStyle = { glyph: '★' };
 
 // Set from bootstrap.ts once the channel's `subscriber_badges` are resolved (Kick's own custom
 // per-month images). Empty until then, or on a channel with no custom tiers configured.
@@ -345,15 +369,16 @@ function resolveSubscriberBadge(count: number | undefined): SubscriberBadge | nu
   return match;
 }
 
-function appendRoleBadge(parent: HTMLElement, label: string, style: RoleBadgeFallbackStyle, count?: number): void {
+function appendRoleBadge(parent: HTMLElement, label: string, style: RoleBadgeFallbackStyle, badge: ChatBadge, onActivate?: () => void): void {
+  const count = badge.count;
   const chip = document.createElement('span');
   chip.className = 'kickflow-badge-role';
-  // Property assignment only (never setAttribute('style')/.cssText) — color is one of our own
-  // trusted constants above, same pattern as username.style.color elsewhere in this file.
-  chip.style.backgroundColor = style.color;
-  const tooltipLabel = label + (count ? ` (${count})` : '');
+  const tooltipLabel = badge.type === 'subscriber' && count
+    ? t('badge.subscriber_months', { n: count })
+    : label + (count ? ` (${count})` : '');
   chip.setAttribute('aria-label', tooltipLabel);
   chip.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, tooltipLabel);
+  applyBadgePresentation(chip, onActivate);
   const glyph = document.createElement('span');
   glyph.textContent = style.glyph;
   chip.appendChild(glyph);
@@ -369,8 +394,9 @@ function appendRoleBadge(parent: HTMLElement, label: string, style: RoleBadgeFal
 /** Per-badge render order: badges_v2 image → authentic role asset → subscriber's real channel
  * image → labelled chip fallback → plain text fallback. Every rendered badge gets an instant
  * shared hover/focus tooltip so unlabelled icons/chips are still identifiable. */
-export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
+export function appendBadges(parent: HTMLElement, badges: ChatBadge[], messageId?: string): void {
   for (const badge of badges) {
+    const onActivate = messageId ? () => forwardNativeBadgeClick(messageId, badge) : undefined;
     // 1. badges_v2 image (level, and anything else Kick sends pre-rendered with image_url).
     if (badge.imageUrl) {
       const url = isTrustedBadgeImageUrl(badge.imageUrl);
@@ -382,6 +408,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
         img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
+        applyBadgePresentation(img, onActivate);
         parent.appendChild(img);
         continue;
       }
@@ -393,11 +420,13 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
     if (asset) {
       const img = document.createElement('img');
       img.src = asset.uri;
-      const label = roleBadgeLabel(badge.type, asset.label);
+      const baseLabel = roleBadgeLabel(badge.type, asset.label);
+      const label = badge.type === 'sub_gifter' && badge.count ? `${baseLabel} (${badge.count})` : baseLabel;
       img.alt = label;
       img.className = 'kickflow-badge-icon';
       img.loading = 'lazy';
       img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
+      applyBadgePresentation(img, onActivate);
       parent.appendChild(img);
       continue;
     }
@@ -414,9 +443,10 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
         img.className = 'kickflow-badge-icon';
         img.loading = 'lazy';
         img.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
+        applyBadgePresentation(img, onActivate);
         parent.appendChild(img);
       } else {
-        appendRoleBadge(parent, t('badge.subscriber'), SUBSCRIBER_FALLBACK_STYLE, badge.count);
+        appendRoleBadge(parent, t('badge.subscriber'), SUBSCRIBER_FALLBACK_STYLE, badge, onActivate);
       }
       continue;
     }
@@ -425,7 +455,7 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
     const fallbackStyle = badge.type ? ROLE_BADGE_FALLBACK_STYLES[badge.type] : undefined;
     if (fallbackStyle) {
       const label = roleBadgeLabel(badge.type, (badge.type && ROLE_BADGE_FALLBACK_LABELS[badge.type]) || badge.type || '');
-      appendRoleBadge(parent, label, fallbackStyle, badge.count);
+      appendRoleBadge(parent, label, fallbackStyle, badge, onActivate);
       continue;
     }
 
@@ -437,11 +467,30 @@ export function appendBadges(parent: HTMLElement, badges: ChatBadge[]): void {
       span.textContent = label;
       span.setAttribute('aria-label', label);
       span.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
+      applyBadgePresentation(span, onActivate);
       parent.appendChild(span);
     }
   }
+  describeBadgeGroup(parent);
 }
 
+/** A badge can carry a provider action in addition to its tooltip. Delegate only to the
+ * same mounted message and badge; historical/virtualized rows have no invented destination. */
+function forwardNativeBadgeClick(messageId: string, badge: ChatBadge): void {
+  const row = Array.from(document.querySelectorAll<HTMLElement>('#chatroom-messages [data-kickflow-mid]'))
+    .find(element => element.dataset.kickflowMid === messageId);
+  if (!row) return;
+  const typeTarget = badge.type ? Array.from(row.querySelectorAll<HTMLElement>('[data-testid]'))
+    .find(element => element.dataset.testid === `identity-badge-${badge.type}`) : undefined;
+  const levelTarget = badge.level != null ? Array.from(row.querySelectorAll<SVGElement>('svg[data-ds-icon]'))
+    .find(element => element.getAttribute('data-ds-icon') === `Level${badge.level}`) : undefined;
+  const imageTarget = badge.imageUrl ? Array.from(row.querySelectorAll<HTMLImageElement>('img'))
+    .find(element => element.src.split('?')[0] === badge.imageUrl!.split('?')[0]) : undefined;
+  const target = typeTarget?.querySelector('img, svg') ?? typeTarget ?? levelTarget ?? imageTarget;
+  target?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+}
+
+/** Native reply previews open a thread, rather than moving the current main list. */
 function roleBadgeLabel(type: string | undefined, fallback: string): string {
   const keys: Record<string, MessageKey> = {
     moderator: 'badge.moderator',
@@ -488,9 +537,10 @@ export function deleteAttribution(meta: PreservedMeta): string | null {
   if (meta.deletedBy) return meta.deletedBy;
   if (meta.aiModerated === true) {
     const rules = (meta.violatedRules ?? []).filter(Boolean);
-    return rules.length ? `AI mod (${rules.join(', ')})` : 'AI mod';
+    const ai = t('message.deleted_by.ai');
+    return rules.length ? `${ai} (${rules.join(', ')})` : ai;
   }
-  if (meta.aiModerated === false) return 'mod';
+  if (meta.aiModerated === false) return t('message.deleted_by.mod');
   return null;
 }
 
@@ -504,6 +554,9 @@ export function deleteAttribution(meta: PreservedMeta): string | null {
  */
 export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): void {
   if (!message.preserved) return;
+  row.querySelector('.kickflow-message__reply-action')?.remove();
+  row.querySelector('.kickflow-message__reply-status')?.remove();
+  row.classList.remove('kickflow-message--can-reply');
   // A later moderation event can enrich metadata or upgrade a single-message delete to a
   // user ban. Reconcile the existing annotation instead of treating PRESERVED_CLASS as proof
   // that the row is current; otherwise Mode A can remain labelled "silindi" after the ban.
@@ -538,6 +591,48 @@ export function applyPreservedMarking(row: HTMLElement, message: ChatMessage): v
 export function clearPreservedMarking(row: HTMLElement): void {
   row.classList.remove(PRESERVED_CLASS, BANNED_CLASS, TIMEOUT_CLASS, DELETED_CLASS);
   row.querySelectorAll('.kickflow-status-label, .kickflow-mod-label').forEach((node) => node.remove());
+}
+
+function threadGlyph(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 20 20');
+  svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.6'); svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(svg.namespaceURI, 'path');
+  path.setAttribute('d', 'M3.5 4h13v9h-7l-4 3.5V13h-2Z');
+  svg.append(path);
+  return svg;
+}
+
+/** The deliberate way into Kick's own side conversation (T3). Hidden until a check finds a
+ * mounted native row; a failed forward hides it again and shakes the quoted line. */
+function createThreadButton(messageId: string, reply: HTMLElement): HTMLSpanElement {
+  const button = document.createElement('span');
+  button.className = 'kickflow-message__thread-open';
+  button.setAttribute('role', 'button');
+  button.tabIndex = 0;
+  button.hidden = true;
+  const label = t('chat.thread_open');
+  button.setAttribute('aria-label', label);
+  button.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, label);
+  button.append(threadGlyph());
+  const open = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (openNativeThread(messageId)) return;
+    button.hidden = true;
+    playMissCue(reply);
+  };
+  button.addEventListener('click', (event) => {
+    if (event.button !== 0) return;
+    open(event);
+  });
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    open(event);
+  });
+  return button;
 }
 
 function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
@@ -589,21 +684,39 @@ function appendReplyContext(row: HTMLElement, message: ChatMessage): void {
     context.replyToUser && replyPlain ? `${context.replyToUser}: ${replyPlain}`
     : replyPlain || context.replyToUser || '';
   reply.setAttribute(HOVER_TOOLTIP_ATTRIBUTE, replyLabel);
-  if (context.replyToMessageId) {
-    const replyToMessageId = context.replyToMessageId;
-    reply.setAttribute('role', 'button');
-    reply.tabIndex = 0;
-    reply.addEventListener('click', (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      jumpToMessage(replyToMessageId, reply);
-    });
-    reply.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      jumpToMessage(replyToMessageId, reply);
-    });
-  }
+  // T1: the whole quoted line (icon, name, text, emotes, padding) has exactly one meaning, "jump to
+  // the original". No child carries a handler of its own, and the click stops here so nothing
+  // above KickFlow's row (Kick's page listeners) sees it. A line without an original id still
+  // answers: there is nothing to jump to, so it takes the miss path below.
+  // T2: when the original is not in the list any more, the miss cue plays and, if Kick offers a
+  // thread for this reply, its own side-conversation panel opens: the only place left to read it.
+  const replyToMessageId = context.replyToMessageId ?? null;
+  reply.setAttribute('role', 'button');
+  reply.tabIndex = 0;
+  const jumpOrOpenThread = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    const jumped = replyToMessageId !== null && jumpToMessage(replyToMessageId, reply);
+    if (jumped) return;
+    if (replyToMessageId === null) playMissCue(reply);
+    openNativeThread(message.id);
+  };
+  reply.addEventListener('click', (event) => {
+    if (event.button !== 0) return;
+    jumpOrOpenThread(event);
+  });
+  reply.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    jumpOrOpenThread(event);
+  });
+  // T3: Kick's panel stays reachable on purpose, through its own small button. It is shown only
+  // while Kick offers a thread for this message (its native row is mounted), re-checked when the
+  // pointer or keyboard focus reaches the row.
+  const threadButton = createThreadButton(message.id, reply);
+  reply.appendChild(threadButton);
+  const refreshThreadButton = (): void => { threadButton.hidden = !nativeThreadAvailable(message.id); };
+  row.addEventListener('pointerenter', refreshThreadButton);
+  reply.addEventListener('focusin', (event) => { if (event.target === reply) refreshThreadButton(); });
   row.appendChild(reply);
 }
 
@@ -704,10 +817,19 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
     const firstVictim: ModActionVictim = event.victims[0] ?? { name: 'unknown user', messageId: null };
     const jump = options.onJumpToMessage ?? ((messageId: string, cue: HTMLElement) => jumpToMessage(messageId, cue));
 
-    const tag = document.createElement('span');
+    const tag = document.createElement(options.onOpenRemovedPanel ? 'button' : 'span');
     tag.className = `${EVENT_ROW_CLASS}__kind-tag`;
     tag.dataset.kickflowRole = 'action-kind';
-    tag.setAttribute('aria-hidden', 'true');
+    if (tag instanceof HTMLButtonElement) {
+      tag.type = 'button';
+      tag.setAttribute('aria-label', t('tab.removed'));
+      tag.title = t('tab.removed');
+      tag.addEventListener('click', eventObject => {
+        eventObject.preventDefault();
+        eventObject.stopPropagation();
+        options.onOpenRemovedPanel?.();
+      });
+    } else tag.setAttribute('aria-hidden', 'true');
     tag.append(lineGlyph('mod-action'));
     body.append(tag);
 
@@ -871,7 +993,10 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
         more.setAttribute('role', 'button');
         more.tabIndex = 0;
         more.textContent = t('modaction.more', { n: event.count - shown.length });
+        let expanded = false;
         const expand = (eventObject: Event): void => {
+          if (expanded) return;
+          expanded = true;
           eventObject.preventDefault();
           eventObject.stopPropagation();
           hiddenKnown.forEach((victim) => {
@@ -996,7 +1121,10 @@ function buildSystemEventElement(message: ChatMessage, options: MessageElementOp
           more.setAttribute('role', 'button');
           more.setAttribute('tabindex', '0');
           more.textContent = t('event.gift.more', { n: effectiveTotal - shown.length });
+          let expanded = false;
           const expand = (): void => {
+            if (expanded) return;
+            expanded = true;
             for (const name of hiddenKnown) {
               preview.insertBefore(document.createTextNode(', '), more);
               preview.insertBefore(makeRecipient(name), more);
@@ -1103,7 +1231,7 @@ function buildCelebrationElement(message: ChatMessage): HTMLElement {
   messageLine.className = 'kickflow-celebration__message';
   const badges = document.createElement('span');
   badges.className = 'kickflow-message__badges';
-  appendBadges(badges, mergeIdentityBadges(message.sender.identity));
+  appendBadges(badges, mergeIdentityBadges(message.sender.identity), message.id);
   const author = document.createElement('span');
   author.className = 'kickflow-celebration__author';
   author.textContent = displayName;
@@ -1125,6 +1253,7 @@ export interface MessageElementOptions {
   timestampText?: string;
   onOpenRemovedPanel?: () => void;
   onJumpToMessage?: (messageId: string, cueElement: HTMLElement) => void;
+  onReply?: ReplyAction;
 }
 
 export function buildMessageElement(
@@ -1150,7 +1279,7 @@ export function buildMessageElement(
 
   const badges = document.createElement('span');
   badges.className = 'kickflow-message__badges';
-  appendBadges(badges, mergeIdentityBadges(message.sender.identity));
+  appendBadges(badges, mergeIdentityBadges(message.sender.identity), message.id);
 
   const displayName = message.sender.displayName || message.sender.username;
   // Deliberately NOT an <a href="kick.com/{slug}">: our list is a body-level overlay inside Kick's
@@ -1171,8 +1300,28 @@ export function buildMessageElement(
   const content = document.createElement('span');
   content.className = 'kickflow-message__content';
   appendParsedContent(content, message.content);
+  wireNativeEmoteClicks(content, message.id);
 
   row.append(time, groupMessageIdentity(badges, username), separator, content);
+  if (options.onReply && !message.preserved && ['message', 'reply'].includes(message.type)) {
+    const target = snapshotReplyTarget(message);
+    const reply = document.createElement('button');
+    reply.type = 'button';
+    reply.className = 'kickflow-message__reply-action';
+    reply.setAttribute('aria-label', t('chat.reply_to', { name: displayName }));
+    reply.title = t('chat.reply_to', { name: displayName });
+    reply.textContent = '↩';
+    updateReplyAvailability(reply);
+    reply.addEventListener('pointerenter', () => updateReplyAvailability(reply));
+    reply.addEventListener('focus', () => updateReplyAvailability(reply));
+    reply.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      options.onReply!(target, reply);
+    });
+    row.classList.add('kickflow-message--can-reply');
+    row.append(reply);
+  }
   applyPreservedMarking(row, message);
   applyOwnListHighlights(row, message);
 

@@ -4,9 +4,9 @@ import { mountIntoControlBar } from './native-bar';
 import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 import type { Lifecycle } from '../shared/lifecycle';
 import { subscribeLang, t } from '../shared/i18n';
+import { createStepIcon, STEP_SECONDS } from './bar-chrome.js';
 
 const CONTROLS_ID = 'kickflow-rewind-controls';
-const STEP_SECONDS = 10;
 const MAX_CROSS_RANGE_GAP_SECONDS = 30;
 
 // A media-time boundary (from `seekable`/`buffered`) is only trustworthy if finite and within
@@ -23,6 +23,23 @@ function saneBoundary(value: number): number | null {
 interface MediaRange {
   start: number;
   end: number;
+}
+
+const goLiveRewindWindows = new WeakMap<HTMLVideoElement, { source: string; ranges: MediaRange[] }>();
+const watchedRewindVideos = new WeakSet<HTMLVideoElement>();
+
+/** IVS can trim decoded media to ~1 second when go-live seeks. Preserve only
+ * ranges this exact media element held before that jump, never a guessed DVR floor.
+ * A new load/empty media timeline invalidates the snapshot even if the node is reused. */
+export function rememberGoLiveRewindWindow(video: HTMLVideoElement): void {
+  const ranges = saneRanges(video.buffered);
+  if (!ranges.some((range) => video.currentTime >= range.start && video.currentTime <= range.end)) return;
+  goLiveRewindWindows.set(video, { source: video.currentSrc, ranges });
+  if (watchedRewindVideos.has(video)) return;
+  watchedRewindVideos.add(video);
+  const clear = (): void => { goLiveRewindWindows.delete(video); };
+  video.addEventListener('emptied', clear);
+  video.addEventListener('loadstart', clear);
 }
 
 function saneRanges(ranges: TimeRanges): MediaRange[] {
@@ -87,7 +104,7 @@ export function clampSeekTarget(video: HTMLVideoElement, delta: number): number 
   // Direction invariant: a rewind may never move the playhead FORWARD, a forward-seek never
   // BACKWARD. A wrong-direction result is always a transient artifact (playhead momentarily
   // outside the buffered range) — e.g. a −10 that would otherwise clamp up to a near-live buffer
-  // start, which the owner sees as "canlıya atlıyor". No-op rather than re-interpret the state;
+  // start, which the viewer sees as a jump to live. No-op rather than re-interpret the state;
   // the user presses again once the picture resumes. Kills the forward catapult at ANY magnitude,
   // including the ≤(|delta|+gap) slip-through the magnitude guard below cannot see.
   if (delta < 0 && result > video.currentTime) return video.currentTime;
@@ -125,6 +142,12 @@ function computeSeekTarget(video: HTMLVideoElement, delta: number): number {
   );
   if (dvr) {
     return Math.min(Math.max(target, dvr.start), dvr.end);
+  }
+
+  const beforeLive = goLiveRewindWindows.get(video);
+  if (delta < 0 && beforeLive && beforeLive.source === video.currentSrc
+    && beforeLive.ranges.some((range) => target >= range.start && target <= range.end)) {
+    return target;
   }
 
   const bufferedRanges = saneRanges(video.buffered);
@@ -177,35 +200,6 @@ function seekBy(video: HTMLVideoElement, delta: number): void {
   } catch (error) {
     logger.warn('rewind-controls: seek failed', error);
   }
-}
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-// FINAL design 2026-10-18 (player-bar.html, icons #i-back10/#i-fwd10): a circular arrow with the
-// step number inside it. Drawn as FILLED shapes, not strokes: every icon Kick draws in this bar is
-// `[&_svg]:fill-current`, so an outline is the single most visible tell that a control is not
-// native. The ring is the design's 1.9px stroke turned into an annular arc (r 8 +/- 0.95).
-const STEP_RING = 'M4.84 6.63A8.95 8.95 0 1 1 3.05 12H4.95A7.05 7.05 0 1 0 6.36 7.77z';
-const STEP_ARROW = 'M4.35 3.4h1.9v3.25h3.25v1.9H4.35z';
-
-function createStepIcon(direction: 'back' | 'forward'): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  const arrow = document.createElementNS(SVG_NS, 'g');
-  if (direction === 'forward') arrow.setAttribute('transform', 'matrix(-1 0 0 1 24 0)');
-  for (const pathData of [STEP_RING, STEP_ARROW]) {
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', pathData);
-    arrow.append(path);
-  }
-  const label = document.createElementNS(SVG_NS, 'text');
-  label.setAttribute('x', direction === 'forward' ? '11.7' : '12.3');
-  label.setAttribute('y', '15.3');
-  label.setAttribute('text-anchor', 'middle');
-  label.setAttribute('class', 'kickflow-player-btn__step');
-  label.textContent = String(STEP_SECONDS);
-  svg.append(arrow, label);
-  return svg;
 }
 
 let forwardAtLiveEdge = false;

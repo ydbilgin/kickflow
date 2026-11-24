@@ -1,0 +1,387 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { featureFlags } from '../../src/content/chat/feature-flags';
+import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
+import { MOD_ACTION_MAX_ROWS_IN_CHAT, NativeChatAugmenter } from '../../src/content/chat/native-augment';
+import { RemovedMessagesPanel } from '../../src/content/chat/removed-panel';
+import { Lifecycle as RealLifecycle } from '../../src/content/shared/lifecycle';
+import type { Lifecycle } from '../../src/content/shared/lifecycle';
+import type { StatusSnapshotProvider } from '../../src/content/status';
+import type { ModActionNotice } from '../../src/content/chat/mod-action-feed';
+
+const getTestStatusSnapshot: StatusSnapshotProvider = () => ({
+  slug: null,
+  chatroomId: null,
+  active: false,
+  reason: 'kanal sayfası değil',
+  pusherConnected: false,
+  lastBanAt: null,
+  messageCount: 0,
+  preservedCount: 0,
+  bannedCount: 0,
+  deletedCount: 0,
+  ghostAnchored: 0,
+  ghostPendingNoAnchor: 0,
+  ghostStrip: 0,
+  ghostEvicted: 0,
+});
+
+class FakeLifecycle implements Pick<Lifecycle, 'add' | 'setInterval' | 'isDisposed'> {
+  readonly disposers: Array<() => void> = [];
+  readonly intervals: Array<{ handler: () => void; intervalMs: number }> = [];
+  readonly isDisposed = false;
+
+  add(disposer: () => void): void {
+    this.disposers.push(disposer);
+  }
+
+  setInterval(handler: () => void, intervalMs: number): void {
+    this.intervals.push({ handler, intervalMs });
+  }
+}
+
+function message(id: string, userId: number, content = id): ChatMessage {
+  return {
+    id,
+    chatroomId: 1,
+    content,
+    type: 'message',
+    createdAt: new Date('2026-07-07T19:00:00Z').toISOString(),
+    sender: {
+      id: userId,
+      username: `user${userId}`,
+      slug: `user${userId}`,
+      identity: { color: '', badges: [], badgesV2: [] },
+    },
+    preserved: false,
+  };
+}
+
+function modNotice(id: string, lastAt: number, name: string): ModActionNotice {
+  return {
+    id,
+    kind: 'ban',
+    moderator: 'moderator',
+    durationMin: null,
+    victims: [{ name, messageId: `${id}-message` }],
+    count: 1,
+    messageId: `${id}-message`,
+    firstAt: lastAt,
+    lastAt,
+  };
+}
+
+function installChat(rows: string[]): HTMLElement {
+  document.body.innerHTML = '<div id="chatroom-messages"><div class="no-scrollbar"></div></div>';
+  const list = document.querySelector<HTMLElement>('.no-scrollbar');
+  if (!list) throw new Error('missing chat list');
+  rows.forEach((id, index) => list.appendChild(makeRow(id, index)));
+  return list;
+}
+
+function makeRow(id: string, index = 0): HTMLElement {
+  const row = document.createElement('div');
+  row.dataset.index = String(index);
+  row.dataset.kickflowMid = id;
+  row.className = 'block relative w-full px-2 py-1';
+  const group = document.createElement('div');
+  group.className = 'group relative flex w-full min-w-0 items-start gap-2';
+  const messageShell = document.createElement('div');
+  messageShell.className = 'flex min-w-0 max-w-full grow flex-col';
+  const identityLine = document.createElement('div');
+  identityLine.className = 'flex min-w-0 items-center gap-1 text-sm';
+  const username = document.createElement('button');
+  username.className = 'truncate font-bold leading-[1.2]';
+  username.textContent = `user-${id}`;
+  identityLine.append(username);
+  const nativeContent = document.createElement('div');
+  nativeContent.className = 'break-words text-sm leading-[1.45] line-clamp-2 max-h-12 overflow-hidden';
+  const contentBlock = document.createElement('div');
+  contentBlock.className = 'min-w-0';
+  contentBlock.textContent = `native ${id}`;
+  nativeContent.append(contentBlock);
+  messageShell.append(identityLine, nativeContent);
+  group.append(messageShell);
+  row.append(group);
+  return row;
+}
+
+async function flushObserver(): Promise<void> {
+  await Promise.resolve();
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  await Promise.resolve();
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+describe('NativeChatAugmenter ghost blocks', () => {
+  const originalShowDeleted = featureFlags.showDeletedMessages;
+  const originalPreserveBansInline = featureFlags.preserveBansInline;
+
+  beforeEach(() => {
+    featureFlags.showDeletedMessages = true;
+    featureFlags.preserveBansInline = true;
+    Object.defineProperty(globalThis, 'CSS', {
+      configurable: true,
+      value: { escape: (value: string) => value.replace(/"/g, '\\"') },
+    });
+  });
+
+  afterEach(() => {
+    featureFlags.showDeletedMessages = originalShowDeleted;
+    featureFlags.preserveBansInline = originalPreserveBansInline;
+    document.body.innerHTML = '';
+  });
+
+  it('anchors removed banned rows, reasserts after recycle, reanchors, falls back, and keeps deletes intact', async () => {
+    const list = installChat(['m1', 'ban1', 'ban2', 'm4']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'before'));
+    store.addMessage(message('ban1', 2, 'first banned'));
+    store.addMessage(message('ban2', 2, 'second banned'));
+    store.addMessage(message('m4', 4, 'after'));
+    store.markUserBanned(2, { permanent: true, bannedBy: 'mod1' });
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    document.querySelector('[data-kickflow-mid="ban2"]')?.remove();
+    await flushObserver();
+
+    const firstAnchor = document.querySelector<HTMLElement>('[data-kickflow-mid="m1"]');
+    expect(firstAnchor?.querySelector('.kickflow-ghost-block')?.textContent).toContain('first banned');
+    expect(firstAnchor?.querySelector('.kickflow-ghost-block')?.textContent).toContain('second banned');
+    const firstText = firstAnchor?.querySelector('.kickflow-ghost-block')?.textContent ?? '';
+    expect(firstText.indexOf('first banned')).toBeLessThan(firstText.indexOf('second banned'));
+    expect(augmenter.getGhostStats()).toMatchObject({ ghostAnchored: 2, ghostPendingNoAnchor: 0, ghostStrip: 0 });
+
+    firstAnchor?.remove();
+    const recycled = makeRow('m1', 10);
+    list.appendChild(recycled);
+    await flushObserver();
+
+    expect(recycled.querySelector('.kickflow-ghost-block')?.textContent).toContain('first banned');
+    expect(recycled.querySelectorAll('[data-kickflow-ghost-mid="ban1"]')).toHaveLength(1);
+
+    recycled.remove();
+    await flushObserver();
+
+    const nextAnchor = document.querySelector<HTMLElement>('[data-kickflow-mid="m4"]');
+    expect(nextAnchor?.querySelector('.kickflow-ghost-block')?.textContent).toContain('first banned');
+    expect(document.querySelectorAll('.kickflow-ghost-block')).toHaveLength(1);
+
+    nextAnchor?.remove();
+    await flushObserver();
+
+    // No inline anchor left: both bans are pending re-anchor (still preserved this session). The
+    // augmenter no longer owns a panel for these — that's RemovedMessagesPanel's job now (tested
+    // separately in removed-panel.test.ts), driven off the same store independent of anchoring.
+    expect(document.querySelector('.kickflow-ghost-block')).toBeNull();
+    expect(document.querySelector('.kickflow-ghost-strip')).toBeNull();
+    expect(augmenter.getGhostStats()).toMatchObject({ ghostAnchored: 0, ghostPendingNoAnchor: 2 });
+
+    const lateAnchor = makeRow('m4', 11);
+    list.appendChild(lateAnchor);
+    await flushObserver();
+
+    // The bans re-anchor inline once a neighbor row is mounted again.
+    expect(lateAnchor.querySelector('.kickflow-ghost-block')?.textContent).toContain('second banned');
+    expect(augmenter.getGhostStats()).toMatchObject({ ghostAnchored: 2, ghostPendingNoAnchor: 0 });
+
+    store.addMessage(message('del1', 9, 'deleted text'));
+    store.markMessageDeleted('del1');
+    const deletedRow = makeRow('del1', 12);
+    list.appendChild(deletedRow);
+    await flushObserver();
+
+    expect(deletedRow.classList.contains('kickflow-deleted')).toBe(true);
+    expect(deletedRow.querySelector('.kickflow-original-content')?.textContent).toContain('deleted text');
+  });
+
+  it('makes ghost-row usernames clickable like Mode A/removed-panel usernames', async () => {
+    installChat(['m1', 'ban1', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'before'));
+    store.addMessage(message('ban1', 2, 'banned text'));
+    store.addMessage(message('m3', 3, 'after'));
+    store.markUserBanned(2, { permanent: true, bannedBy: 'mod1' });
+    new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    await flushObserver();
+
+    const username = document.querySelector<HTMLElement>('.kickflow-ghost-row__username');
+    expect(username?.getAttribute('role')).toBe('link');
+    expect(username?.classList.contains('kickflow-ghost-row__username--link')).toBe(true);
+  });
+
+  it('injects parsed ghost content into a realistic nested Kick group without copying native classes', async () => {
+    installChat(['m1', 'ban1', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'before'));
+    store.addMessage(message('ban1', 2, 'bak [emote:123:kek] https://example.com/ghost'));
+    store.addMessage(message('m3', 3, 'after'));
+    store.markUserBanned(2, { permanent: true, bannedBy: 'mod1' });
+    new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    await flushObserver();
+
+    const block = document.querySelector<HTMLElement>('.kickflow-ghost-block');
+    const ghost = block?.querySelector<HTMLElement>('.kickflow-ghost-row');
+    expect(block?.parentElement?.classList.contains('group')).toBe(true);
+    expect(block?.previousElementSibling?.classList.contains('flex')).toBe(true);
+    const emote = ghost?.querySelector<HTMLImageElement>('img.kickflow-emote');
+    expect(emote?.alt).toBe('kek');
+    expect(emote?.getAttribute('title')).toBeNull();
+    expect(emote?.getAttribute('data-kickflow-tooltip')).toBe('kek');
+    expect(ghost?.querySelector('a.kickflow-link')?.textContent).toBe('https://example.com/ghost');
+    expect(ghost?.querySelector('[class*="line-clamp"], .truncate, [class*="max-h-"]')).toBeNull();
+  });
+
+  it('removes ghost state when preserved banned messages are evicted', async () => {
+    const list = installChat(['m1', 'ban1']);
+    let augmenter: NativeChatAugmenter | null = null;
+    const store = new ChatIntegrityStore({
+      onPreservedEvicted: (evicted) => augmenter?.forgetGhost(evicted.id),
+    });
+    store.addMessage(message('m1', 1));
+    store.addMessage(message('ban1', 2, 'evicted banned'));
+    store.markUserBanned(2);
+    augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    await flushObserver();
+    expect(document.querySelector('.kickflow-ghost-block')?.textContent).toContain('evicted banned');
+
+    for (let i = 0; i < 50; i++) {
+      store.addMessage(message(`later-${i}`, 100 + i));
+      store.markUserBanned(100 + i);
+    }
+    await flushObserver();
+
+    expect(list.querySelector('[data-kickflow-ghost-mid="ban1"]')).toBeNull();
+    expect(augmenter.getGhostStats().ghostEvicted).toBe(1);
+  });
+
+  // 2026-11-11 (performance): while a ghost is pending, an anchor pass runs on every chat message.
+  // Each pending ghost used to walk the whole document (an attribute selector is not indexed) at
+  // least twice per pass; the pass now walks the mounted rows once.
+  it('walks the document a bounded number of times per anchor pass, however many ghosts wait', async () => {
+    const store = new ChatIntegrityStore();
+    const pending: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const id = `far-ban-${i}`;
+      store.addMessage(message(id, 5_000 + i, `far banned ${i}`));
+      store.markUserBanned(5_000 + i);
+      pending.push(id);
+    }
+    // Far from every mounted row (ANCHOR_MAX_SEQ_DISTANCE): these ghosts stay pending.
+    for (let i = 0; i < 40; i++) store.addMessage(message(`gap-${i}`, 9));
+    const mounted: string[] = [];
+    for (let i = 0; i < 100; i++) {
+      const id = `live-${i}`;
+      store.addMessage(message(id, 10 + (i % 7)));
+      mounted.push(id);
+    }
+    const list = installChat(mounted);
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+    augmenter.seedRemovedGhosts(pending);
+    await flushObserver();
+    expect(augmenter.getGhostStats()).toMatchObject({ ghostAnchored: 0, ghostPendingNoAnchor: 50 });
+
+    const all = vi.spyOn(document, 'querySelectorAll');
+    const one = vi.spyOn(document, 'querySelector');
+    store.addMessage(message('live-new', 12));
+    list.appendChild(makeRow('live-new', 100));
+    await flushObserver();
+    const documentWalks = all.mock.calls.length + one.mock.calls.length;
+    all.mockRestore();
+    one.mockRestore();
+
+    expect(augmenter.getGhostStats()).toMatchObject({ ghostPendingNoAnchor: 50 });
+    // Measured 2026-11-11: 6 with this change (row reconcile + one index walk), 155 before it.
+    expect(documentWalks).toBeLessThanOrEqual(8);
+  });
+
+  it('never prunes removed-log rows while re-anchoring inline ghosts', async () => {
+    installChat(['m1', 'ban1', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1, 'before'));
+    store.addMessage(message('ban1', 2, 'banned text'));
+    store.addMessage(message('m3', 3, 'after'));
+    store.addMessage(message('deleted1', 4, 'deleted text'));
+    store.markUserBanned(2, { permanent: true });
+    store.markMessageDeleted('deleted1');
+    const panelLifecycle = new RealLifecycle();
+    const panel = new RemovedMessagesPanel(panelLifecycle, store, getTestStatusSnapshot);
+    // Open: a closed panel builds no rows (2026-11-10), so the rows that re-anchoring must leave
+    // alone only exist while it is shown.
+    panel.showSettings('removed');
+    const augmenter = new NativeChatAugmenter(new FakeLifecycle() as unknown as Lifecycle, store);
+
+    document.querySelector('[data-kickflow-mid="ban1"]')?.remove();
+    await flushObserver();
+    augmenter.reconcileAll();
+    await flushObserver();
+
+    const panelRows = document.querySelector('.kickflow-panel');
+    expect(panelRows?.querySelector('[data-kickflow-removed-mid="ban1"]')).not.toBeNull();
+    expect(panelRows?.querySelector('[data-kickflow-removed-mid="deleted1"]')).not.toBeNull();
+    panelLifecycle.dispose();
+  });
+
+  it('anchors mod-action blocks to the newest row and heals recycled hosts within the real row shape', async () => {
+    const list = installChat(['m1', 'm2', 'm3']);
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1', 1));
+    store.addMessage(message('m2', 2));
+    store.addMessage(message('m3', 3));
+    const lifecycle = new FakeLifecycle();
+    const augmenter = new NativeChatAugmenter(lifecycle as unknown as Lifecycle, store);
+    const callbacks = {
+      onJump: () => undefined,
+      onOpenPanel: () => undefined,
+    };
+
+    augmenter.showModActionNotice(modNotice('notice-1', 1, 'victim-one'), callbacks);
+    await flushObserver();
+
+    const host = list.querySelector<HTMLElement>('[data-kickflow-mid="m3"]');
+    expect(host).not.toBeNull();
+    expect(host?.querySelector('.kickflow-modaction-block')?.getAttribute('data-kickflow-modaction-anchor'))
+      .toBe('m3');
+    expect(host?.querySelector('.kickflow-modaction-block')?.parentElement?.classList.contains('break-words')).toBe(true);
+    expect(list.querySelectorAll('.kickflow-modaction-block')).toHaveLength(1);
+
+    // A newer message must NOT drag the block down. Re-resolving the newest row every pass is the
+    // docked-strip behaviour the owner rejected: the notice would never scroll away.
+    store.addMessage(message('m4', 4));
+    list.appendChild(makeRow('m4', 3));
+    await flushObserver();
+    expect(list.querySelector('.kickflow-modaction-block')?.getAttribute('data-kickflow-modaction-anchor'))
+      .toBe('m3');
+    expect(list.querySelectorAll('.kickflow-modaction-block')).toHaveLength(1);
+
+    // Virtuoso recycles the host row to another message: the block leaves with its host, exactly as
+    // the message it is attached to does.
+    host!.dataset.kickflowMid = 'm5';
+    await flushObserver();
+    expect(list.querySelector('.kickflow-modaction-block')).toBeNull();
+
+    // Scrolled back into the window: it returns with its own message.
+    host!.dataset.kickflowMid = 'm3';
+    await flushObserver();
+    expect(list.querySelector('.kickflow-modaction-block')?.getAttribute('data-kickflow-modaction-anchor'))
+      .toBe('m3');
+
+    augmenter.showModActionNotice(modNotice('notice-2', 2, 'victim-two'), callbacks);
+    augmenter.showModActionNotice(modNotice('notice-3', 3, 'victim-three'), callbacks);
+    augmenter.showModActionNotice(modNotice('notice-4', 4, 'victim-four'), callbacks);
+    await flushObserver();
+
+    expect(list.querySelectorAll('.kickflow-modaction-block')).toHaveLength(MOD_ACTION_MAX_ROWS_IN_CHAT);
+    expect(list.querySelector('[data-kickflow-modaction-id="notice-1"]')).toBeNull();
+    expect(list.querySelector('[data-kickflow-modaction-id="notice-4"]')).not.toBeNull();
+
+    lifecycle.disposers.forEach((dispose) => dispose());
+    expect(list.querySelector('[class*="kickflow-"]')).toBeNull();
+  });
+});

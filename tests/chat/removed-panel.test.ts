@@ -155,6 +155,37 @@ describe('RemovedMessagesPanel', () => {
     lifecycle.dispose();
   });
 
+  it('a closed panel does no work: no page writes even when a ban arrives, and opening shows current rows', async () => {
+    // 2026-11-10 long soak: the closed panel rewrote its <body>-level stats every second, which woke
+    // every page-wide MutationObserver (avatar preview, player bar, controls) once a second.
+    // 2026-11-11: closed, it no longer updates even its own count chip; the chip sits inside the
+    // display:none dashboard and the footer button's badge reads removedCount() itself.
+    const lifecycle = new Lifecycle();
+    const store = new ChatIntegrityStore();
+    const panel = new RemovedMessagesPanel(lifecycle, store, () => statusSnapshot({ slug: 'chan', pusherConnected: true, messageCount: 5 }));
+    panel.render();
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((batch) => records.push(...batch));
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    panel.render();
+    const removedMessage = message('closed-tick-1', 7);
+    store.addMessage(removedMessage);
+    store.markMessageDeleted(removedMessage.id);
+    panel.render();
+    panel.render();
+    await Promise.resolve();
+    observer.disconnect();
+    expect(records).toEqual([]);
+    expect(panel.removedCount()).toBe(1);
+
+    panel.showSettings('removed');
+    const modal = requiredElement<HTMLElement>(document, '.kickflow-panel');
+    expect(modal.style.display).toBe('flex');
+    expect(modal.querySelector('[data-kickflow-removed-mid="closed-tick-1"]')).not.toBeNull();
+    expect(modal.querySelector('.kickflow-panel__count')?.textContent).toBe('1');
+    lifecycle.dispose();
+  });
+
   it('is hidden by default (section present but display:none) even though it already instantiates', () => {
     const lifecycle = new Lifecycle();
     const store = new ChatIntegrityStore();
@@ -259,6 +290,7 @@ describe('RemovedMessagesPanel', () => {
     expect(panel.removedCount()).toBe(2);
     expect(panel.isOpen()).toBe(false); // removedCount() doesn't open it
 
+    panel.showSettings('removed');
     const countChip = document.querySelector<HTMLElement>('.kickflow-panel__count');
     expect(countChip?.textContent).toBe('2');
     lifecycle.dispose();
@@ -387,7 +419,7 @@ describe('RemovedMessagesPanel', () => {
     const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
     panel.render();
     panel.toggle();
-    expect(document.querySelector('.kickflow-mod-label')?.textContent).toBe('· mod');
+    expect(document.querySelector('.kickflow-mod-label')?.textContent).toBe('· moderatör');
 
     store.markMessageDeleted('m1', { deletedBy: 'modname' });
     panel.render();
@@ -544,13 +576,13 @@ describe('RemovedMessagesPanel', () => {
       const general = openDashboardSection(panel, 'general').pane;
 
       expect(requiredStatValue(general, 'Mesaj').textContent).toBe('41');
-      expect(requiredStatValue(general, 'Korunmuş').textContent).toBe('7');
+      expect(requiredStatValue(general, 'Korunan').textContent).toBe('7');
       expect(requiredStatValue(general, 'Ban').textContent).toBe('4');
       expect(requiredStatValue(general, 'Silme').textContent).toBe('3');
-      expect(requiredStatValue(general, 'Ghost (satır içi)').textContent).toBe('2');
-      expect(requiredStatValue(general, 'Ghost (bekleyen)').textContent).toBe('5');
-      expect(requiredStatValue(general, 'Ghost (atılan)').textContent).toBe('9');
-      const missingChatroom = requiredStatValue(general, 'Sohbet odası no.');
+      expect(requiredStatValue(general, 'Silinen, yerinde').textContent).toBe('2');
+      expect(requiredStatValue(general, 'Silinen, yer bekliyor').textContent).toBe('5');
+      expect(requiredStatValue(general, 'Silinen, düşürüldü').textContent).toBe('9');
+      const missingChatroom = requiredStatValue(general, 'Sohbet odası no');
       expect(missingChatroom.textContent).toBe('—');
       expect(missingChatroom.classList.contains('kickflow-panel__stat-value--missing')).toBe(true);
       lifecycle.dispose();
@@ -887,7 +919,8 @@ describe('RemovedMessagesPanel', () => {
       ['Altyazıyı varsayılan olarak kapalı tut', 'captionGuard'],
       ['Geri / ileri sarma', 'rewindControls'],
       ['Canlıya yetişme', 'liveCatchup'],
-      ['En yüksek kalite', 'qualityLock'],
+      ['Kalite düğmesi', 'qualityLock'],
+      ['Her yayını en yüksek kalitede aç', 'qualityAlwaysBest'],
       ['Ekran görüntüsü', 'screenshot'],
       ['Hız kontrolleri', 'speedControls'],
       ['Drops ödüllerini otomatik al', 'autoClaimDrops'],
@@ -897,7 +930,7 @@ describe('RemovedMessagesPanel', () => {
       const store = new ChatIntegrityStore();
       const panel = new RemovedMessagesPanel(lifecycle, store, getTestStatusSnapshot);
       const playerKeys: readonly string[] = [
-        'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'screenshot', 'speedControls',
+        'autoTheater', 'captionGuard', 'rewindControls', 'liveCatchup', 'qualityLock', 'qualityAlwaysBest', 'screenshot', 'speedControls',
       ];
       const section: TestDashboardSection = key === 'autoClaimDrops' || key === 'autoClaimDailyReward'
         ? 'rewards'
@@ -1015,7 +1048,7 @@ describe('RemovedMessagesPanel', () => {
       lifecycle.dispose();
     });
 
-    it('stays present (hidden) when the store empties; only lifecycle disposes it', () => {
+    it('keeps the removed list after the preserved window expires; only lifecycle disposes the panel', () => {
       const lifecycle = new Lifecycle();
       const store = new ChatIntegrityStore();
       store.addMessage(message('m1', 1, 'banned text'));
@@ -1025,12 +1058,16 @@ describe('RemovedMessagesPanel', () => {
       const { modal, pane } = openDashboardSection(panel, 'general');
       expect(pane.querySelector('.kickflow-panel__settings-row--mode')).not.toBeNull();
 
-      // Past the 10-min preservation TTL, measured from preservation rather than send time.
+      // Past the 10-min preservation TTL, measured from preservation rather than send time. The chat
+      // row may lose its strike, but the ban stays on the Removed list (2026-11-11).
       store.sweepExpiredPreserved((store.getMessageById('m1')?.preservedAt ?? Date.now()) + 11 * 60 * 1000);
       panel.render();
 
       expect(modal.isConnected).toBe(true);
-      expect(panel.removedCount()).toBe(0);
+      expect(store.getPreserved()).toHaveLength(0);
+      expect(panel.removedCount()).toBe(1);
+      panel.showSettings('removed');
+      expect(modal.querySelector('[data-kickflow-removed-mid="m1"]')).not.toBeNull();
       lifecycle.dispose();
       expect(document.querySelector('.kickflow-panel')).toBeNull();
     });
@@ -1141,6 +1178,35 @@ describe('RemovedMessagesPanel', () => {
       expect(pressCtrlF(ownInput)).toBe(false);
 
       kickComposer.remove();
+      lifecycle.dispose();
+    });
+
+    it('clears the previous channel search when its session ends and searches the replacement archive', () => {
+      const lifecycle = new Lifecycle();
+      const archive = new UserMessageArchive();
+      archive.add(chatMessage('old-channel', { content: 'session old channel' }));
+      configureUserMessageArchive(archive);
+      const panel = new RemovedMessagesPanel(lifecycle, new ChatIntegrityStore(), getTestStatusSnapshot);
+      panel.showSearch();
+      const input = document.querySelector<HTMLInputElement>('.kickflow-search__input')!;
+      input.value = 'session';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(document.querySelector('.kickflow-user-messages__row')?.textContent).toContain('session old channel');
+
+      // Bootstrap releases the panel's store before clearing the old archive singleton.
+      panel.setStore(null);
+      expect(document.querySelector('.kickflow-user-messages__row')).toBeNull();
+      expect(input.value).toBe('');
+      configureUserMessageArchive(null);
+
+      const nextArchive = new UserMessageArchive();
+      nextArchive.add(chatMessage('new-channel', { content: 'session new channel' }));
+      configureUserMessageArchive(nextArchive);
+      panel.setStore(new ChatIntegrityStore());
+      input.value = 'session';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(document.querySelectorAll('.kickflow-user-messages__row')).toHaveLength(1);
+      expect(document.querySelector('.kickflow-user-messages__row')?.textContent).toContain('session new channel');
       lifecycle.dispose();
     });
 

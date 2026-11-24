@@ -1,46 +1,62 @@
 import { describe, expect, it } from 'vitest';
 import { featureFlags } from '../../src/content/chat/feature-flags';
 
+// 2026-11-11: seven tests that each re-typed one default were folded into one table. A default is a
+// product decision; one place lists them, and a changed default fails here with its name.
 describe('feature-flags', () => {
-  it('defaults chatMode to native', () => {
-    expect(featureFlags.chatMode).toBe('native');
-  });
-
-  it('defaults hoverFollowMode to browser-smooth', () => {
-    expect(featureFlags.hoverFollowMode).toBe('browser-smooth');
-  });
-
-  it('shows event rows by default', () => {
-    expect(featureFlags.showSubscriptions).toBe(true);
-    expect(featureFlags.showGiftedSubs).toBe(true);
-    expect(featureFlags.showKicks).toBe(true);
-    expect(featureFlags.showPolls).toBe(true);
-    expect(featureFlags.showHostRaid).toBe(true);
-    expect(featureFlags.showModeChanges).toBe(true);
-  });
-
-  it('keeps automatic theater mode opt-in', () => {
-    expect(featureFlags.autoTheater).toBe(false);
-  });
-
-  it('keeps every previously unconditional player feature enabled by default', () => {
-    expect(featureFlags.captionGuard).toBe(true);
-    expect(featureFlags.rewindControls).toBe(true);
-    expect(featureFlags.liveCatchup).toBe(true);
-    expect(featureFlags.qualityLock).toBe(true);
-    expect(featureFlags.screenshot).toBe(true);
-    expect(featureFlags.speedControls).toBe(true);
-  });
-
-  it('enables mention/mod/VIP highlight defaults', () => {
-    expect(featureFlags.mentionHighlightEnabled).toBe(true);
-    expect(featureFlags.mentionHighlightStyle).toBe('both');
-    expect(featureFlags.mentionHighlightColor).toBe('#FFC94D');
-    expect(featureFlags.roleHighlightStyle).toBe('frame');
-    expect(featureFlags.modFrameEnabled).toBe(true);
-    expect(featureFlags.modFrameColor).toBe('#14B8A6');
-    expect(featureFlags.vipFrameEnabled).toBe(true);
-    expect(featureFlags.vipFrameColor).toBe('#EC4899');
-    expect(featureFlags.manualUsername).toBe('');
+  it('ships the agreed defaults', () => {
+    expect({
+      chatMode: featureFlags.chatMode,
+      hoverFollowMode: featureFlags.hoverFollowMode,
+      hideQuickEmoteBar: featureFlags.hideQuickEmoteBar,
+      showSubscriptions: featureFlags.showSubscriptions,
+      showGiftedSubs: featureFlags.showGiftedSubs,
+      showKicks: featureFlags.showKicks,
+      showPolls: featureFlags.showPolls,
+      showHostRaid: featureFlags.showHostRaid,
+      showModeChanges: featureFlags.showModeChanges,
+      autoTheater: featureFlags.autoTheater,
+      captionGuard: featureFlags.captionGuard,
+      rewindControls: featureFlags.rewindControls,
+      liveCatchup: featureFlags.liveCatchup,
+      qualityLock: featureFlags.qualityLock,
+      screenshot: featureFlags.screenshot,
+      speedControls: featureFlags.speedControls,
+      mentionHighlightEnabled: featureFlags.mentionHighlightEnabled,
+      mentionHighlightStyle: featureFlags.mentionHighlightStyle,
+      mentionHighlightColor: featureFlags.mentionHighlightColor,
+      roleHighlightStyle: featureFlags.roleHighlightStyle,
+      modFrameEnabled: featureFlags.modFrameEnabled,
+      modFrameColor: featureFlags.modFrameColor,
+      vipFrameEnabled: featureFlags.vipFrameEnabled,
+      vipFrameColor: featureFlags.vipFrameColor,
+      manualUsername: featureFlags.manualUsername,
+    }).toEqual({
+      chatMode: 'native',
+      hoverFollowMode: 'browser-smooth',
+      hideQuickEmoteBar: true,
+      showSubscriptions: true,
+      showGiftedSubs: true,
+      showKicks: true,
+      showPolls: true,
+      showHostRaid: true,
+      showModeChanges: true,
+      autoTheater: false,
+      captionGuard: true,
+      rewindControls: true,
+      liveCatchup: true,
+      qualityLock: true,
+      screenshot: true,
+      speedControls: true,
+      mentionHighlightEnabled: true,
+      mentionHighlightStyle: 'both',
+      mentionHighlightColor: '#FFC94D',
+      roleHighlightStyle: 'frame',
+      modFrameEnabled: true,
+      modFrameColor: '#14B8A6',
+      vipFrameEnabled: true,
+      vipFrameColor: '#EC4899',
+      manualUsername: '',
+    });
   });
 });

@@ -3,13 +3,17 @@ import {
   attachScrollFollowHover,
   MAX_NON_PRESERVED_NODES,
   MAX_NON_PRESERVED_NODES_PAUSED,
+  READER_SCROLL_EVENT,
   ScrollFollowController,
+  USER_SCROLL_INPUT_WINDOW_MS,
   decideScrollFollow,
   isNearBottom,
   trimMessageWindow,
 } from '../../src/content/chat/dom-window';
 import { MESSAGE_CLASS, PRESERVED_CLASS } from '../../src/content/chat/message-view';
 import { ChatDomRegistry } from '../../src/content/chat/message-store';
+import { jumpToMessage } from '../../src/content/chat/message-jump';
+import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
 
 function buildContainer(nonPreservedCount: number, preservedCount = 0): HTMLElement {
   const container = document.createElement('div');
@@ -48,6 +52,11 @@ function mockScrollMetrics(container: HTMLElement, initial: ScrollMetrics): Scro
   return metrics;
 }
 
+/** A reader's key press: an upward offset change only pauses following after real input. */
+function userKey(): void {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp' }));
+}
+
 describe('isNearBottom', () => {
   it('treats an empty, non-overflowing list as pinned', () => {
     const container = document.createElement('div');
@@ -58,6 +67,98 @@ describe('isNearBottom', () => {
 });
 
 describe('ScrollFollowController', () => {
+  it('lands the first nonempty viewport immediately before honoring smooth follow', () => {
+    const container = buildContainer(0);
+    const metrics = mockScrollMetrics(container, { scrollHeight: 250, clientHeight: 250, scrollTop: 0 });
+    const scrollTo = vi.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: scrollTo });
+    const controller = new ScrollFollowController(container, { createResizeObserver: () => null });
+
+    controller.scrollToBottom(); // Empty hover-idle follow must not consume startup.
+    container.append(buildContainer(1).firstElementChild!);
+    metrics.scrollHeight = 1_000;
+    controller.scrollToBottom('smooth');
+    expect(metrics.scrollTop).toBe(750);
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    metrics.scrollHeight = 1_300;
+    controller.scrollToBottom('smooth');
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1_300, behavior: 'smooth' });
+    controller.dispose();
+  });
+
+  it('waits for a nonzero viewport to consume the first content landing', () => {
+    const container = buildContainer(1);
+    const metrics = mockScrollMetrics(container, { scrollHeight: 0, clientHeight: 0, scrollTop: 0 });
+    let notifyResize: (() => void) | undefined;
+    const scrollTo = vi.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: scrollTo });
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: (callback) => {
+        notifyResize = callback;
+        return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+      },
+      getScrollFollowBehavior: () => 'smooth',
+    });
+    controller.observeRows(Array.from(container.children) as HTMLElement[]);
+    controller.scrollToBottom();
+    notifyResize?.();
+    scrollTo.mockClear();
+
+    metrics.clientHeight = 250;
+    metrics.scrollHeight = 1_000;
+    notifyResize?.();
+    expect(metrics.scrollTop).toBe(750);
+    expect(scrollTo).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  it('lands a replacement content window immediately but preserves smooth follow through trims', () => {
+    const container = buildContainer(2);
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 0 });
+    const scrollTo = vi.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: scrollTo });
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: () => ({ observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() }),
+    });
+    controller.observeRows(Array.from(container.children) as HTMLElement[]);
+    controller.scrollToBottom('smooth');
+
+    container.firstElementChild!.remove();
+    const retainedAppend = buildContainer(1).firstElementChild as HTMLElement;
+    container.append(retainedAppend);
+    controller.observeRows([retainedAppend]);
+    controller.scrollToBottom('smooth');
+    expect(scrollTo).toHaveBeenCalledOnce();
+    scrollTo.mockClear();
+
+    container.replaceChildren();
+    const resetRow = buildContainer(1).firstElementChild as HTMLElement;
+    container.append(resetRow);
+    metrics.scrollHeight = 1_300;
+    controller.observeRows([resetRow]);
+    controller.scrollToBottom('smooth');
+    expect(metrics.scrollTop).toBe(1_050);
+    expect(scrollTo).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  it('gives a remounted controller its own instant landing on existing content', () => {
+    const container = buildContainer(1);
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 0 });
+    const scrollTo = vi.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: scrollTo });
+    const first = new ScrollFollowController(container, { createResizeObserver: () => null });
+    first.scrollToBottom('smooth');
+    first.dispose();
+    metrics.scrollTop = 0;
+    const second = new ScrollFollowController(container, { createResizeObserver: () => null });
+    second.scrollToBottom('smooth');
+    expect(metrics.scrollTop).toBe(750);
+    expect(scrollTo).not.toHaveBeenCalled();
+    second.dispose();
+  });
+
   it('stays pinned through rapid initial growth and an intermediate non-user scroll event', () => {
     const container = document.createElement('div');
     const metrics = mockScrollMetrics(container, { scrollHeight: 300, clientHeight: 300, scrollTop: 0 });
@@ -87,6 +188,7 @@ describe('ScrollFollowController', () => {
     container.dispatchEvent(new Event('scroll'));
     expect(controller.isPinned).toBe(true);
 
+    userKey();
     metrics.scrollTop = 300;
     container.dispatchEvent(new Event('scroll'));
     expect(controller.isPinned).toBe(false);
@@ -106,6 +208,7 @@ describe('ScrollFollowController', () => {
     const controller = new ScrollFollowController(container, { createResizeObserver: () => null });
 
     controller.scrollToBottom();
+    userKey();
     metrics.scrollTop = 200;
     container.dispatchEvent(new Event('scroll'));
 
@@ -113,15 +216,120 @@ describe('ScrollFollowController', () => {
     controller.dispose();
   });
 
-  it('recognizes an upward scrollbar drag from the scrollTop direction alone', () => {
+  it('recognizes an upward scrollbar drag from the press and the scrollTop direction', () => {
+    const container = document.createElement('div');
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: () => null,
+      scheduleFrame: (callback) => { callback(0); return 1; },
+    });
+
+    // A scrollbar press reaches the list as pointerdown; the drag itself only moves scrollTop.
+    container.dispatchEvent(new MouseEvent('pointerdown', { button: 0 }));
+    metrics.scrollTop = 400;
+    container.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('pointerup'));
+
+    expect(controller.isPinned).toBe(false);
+    expect(metrics.scrollTop).toBe(400);
+    controller.dispose();
+  });
+
+  it('keeps following when its own row removal moves the offset up and nobody gave input', () => {
+    // Geometry captured in the 2026-11-10 long soak: 13 expired preserved rows were removed above
+    // a pinned list; scroll anchoring moved the offset 537 px up and left it 65 px from the
+    // bottom, which the old handler read as the reader scrolling up. It stayed paused (650 rows).
+    const container = document.createElement('div');
+    const metrics = mockScrollMetrics(container, { scrollHeight: 9_086, clientHeight: 568, scrollTop: 0 });
+    const pinnedChanges: boolean[] = [];
+    const controller = new ScrollFollowController(container, {
+      createResizeObserver: () => null,
+      onPinnedChange: (pinned) => pinnedChanges.push(pinned),
+    });
+    controller.scrollToBottom();
+    expect(metrics.scrollTop).toBe(8_518);
+
+    metrics.scrollHeight = 8_614;
+    metrics.scrollTop = 7_981;
+    container.dispatchEvent(new Event('scroll'));
+
+    expect(controller.isPinned).toBe(true);
+    expect(pinnedChanges).toEqual([]);
+    expect(metrics.scrollTop).toBe(8_046);
+    expect(decideScrollFollow(controller.isPinned, 3).showPill).toBe(false);
+    controller.dispose();
+  });
+
+  it('counts an upward offset change as the reader only within the input window', () => {
+    let now = 10_000;
+    const container = document.createElement('div');
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
+    const controller = new ScrollFollowController(container, { createResizeObserver: () => null, now: () => now });
+    controller.scrollToBottom();
+
+    userKey();
+    now += USER_SCROLL_INPUT_WINDOW_MS + 1;
+    metrics.scrollTop = 400;
+    container.dispatchEvent(new Event('scroll'));
+    expect(controller.isPinned).toBe(true);
+    expect(metrics.scrollTop).toBe(750);
+
+    userKey();
+    now += USER_SCROLL_INPUT_WINDOW_MS - 1;
+    metrics.scrollTop = 400;
+    container.dispatchEvent(new Event('scroll'));
+    expect(controller.isPinned).toBe(false);
+    controller.dispose();
+  });
+
+  it('keeps a jump the reader asked for from outside the list (user card, removed panel)', () => {
+    // 2026-11-16: jumpToMessage scrolls the own list from a click outside it; without this signal the
+    // upward move had no input and the pinned list snapped straight back to the bottom.
+    let now = 0;
+    const container = document.createElement('div');
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
+    const controller = new ScrollFollowController(container, { createResizeObserver: () => null, now: () => now });
+    controller.scrollToBottom();
+
+    container.dispatchEvent(new Event(READER_SCROLL_EVENT));
+    now += 300;
+    metrics.scrollTop = 200;
+    container.dispatchEvent(new Event('scroll'));
+    expect(controller.isPinned).toBe(false);
+    expect(metrics.scrollTop).toBe(200);
+    controller.dispose();
+  });
+
+  it('treats middle-button autoscroll as reader input until the next press', () => {
+    let now = 0;
+    const container = document.createElement('div');
+    const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
+    const controller = new ScrollFollowController(container, { createResizeObserver: () => null, now: () => now });
+    controller.scrollToBottom();
+
+    container.dispatchEvent(new MouseEvent('pointerdown', { button: 1 }));
+    now += 10_000;
+    metrics.scrollTop = 500;
+    container.dispatchEvent(new Event('scroll'));
+    expect(controller.isPinned).toBe(false);
+    controller.dispose();
+  });
+
+  it('does not read the offset before a trim when nobody gave input', () => {
     const container = document.createElement('div');
     const metrics = mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
     const controller = new ScrollFollowController(container, { createResizeObserver: () => null });
-
-    metrics.scrollTop = 400;
-    container.dispatchEvent(new Event('scroll'));
-
-    expect(controller.isPinned).toBe(false);
+    controller.scrollToBottom();
+    let reads = 0;
+    const base = Object.getOwnPropertyDescriptor(container, 'scrollTop')!;
+    Object.defineProperty(container, 'scrollTop', {
+      configurable: true,
+      get: () => { reads++; return base.get!.call(container); },
+      set: (value: number) => base.set!.call(container, value),
+    });
+    let readsBeforeMutate = -1;
+    controller.preserveScrollIntent(() => { readsBeforeMutate = reads; metrics.scrollHeight = 1_100; });
+    expect(readsBeforeMutate).toBe(0);
     controller.dispose();
   });
 
@@ -167,6 +375,7 @@ describe('ScrollFollowController', () => {
       cancelFrame: vi.fn(),
     });
     controller.observeRows([row]);
+    controller.scrollToBottom();
 
     metrics.scrollHeight = 1_300;
     notifyResize?.();
@@ -194,6 +403,8 @@ describe('ScrollFollowController', () => {
     });
     controller.observeRows([row]);
 
+    controller.scrollToBottom();
+    metrics.scrollTop = 500;
     controller.scrollToBottom('smooth');
     notifyResize?.();
 
@@ -227,6 +438,8 @@ describe('ScrollFollowController', () => {
     });
     controller.observeRows([row]);
 
+    controller.scrollToBottom();
+    metrics.scrollTop = 500;
     controller.scrollToBottom('smooth');
     metrics.scrollHeight = 1_300;
     notifyResize?.();
@@ -256,6 +469,8 @@ describe('ScrollFollowController', () => {
     });
     controller.observeRows([row]);
 
+    controller.scrollToBottom();
+    metrics.scrollTop = 500;
     controller.scrollToBottom('smooth');
     behavior = 'auto';
     notifyResize?.();
@@ -278,6 +493,7 @@ describe('ScrollFollowController', () => {
       },
     });
     controller.observeRows([row]);
+    userKey();
     metrics.scrollTop = 300;
     container.dispatchEvent(new Event('scroll'));
 
@@ -296,6 +512,7 @@ describe('ScrollFollowController', () => {
     const first = new ScrollFollowController(firstContainer, {
       createResizeObserver: () => ({ observe: vi.fn(), unobserve: vi.fn(), disconnect }),
     });
+    userKey();
     firstMetrics.scrollTop = 300;
     firstContainer.dispatchEvent(new Event('scroll'));
     expect(first.isPinned).toBe(false);
@@ -375,13 +592,13 @@ describe('attachScrollFollowHover', () => {
       expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
       hit = second;
       second.style.transform = 'translateY(32px)';
-      await new Promise((resolve) => window.setTimeout(resolve, 30));
+      // The re-hit runs on an animation frame; a fixed 30 ms wait failed once on a loaded host
+      // (2026-11-11), so wait for the frame instead of for a guess at its timing.
+      await vi.waitFor(() => expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(true));
       expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(false);
-      expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(true);
       hit = first;
       container.dispatchEvent(new Event('scroll'));
-      await new Promise((resolve) => window.setTimeout(resolve, 30));
-      expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true);
+      await vi.waitFor(() => expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(true));
       expect(second.hasAttribute('data-kickflow-pointer-row')).toBe(false);
       container.dispatchEvent(new Event('pointerleave'));
       expect(first.hasAttribute('data-kickflow-pointer-row')).toBe(false);
@@ -422,9 +639,10 @@ describe('attachScrollFollowHover', () => {
       const hoveredDecision = hover.decide(1);
       hover.apply(hoveredDecision);
 
-      expect(hoveredDecision.scrollToBottom).toBe(true);
-      expect(hoveredDecision.scrollBehavior).toBe('smooth');
-      expect(smoothScroll).toHaveBeenCalledWith({ top: 1_000, behavior: 'smooth' });
+      expect(hoveredDecision.scrollToBottom).toBe(false);
+      expect(hoveredDecision.showPill).toBe(true);
+      expect(hoveredDecision.trimCap).toBe(MAX_NON_PRESERVED_NODES_PAUSED);
+      expect(smoothScroll).not.toHaveBeenCalled();
 
       container.dispatchEvent(new Event('pointerleave'));
       const restoredDecision = hover.decide(1);
@@ -444,7 +662,8 @@ describe('attachScrollFollowHover', () => {
     }
   });
 
-  it('reads getHoveredBehavior on each decide while hovered', () => {
+  it('resumes the selected hovered behavior after the aim hold expires', () => {
+    vi.useFakeTimers();
     const container = document.createElement('div');
     mockScrollMetrics(container, { scrollHeight: 1_000, clientHeight: 250, scrollTop: 750 });
     Object.defineProperty(container, 'scrollTo', {
@@ -465,20 +684,16 @@ describe('attachScrollFollowHover', () => {
 
     try {
       container.dispatchEvent(new Event('pointerenter'));
+      expect(hover.decide(1).scrollToBottom).toBe(false);
+      vi.advanceTimersByTime(2_001);
       expect(hover.decide(1).scrollBehavior).toBe('smooth');
       hoveredBehavior = 'auto';
       expect(hover.decide(1).scrollBehavior).toBe('auto');
     } finally {
       hover.dispose();
       controller.dispose();
+      vi.useRealTimers();
     }
-  });
-});
-
-describe('cap constants', () => {
-  it('MAX_NON_PRESERVED_NODES is 200 and MAX_NON_PRESERVED_NODES_PAUSED is 600', () => {
-    expect(MAX_NON_PRESERVED_NODES).toBe(200);
-    expect(MAX_NON_PRESERVED_NODES_PAUSED).toBe(600);
   });
 });
 
@@ -546,5 +761,19 @@ describe('trimMessageWindow', () => {
     trimMessageWindow(container, registry, 5);
 
     expect(forgetSpy).toHaveBeenCalledTimes(15);
+  });
+});
+
+describe('jumpToMessage', () => {
+  it('tells the own list that the reader asked for the scroll before it moves', () => {
+    const own = document.createElement('div'); own.id = OWN_LIST_ID;
+    const row = document.createElement('div'); row.dataset.messageId = 'm-1';
+    const order: string[] = [];
+    row.scrollIntoView = vi.fn(() => { order.push('scroll'); });
+    own.append(row); document.body.append(own);
+    own.addEventListener(READER_SCROLL_EVENT, () => order.push('reader'));
+    expect(jumpToMessage('m-1', document.createElement('span'))).toBe(true);
+    expect(order).toEqual(['reader', 'scroll']);
+    own.remove();
   });
 });

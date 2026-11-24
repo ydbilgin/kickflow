@@ -4,6 +4,7 @@ import { initRewindHotkeys, isTypingTarget } from '../../src/content/player/rewi
 import { resetHotkeyBindings, updateHotkeyBinding } from '../../src/content/player/hotkey-registry';
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { fakeTimeRanges } from '../helpers/timeRanges';
+import { initLiveCatchup } from '../../src/content/player/live-catchup';
 
 beforeEach(() => {
   resetHotkeyBindings();
@@ -27,6 +28,37 @@ function setupVideo(): HTMLVideoElement {
 }
 
 describe('rewind hotkeys', () => {
+  it.each(['same-media', 'emptied', 'loadstart'])('L then Left preserves the observed rewind window only for %s', (reset) => {
+    const video = setupVideo();
+    let time = 330;
+    let buffered = fakeTimeRanges([[320, 352]]);
+    Object.defineProperties(video, {
+      duration: { configurable: true, value: Infinity },
+      paused: { configurable: true, value: false },
+      buffered: { configurable: true, get: () => buffered },
+      currentTime: { configurable: true, get: () => time, set: (value: number) => {
+        time = value;
+        // IVS discards the previous decoded buffer on its jump to live.
+        if (value >= 351.5) buffered = fakeTimeRanges([[349.9, 352]]);
+      } },
+    });
+    const previous = featureFlags.liveCatchup;
+    featureFlags.liveCatchup = true;
+    const lifecycle = new Lifecycle();
+    try {
+      initLiveCatchup(lifecycle);
+      initRewindHotkeys(lifecycle);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', bubbles: true }));
+      expect(video.currentTime).toBeCloseTo(351.5, 8);
+      if (reset !== 'same-media') video.dispatchEvent(new Event(reset));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+      expect(video.currentTime).toBeCloseTo(reset === 'same-media' ? 341.5 : 349.9, 8);
+    } finally {
+      lifecycle.dispose();
+      featureFlags.liveCatchup = previous;
+    }
+  });
+
   it('handles Left-arrow before a competing Kick bubble listener can snap the player to stream start', () => {
     const video = setupVideo();
 

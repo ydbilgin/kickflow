@@ -24,6 +24,16 @@ afterEach(()=>{cancelLocalClip();document.body.replaceChildren();vi.useRealTimer
 it('local clip stops at 15 seconds and presents a preview before any download',()=>{expect(toggleLocalClip()).toBe(true);expect(active.state).toBe('recording');expect(document.querySelector('a[download]')).toBeNull();vi.advanceTimersByTime(15000);expect(active.state).toBe('inactive');expect(trackStop).toHaveBeenCalledOnce();expect(document.querySelector('.kickflow-clip-preview video')).not.toBeNull();expect(document.querySelector('a[download]')?.getAttribute('download')).toMatch(/\.webm$/);});
 it('second press stops early and creates one preview',()=>{toggleLocalClip();vi.advanceTimersByTime(1000);toggleLocalClip();expect(document.querySelectorAll('.kickflow-clip-preview')).toHaveLength(1);});
 it('capture cancellation on navigation discards data and releases tracks',()=>{toggleLocalClip();cancelLocalClip();vi.advanceTimersByTime(15000);expect(trackStop).toHaveBeenCalledOnce();expect(document.querySelector('.kickflow-clip-preview')).toBeNull();});
+it('a queued error from a cancelled recorder cannot stop the next recording',()=>{
+ toggleLocalClip();const previous=active;cancelLocalClip();
+ toggleLocalClip();const current=active;
+ previous.onerror?.();
+ expect(current.state).toBe('recording');
+ expect(trackStop).toHaveBeenCalledTimes(1);
+ vi.advanceTimersByTime(15000);
+ expect(current.state).toBe('inactive');
+ expect(document.querySelector('.kickflow-clip-preview video')).not.toBeNull();
+});
 it('closing a preview revokes its object URL',()=>{toggleLocalClip();toggleLocalClip();closeClipPreview();expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:local-preview');});
 it('unsupported recorder produces visible feedback',()=>{vi.stubGlobal('MediaRecorder',undefined);expect(toggleLocalClip()).toBe(false);expect(document.querySelector('[role=status]')?.textContent).toContain('unavailable');});
 it('undecoded or paused playback does not start recording',()=>{Object.defineProperty(document.querySelector('video'),'paused',{value:true});expect(toggleLocalClip()).toBe(false);expect(document.querySelector('[role=status]')).not.toBeNull();});

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-18",
   "source": "https://kick.com/absi",
-  "evidence": "Measured live scroll geometry; public synthetic reproduction is tests/chat/live-scroll.regression.test.ts.",
+  "evidence": "live scroll reproduction, 2026-10-18",
   "description": "Busy own-list chat with official emotes and Kicks gifts. Names and message identifiers below are invented. Layout metrics and wheel delta were measured on the live page.",
   "scroll": { "scrollHeight": 2471, "clientHeight": 574, "scrollTop": 1897 },
   "wheelDeltaY": -650,

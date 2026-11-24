@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBadges, appendParsedContent, applyPreservedMarking, buildMessageElement, setSubscriberBadges } from '../../src/content/chat/message-view';
 import { ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 import { OWN_LIST_ID } from '../../src/content/chat/overlay-mount';
+import { resetNativeThreadState } from '../../src/content/chat/native-thread';
 import { normalizeMessage } from '../../src/content/chat/pusher-client';
 import { configureUserCardSession } from '../../src/content/chat/user-card';
+import * as userCardModule from '../../src/content/chat/user-card';
 import { configureUserMessageArchive } from '../../src/content/chat/archive-session';
 import { UserMessageArchive } from '../../src/content/chat/user-message-archive';
 import {
@@ -13,7 +15,7 @@ import {
 } from '../../src/content/shared/hover-tooltip';
 import { setLang } from '../../src/content/shared/i18n';
 
-beforeEach(() => setLang('tr'));
+beforeEach(() => { setLang('tr'); resetNativeThreadState(); });
 
 function message(
   slug: string,
@@ -60,6 +62,111 @@ describe('message-view safe rendering', () => {
         hour: '2-digit',
         minute: '2-digit',
       }));
+  });
+
+  it('routes an own-row emote click to the same mounted native message and emote', () => {
+    const native = document.createElement('div');
+    native.id = 'chatroom-messages';
+    native.innerHTML = '<div data-kickflow-mid="m1"><span data-emote-id="123"><div><img id="native-match"></div></span><span data-emote-id="456"><div><img id="native-other"></div></span></div><div data-kickflow-mid="m2"><span data-emote-id="123"><div><img id="wrong-row"></div></span></div>';
+    document.body.append(native);
+    const match = native.querySelector<HTMLElement>('#native-match')!;
+    const other = native.querySelector<HTMLElement>('#native-other')!;
+    const wrong = native.querySelector<HTMLElement>('#wrong-row')!;
+    const onMatch = vi.fn();
+    const onOther = vi.fn();
+    const onWrong = vi.fn();
+    match.addEventListener('click', onMatch);
+    other.addEventListener('click', onOther);
+    wrong.addEventListener('click', onWrong);
+    const row = buildMessageElement(message('alice', undefined, { content: '[emote:123:KEKW]' }));
+    document.body.append(row);
+
+    row.querySelector<HTMLImageElement>('.kickflow-emote')!.click();
+
+    expect(onMatch).toHaveBeenCalledOnce();
+    expect(onOther).not.toHaveBeenCalled();
+    expect(onWrong).not.toHaveBeenCalled();
+  });
+
+  it('does not invent a native emote action when the corresponding row has been virtualized', () => {
+    const native = document.createElement('div');
+    native.id = 'chatroom-messages';
+    native.innerHTML = '<div data-kickflow-mid="m2"><div data-emote-id="123"><img></div></div>';
+    document.body.append(native);
+    const onOtherRow = vi.fn();
+    native.querySelector('img')!.addEventListener('click', onOtherRow);
+    const row = buildMessageElement(message('alice', undefined, { content: '[emote:123:KEKW]' }));
+    document.body.append(row);
+
+    row.querySelector<HTMLImageElement>('.kickflow-emote')!.click();
+
+    expect(onOtherRow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ type: 'subscriber', count: 8 }, '<div data-testid="identity-badge-subscriber"><div><img></div></div>'],
+    [{ type: 'level', level: 28, imageUrl: 'https://files.kick.com/level.png' }, '<div><svg data-ds-icon="Level28"></svg></div>'],
+    [{ type: 'sub_gifter', count: 25 }, '<div data-testid="identity-badge-sub_gifter"><div><svg></svg></div></div>'],
+  ])('forwards the exact mounted native badge action for %j', (badge, nativeBadge) => {
+    const native = document.createElement('div'); native.id = 'chatroom-messages';
+    native.innerHTML = `<div data-kickflow-mid="m1">${nativeBadge}</div><div data-kickflow-mid="other">${nativeBadge}</div>`;
+    document.body.append(native);
+    const matched = vi.fn(); const other = vi.fn();
+    native.firstElementChild!.addEventListener('click', matched);
+    native.lastElementChild!.addEventListener('click', other);
+    const row = buildMessageElement(message('alice', {badges:[badge]})); document.body.append(row);
+    (row.querySelector('.kickflow-message__badges')!.firstElementChild as HTMLElement).click();
+    expect(matched).toHaveBeenCalledOnce(); expect(other).not.toHaveBeenCalled();
+    expect(document.querySelector('.kickflow-user-card')).toBeNull();
+  });
+
+  it('retains the authoritative gift count on the gifter badge', () => {
+    const parent = document.createElement('span'); appendBadges(parent, [{type:'sub_gifter',count:25}]);
+    expect(parent.firstElementChild?.getAttribute('alt')).toBe('Hediye Aboneliği (25)');
+    expect(parent.firstElementChild?.getAttribute(HOVER_TOOLTIP_ATTRIBUTE)).toBe('Hediye Aboneliği (25)');
+  });
+
+  // Until 2026-11-12 the quoted line opened Kick's thread whenever the reply's native row was
+  // mounted, and jumped only otherwise ("sometimes Yan Sohbet"). T1: it always jumps when it can.
+  it.each(['click', 'Enter', ' '])('jumps instead of opening the native reply thread with %s (T1)', (gesture) => {
+    const own = document.createElement('div'); own.id = OWN_LIST_ID;
+    const original = document.createElement('div'); original.dataset.messageId = 'parent';
+    const scrollIntoView = vi.fn(); original.scrollIntoView = scrollIntoView; own.append(original);
+    document.body.append(own);
+    const native = document.createElement('div'); native.id='chatroom-messages';
+    native.innerHTML='<div data-kickflow-mid="m1"><button id="native-thread"><svg data-ds-icon="ArrowCurveLeft"></svg></button><button id="native-name" title="Alice">Alice</button></div><div data-kickflow-mid="other"><button id="wrong-thread"><svg data-ds-icon="ArrowCurveLeft"></svg></button></div>';
+    document.body.append(native);
+    const thread=vi.fn(); const wrong=vi.fn(); const name=vi.fn();
+    native.querySelector('#native-thread')!.addEventListener('click',thread);
+    native.querySelector('#wrong-thread')!.addEventListener('click',wrong);
+    native.querySelector('#native-name')!.addEventListener('click',name);
+    const row=buildMessageElement(message('alice',undefined,{type:'reply',replyContext:{replyToMessageId:'parent',replyToUser:'Bob',replyToText:'Original'}}));
+    document.body.append(row); const preview=row.querySelector<HTMLElement>('.kickflow-message__reply-context')!;
+    if(gesture==='click')preview.click();else preview.dispatchEvent(new KeyboardEvent('keydown',{key:gesture,bubbles:true,cancelable:true}));
+    expect(scrollIntoView).toHaveBeenCalledOnce();
+    expect(thread).not.toHaveBeenCalled(); expect(wrong).not.toHaveBeenCalled(); expect(name).not.toHaveBeenCalled();
+  });
+
+  it('opens the matching native reply thread when the original left the list (T2)', () => {
+    const native = document.createElement('div'); native.id='chatroom-messages';
+    native.innerHTML='<div data-kickflow-mid="m1"><button id="native-thread"><svg data-ds-icon="ArrowCurveLeft"></svg></button></div><div data-kickflow-mid="other"><button id="wrong-thread"><svg data-ds-icon="ArrowCurveLeft"></svg></button></div>';
+    document.body.append(native);
+    const thread=vi.fn(); const wrong=vi.fn();
+    native.querySelector('#native-thread')!.addEventListener('click',thread);
+    native.querySelector('#wrong-thread')!.addEventListener('click',wrong);
+    const row=buildMessageElement(message('alice',undefined,{type:'reply',replyContext:{replyToMessageId:'parent',replyToUser:'Bob',replyToText:'Original'}}));
+    document.body.append(row);
+    row.querySelector<HTMLElement>('.kickflow-message__reply-context')!.click();
+    expect(thread).toHaveBeenCalledOnce(); expect(wrong).not.toHaveBeenCalled();
+  });
+
+  it.each(['click','Enter'])('keeps canonical username separate from profile slug and display name with %s', gesture => {
+    const open=vi.spyOn(userCardModule,'openUserCard').mockResolvedValue(undefined);
+    const data=message('public-profile');data.sender.username='native_account';data.sender.displayName='Pretty Name';
+    const row=buildMessageElement(data);const name=row.querySelector<HTMLElement>('.kickflow-message__username')!;
+    if(gesture==='click')name.click();else name.dispatchEvent(new KeyboardEvent('keydown',{key:gesture,bubbles:true,cancelable:true}));
+    expect(name.textContent).toBe('Pretty Name');
+    expect(open).toHaveBeenCalledWith('public-profile','Pretty Name',expect.any(Number),expect.any(Number),1,'native_account');
   });
 
   it('renders parsed emotes, mentions, links, and script-looking text safely', () => {
@@ -499,6 +606,26 @@ describe('message-view safe rendering', () => {
     });
   });
 
+  it.each([1, 2])('opens Removed exactly once from the moderation icon for count %s', count => {
+    const openPanel = vi.fn();
+    const jump = vi.fn();
+    const row = buildMessageElement(message('', undefined, {
+      id: 'mod-action:icon', type: 'mod-action',
+      systemEvent: { kind: 'mod-action', actionKind: 'ban', moderator: null,
+        durationMin: null, count, victims: [{name: 'target', messageId: 'retained'}] },
+    }), { onOpenRemovedPanel: openPanel, onJumpToMessage: jump });
+    document.body.append(row);
+    const icon = row.querySelector<HTMLElement>('[data-kickflow-role="action-kind"]')!;
+    expect(icon.tagName).toBe('BUTTON');
+    expect(icon.getAttribute('type')).toBe('button');
+    expect(icon.getAttribute('aria-hidden')).toBeNull();
+    expect(icon.getAttribute('aria-label')).toBeTruthy();
+    icon.querySelector('path')!.dispatchEvent(new MouseEvent('click', {bubbles:true, button:0}));
+    expect(openPanel).toHaveBeenCalledTimes(1);
+    expect(jump).not.toHaveBeenCalled();
+    row.remove();
+  });
+
   it('keeps only the bulk row background as a Removed-panel fallback and excludes nested controls', () => {
     setLang('en');
     const jump = vi.fn();
@@ -744,6 +871,27 @@ describe('message-view safe rendering', () => {
     expect(row.textContent).toBe('gifter 20 kişiye abonelik hediye etti: one, two, three, four, five ve 15 kişi daha');
   });
 
+  it.each(['gift', 'moderation'] as const)('expands %s names only once when an unknown remainder stays mounted', (kind) => {
+    const names = ['one', 'two', 'three', 'four', 'five'];
+    const systemEvent: ChatMessage['systemEvent'] = kind === 'gift'
+      ? { kind: 'gifted-subscription', username: 'gifter', giftCount: 20, giftedUsernames: names }
+      : { kind: 'mod-action', actionKind: 'ban', moderator: 'mod', durationMin: null,
+        count: 20, victims: names.map(name => ({ name, messageId: null })) };
+    const row = buildMessageElement(message('', undefined, { systemEvent }));
+    const more = row.querySelector<HTMLElement>('.kickflow-event-row__more')!;
+    more.click();
+    expect(row.contains(more)).toBe(true);
+    expect(more.hasAttribute('role')).toBe(false);
+    const expanded = row.textContent;
+
+    more.click();
+    more.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(row.textContent).toBe(expanded);
+    expect(row.querySelectorAll(kind === 'gift' ? '.kickflow-event-row__recipient' : '.kickflow-event-row__victim'))
+      .toHaveLength(names.length);
+  });
+
   it('never shows a number that contradicts the visible names when count and names disagree', () => {
     // Kick's total ahead of the names: headline keeps the total, remainder = total - shown,
     // and no hover list exists because no known name is hidden.
@@ -895,6 +1043,20 @@ describe('message-view safe rendering', () => {
     expect(row.querySelector('.kickflow-event-row__icon')?.querySelector('svg')).not.toBeNull();
     expect(row.querySelector('.kickflow-event-row__text')?.textContent).toBe(unsafeText);
     expect(row.querySelector('script')).toBeNull();
+  });
+
+  it('colours an @mention with the mentioned chatter\'s own name colour, else a stable palette colour', async () => {
+    const { rememberChatIdentityColor } = await import('../../src/content/chat/message-store');
+    rememberChatIdentityColor({ id: 7, username: 'FpsBro', slug: 'fpsbro', identity: { color: '#60A5FA', badges: [], badgesV2: [] } });
+    const parent = document.createElement('span');
+    appendParsedContent(parent, '@fpsbro yo @neverSeen99');
+    const [seen, unseen] = [...parent.querySelectorAll<HTMLElement>('.kickflow-mention')];
+    expect(seen?.style.getPropertyValue('--kf-mention-color')).toBe('#60A5FA');
+    const fallback = unseen?.style.getPropertyValue('--kf-mention-color');
+    expect(fallback).toMatch(/^#[0-9A-F]{6}$/);
+    const again = document.createElement('span');
+    appendParsedContent(again, '@neverSeen99');
+    expect(again.querySelector<HTMLElement>('.kickflow-mention')?.style.getPropertyValue('--kf-mention-color')).toBe(fallback);
   });
 
   it('opens a mention slug in a new tab on middle-click without adding a same-origin anchor', () => {
@@ -1092,14 +1254,17 @@ describe('message-view safe rendering', () => {
     expect(() => reply?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))).not.toThrow();
   });
 
-  it('leaves a reply without an original id non-interactive', () => {
+  it('keeps a reply without an original id interactive: it takes the miss path (T1/T2)', () => {
     const row = buildMessageElement(message('alice_123', undefined, {
       replyContext: { replyToUser: 'Legacy_User', replyToText: 'old payload', replyToMessageId: null },
     }));
-    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context');
+    document.body.append(row);
+    const reply = row.querySelector<HTMLElement>('.kickflow-message__reply-context')!;
 
-    expect(reply?.hasAttribute('role')).toBe(false);
-    expect(reply?.hasAttribute('tabindex')).toBe(false);
+    expect(reply.getAttribute('role')).toBe('button');
+    expect(reply.tabIndex).toBe(0);
+    reply.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    expect(reply.classList.contains('kickflow-message__reply-context--miss')).toBe(true);
   });
 
   it('renders an emote inside a reply snippet with its plain delegated label', () => {

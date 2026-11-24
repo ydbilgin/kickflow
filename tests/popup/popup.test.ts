@@ -33,6 +33,7 @@ const statusResponse = {
     rewindControls: true,
     liveCatchup: true,
     qualityLock: true,
+    qualityAlwaysBest: true,
     screenshot: true,
     speedControls: true,
     autoClaimDrops: true,
@@ -277,6 +278,7 @@ describe('popup event display toggles', () => {
       ['t-rewind-controls', 'rewindControls'],
       ['t-live-catchup', 'liveCatchup'],
       ['t-quality-lock', 'qualityLock'],
+      ['t-quality-always-best', 'qualityAlwaysBest'],
       ['t-screenshot', 'screenshot'],
       ['t-speed-controls', 'speedControls'],
     ] as const) {
@@ -346,5 +348,59 @@ describe('popup event display toggles', () => {
       patch: { key: 'p' },
     });
     expect(document.getElementById('hotkey-status')?.textContent).toBe('Kısayol kaydedildi.');
+  });
+});
+
+describe('popup language (?lang=tr shows it in Turkish; without it the popup stays English)', () => {
+  // English words that must not stay on the Turkish popup (usability word list, 2026-11-16).
+  const ENGLISH_LEFTOVERS = /\b(Chat|Chatroom|Hover|Current|Instant|Native|native|own chat|Pusher|Ghost|evict|inline|Reading status|Connection|settings|enabled|disabled|Debug)\b/;
+  const visibleText = (): string => [
+    ...Array.from(document.querySelectorAll<HTMLElement>('body *:not(script):not(style):not(option)'), (el) =>
+      Array.from(el.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent ?? '').join(' ')),
+    ...Array.from(document.querySelectorAll('option'), (el) => el.textContent ?? ''),
+  ].join('\n');
+
+  afterEach(() => { window.history.replaceState(null, '', '/'); });
+
+  it('has no English line left with lang=tr, also for the status line in both chat modes', async () => {
+    window.history.replaceState(null, '', '/popup.html?lang=tr');
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+    expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · KickFlow listesi');
+    expect(visibleText()).not.toMatch(ENGLISH_LEFTOVERS);
+    sendMessage.mockImplementation(async (_id, message) => message.type === 'kickflow:getStatus'
+      ? { ...statusResponse, flags: { ...statusResponse.flags, chatMode: 'native' } } : { ok: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushAsyncWork();
+    expect(document.getElementById('reason')?.textContent).toBe('KickFlow aktif · Kick sohbeti');
+    expect(visibleText()).not.toMatch(ENGLISH_LEFTOVERS);
+  });
+
+  it('shows the English status line of the page in Turkish with lang=tr, and leaves it English without lang', async () => {
+    sendMessage.mockImplementation(async (_id, message) => message.type === 'kickflow:getStatus'
+      ? { ...statusResponse, active: false, reason: 'waiting for chat panel…' } : { ok: true });
+    window.history.replaceState(null, '', '/popup.html?lang=tr');
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+    expect(document.getElementById('reason')?.textContent).toBe('sohbet paneli bekleniyor…');
+    vi.resetModules();
+    loadPopupMarkup();
+    vi.mocked(chrome.storage.local.get).mockImplementation(async () => ({}));
+    window.history.replaceState(null, '', '/popup.html');
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+    expect(document.getElementById('reason')?.textContent).toBe('waiting for chat panel…');
+  });
+
+  it('stays English without lang', async () => {
+    vi.mocked(chrome.storage.local.get).mockImplementation(async () => ({}));
+    await import('../../src/popup/popup');
+    await flushAsyncWork();
+    expect(document.getElementById('reason')?.textContent).toBe('KickFlow active · KickFlow list');
+    expect(Array.from(document.querySelectorAll('#t-hover-follow-mode option'), (o) => o.textContent))
+      .toEqual(['Smooth', 'Instant']);
+    expect(Array.from(document.querySelectorAll('#t-chat-mode option'), (o) => o.textContent)).toEqual(['Kick chat', 'KickFlow list']);
+    expect(document.querySelector('.hover-follow-copy strong')?.textContent).toBe('Scrolling under the pointer');
+    expect(document.getElementById('chatroomId')?.parentElement?.querySelector('.k')?.textContent).toBe('Chatroom ID');
   });
 });

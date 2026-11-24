@@ -6,7 +6,7 @@ import {
   trimMessageWindow,
 } from '../../src/content/chat/dom-window';
 import { HoverReleaseMeter } from '../../src/content/chat/hover-meter';
-import { RenderQueue } from '../../src/content/chat/render-queue';
+import { HIDDEN_BACKLOG_ROWS, RenderQueue } from '../../src/content/chat/render-queue';
 import { ChatDomRegistry, ChatIntegrityStore, type ChatMessage } from '../../src/content/chat/message-store';
 
 function message(id: string): ChatMessage {
@@ -34,6 +34,22 @@ afterEach(() => {
 });
 
 describe('RenderQueue', () => {
+  it('wires the production reply action through a queued live row and a reconnect batch', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const container = document.createElement('div'); document.body.append(container);
+    const onReply = vi.fn();
+    const queue = new RenderQueue({ getContainer: () => container, registry: new ChatDomRegistry(), onReply });
+    try {
+      queue.enqueue(message('before-reconnect')); queue.flushPending();
+      queue.enqueue(message('after-reconnect')); queue.flushPending();
+      const buttons = container.querySelectorAll<HTMLButtonElement>('.kickflow-message__reply-action');
+      expect(buttons).toHaveLength(2);
+      buttons[0].click(); buttons[1].click();
+      expect(onReply.mock.calls.map(call => call[0].id)).toEqual(['before-reconnect', 'after-reconnect']);
+    } finally { queue.dispose(); }
+  });
+
   it('commits an ordered live batch once and keeps existing row identity and listeners', () => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
@@ -164,7 +180,7 @@ describe('RenderQueue', () => {
     queue.dispose();
   });
 
-  it('meters and flushes the own-list backlog through the existing pointer hooks', () => {
+  it('meters after the aim hold and flushes the own-list backlog on pointer leave', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -174,10 +190,17 @@ describe('RenderQueue', () => {
     const ownList = document.createElement('div');
     ownList.id = 'kickflow-message-list';
     document.body.append(ownList);
-    const follow = new ScrollFollowController(ownList, { createResizeObserver: () => null });
     const meter = new HoverReleaseMeter();
     let queue: RenderQueue | null = null;
-    const hover = attachScrollFollowHover(ownList, follow, {
+    let hover: ReturnType<typeof attachScrollFollowHover> | null = null;
+    const follow = new ScrollFollowController(ownList, {
+      createResizeObserver: () => null,
+      onPinnedChange: pinned => {
+        meter.setMetered((hover?.isHovered ?? false) && pinned);
+        queue?.wake();
+      },
+    });
+    hover = attachScrollFollowHover(ownList, follow, {
       onHoverChange: (hovered) => {
         meter.setMetered(hovered && follow.isPinned);
         queue?.wake();
@@ -195,6 +218,9 @@ describe('RenderQueue', () => {
 
     try {
       ownList.dispatchEvent(new Event('pointerenter'));
+      expect(follow.isPinned).toBe(false);
+      vi.advanceTimersByTime(2_000);
+      expect(follow.isPinned).toBe(true);
       for (const id of ['own-1', 'own-2']) {
         visibleIds.add(id);
         queue.enqueue(message(id));
@@ -300,6 +326,43 @@ describe('RenderQueue', () => {
     queue.dispose();
   });
 
+  it('releases evicted message references while the guarded mount remains unavailable', () => {
+    // Only the timers this queue uses are faked. With vitest's full fake-timer set, jsdom row
+    // building took ~56 ms per row (measured 2026-11-11) and the 800-row recovery took 20-28 s,
+    // which was this test's long-standing timeout; with these two faked it is ~1 ms per row.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    // Detached on purpose: jsdom row insertion into the live document grows with its size, and this
+    // test is about references, not layout.
+    const container = document.createElement('div');
+    let available = false;
+    const store = new ChatIntegrityStore();
+    const onPendingChange = vi.fn();
+    const queue = new RenderQueue({
+      getContainer: () => available ? container : null,
+      registry: new ChatDomRegistry(),
+      shouldRender: nextMessage => store.getMessageById(nextMessage.id) === nextMessage,
+      onPendingChange,
+    });
+    for (let index = 0; index < 1_000; index++) {
+      const nextMessage = message(`mount-gap-${index}`);
+      store.addMessage(nextMessage);
+      queue.enqueue(nextMessage);
+    }
+    vi.advanceTimersByTime(250);
+
+    expect(store.getMessageById('mount-gap-0')).toBeUndefined();
+    const retained = store.getMessagesInArrivalOrder();
+    expect(retained.length).toBeGreaterThan(0);
+    expect(queue.pendingCount).toBe(retained.length);
+    expect(onPendingChange).toHaveBeenLastCalledWith(retained.length);
+    available = true;
+    vi.advanceTimersByTime(250);
+    expect(container.childElementCount).toBe(retained.length);
+    expect(container.querySelector('[data-message-id="mount-gap-0"]')).toBeNull();
+    queue.dispose();
+  });
+
   it('does not render a message removed while it waits for the batch flush', () => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -346,7 +409,7 @@ describe('RenderQueue', () => {
     queue.dispose();
   });
 
-  it('uses a timer fallback while hidden instead of leaving a batch behind a suspended animation frame', () => {
+  it('renders on a timer while hidden until the first rows have landed (startup readiness)', () => {
     vi.useFakeTimers();
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
     const animationFrame = vi.fn(() => 1);
@@ -366,10 +429,62 @@ describe('RenderQueue', () => {
     queue.dispose();
   });
 
-  it('keeps a hidden-tab bulk flush pinned when the tab becomes visible again', () => {
-    vi.useFakeTimers();
-    let hidden = true;
+  // 2026-11-11 (performance): the two tests here used to require that a hidden tab keeps building
+  // rows on a timer; that was the behaviour to remove, not to keep. A hidden tab now writes
+  // nothing to the DOM, holds a bounded backlog and renders the newest rows when it returns.
+  it('builds no rows while the tab is hidden and renders the newest backlog when it returns', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let hidden = false;
     vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const store = new ChatIntegrityStore();
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry: new ChatDomRegistry(),
+      shouldRender: (next) => store.getMessageById(next.id) === next,
+    });
+    const add = (id: string): void => {
+      const next = message(id);
+      if (store.addMessage(next)) queue.enqueue(next);
+    };
+    try {
+      add('before-hide');
+      vi.advanceTimersByTime(250);
+      expect(container.childElementCount).toBe(1);
+
+      hidden = true;
+      document.dispatchEvent(new Event('visibilitychange'));
+      const observer = new MutationObserver(() => {});
+      observer.observe(container, { childList: true, subtree: true, attributes: true, characterData: true });
+      add('hidden-deleted');
+      store.markMessageDeleted('hidden-deleted');
+      for (let index = 0; index < 1_000; index++) add(`hidden-${index}`);
+      vi.advanceTimersByTime(60_000);
+      expect(observer.takeRecords()).toEqual([]);
+      observer.disconnect();
+      expect(container.childElementCount).toBe(1);
+      expect(queue.pendingCount).toBeLessThan(HIDDEN_BACKLOG_ROWS * 2 + 2);
+
+      hidden = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+      // The newest HIDDEN_BACKLOG_ROWS ordinary rows plus the preserved (deleted) one.
+      expect(container.childElementCount).toBe(1 + 1 + HIDDEN_BACKLOG_ROWS);
+      expect(container.querySelector('[data-message-id="hidden-999"]')).not.toBeNull();
+      expect(container.querySelector('[data-message-id="hidden-deleted"]')).not.toBeNull();
+      expect(container.querySelector('[data-message-id="hidden-0"]')).toBeNull();
+      expect(queue.pendingCount).toBe(0);
+    } finally {
+      queue.dispose();
+    }
+  });
+
+  it('keeps the list pinned when a hidden-tab backlog lands on return', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let hidden = false;
+    vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
     const container = document.createElement('div');
     let scrollTop = 0;
     Object.defineProperties(container, {
@@ -385,7 +500,7 @@ describe('RenderQueue', () => {
     });
     document.body.append(container);
     const registry = new ChatDomRegistry();
-    const follow = new ScrollFollowController(container, { createResizeObserver: () => null });
+    const follow = new ScrollFollowController(container, { createResizeObserver: () => null, scheduleFrame: () => 0, cancelFrame: () => {} });
     const queue = new RenderQueue({
       getContainer: () => container,
       registry,
@@ -396,15 +511,86 @@ describe('RenderQueue', () => {
       },
     });
 
+    queue.enqueue(message('visible-first'));
+    vi.advanceTimersByTime(250);
+    hidden = true;
+    document.dispatchEvent(new Event('visibilitychange'));
     for (let i = 0; i < 10; i++) queue.enqueue(message(`hidden-bulk-${i}`));
-    vi.runAllTimers();
+    vi.advanceTimersByTime(5_000);
+    expect(container.childElementCount).toBe(1);
     hidden = false;
     document.dispatchEvent(new Event('visibilitychange'));
 
-    expect(container.childElementCount).toBe(10);
-    expect(scrollTop).toBe(100);
+    expect(container.childElementCount).toBe(11);
+    expect(scrollTop).toBe(11 * 20 - 100);
     expect(follow.isPinned).toBe(true);
     queue.dispose();
     follow.dispose();
+  });
+
+  // 2026-11-11 (performance): a pinned own-list flush may read layout only for the snap to the
+  // bottom. Before 2026-11-10 every flush also measured wasAtBottom and the offset before the trim;
+  // nothing failed when they were there, so this pins the read list of one flush exactly.
+  it('reads layout only for the snap to the bottom when a pinned flush lands (no forced layout comes back)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const container = document.createElement('div');
+    const reads: string[] = [];
+    let top = 0;
+    const metric = (name: string, value: () => number) => ({
+      configurable: true,
+      get: () => { reads.push(name); return value(); },
+    });
+    Object.defineProperties(container, {
+      clientHeight: metric('clientHeight', () => 100),
+      scrollHeight: metric('scrollHeight', () => container.childElementCount * 20),
+      offsetHeight: metric('offsetHeight', () => 100),
+      scrollTop: { configurable: true, get: () => { reads.push('scrollTop'); return top; }, set: (value: number) => { top = value; } },
+    });
+    vi.spyOn(container, 'getBoundingClientRect').mockImplementation(() => { reads.push('rect'); return new DOMRect(); });
+    const registry = new ChatDomRegistry();
+    const follow = new ScrollFollowController(container, { createResizeObserver: () => null, scheduleFrame: () => 0, cancelFrame: () => {} });
+    const perFlush: string[][] = [];
+    const queue = new RenderQueue({
+      getContainer: () => container,
+      registry,
+      onFlush: (appended) => {
+        const decision = decideScrollFollow(follow.isPinned, appended.length);
+        follow.preserveScrollIntent(() => trimMessageWindow(container, registry, decision.trimCap, () => false));
+        follow.scrollToBottom();
+        perFlush.push(reads.splice(0));
+      },
+    });
+    reads.length = 0;
+    for (let i = 0; i < 300; i++) queue.enqueue(message(`layout-${i}`));
+    vi.advanceTimersByTime(250);
+    expect(perFlush.length).toBeGreaterThan(1);
+    expect(perFlush.every((flushReads) => flushReads.join(',') === 'clientHeight,scrollHeight,scrollTop')).toBe(true);
+    expect(reads).toEqual([]);
+    queue.dispose();
+    follow.dispose();
+  });
+
+  it('waits for the mount retry instead of re-filtering the whole backlog on every message', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const store = new ChatIntegrityStore();
+    let checks = 0;
+    const queue = new RenderQueue({
+      getContainer: () => null,
+      registry: new ChatDomRegistry(),
+      shouldRender: (next) => { checks += 1; return store.getMessageById(next.id) === next; },
+    });
+    for (let index = 0; index < 1_000; index++) {
+      const next = message(`unmounted-${index}`);
+      store.addMessage(next);
+      queue.enqueue(next);
+    }
+    vi.advanceTimersByTime(250);
+    // One filter at the 50-row batch, one at the 250 ms mount retry. Re-filtering on every message
+    // cost 480,175 checks here (counted on the 2026-11-10 code); now 1,050.
+    expect(checks).toBeLessThan(3_000);
+    expect(queue.pendingCount).toBe(store.getMessagesInArrivalOrder().length);
+    queue.dispose();
   });
 });

@@ -25,3 +25,20 @@ it('tab hiding clears visibility and returning playing does not pin controls',()
 it('replacement player gets state and disposal releases presentation attributes',async()=>{const f=fixture();f.move(580);document.body.innerHTML='<div id="next"><video id="video-player"></video></div>';await Promise.resolve();expect(f.wrapper.hasAttribute('data-kickflow-controls')).toBe(false);expect(document.getElementById('next')!.getAttribute('data-kickflow-controls')).toBe('shown');life.dispose();expect(document.getElementById('next')!.hasAttribute('data-kickflow-controls')).toBe(false);});
 it('keyboard hold renews before the native timeout can remove the focused control',()=>{const f=fixture();let nativeTimer=window.setTimeout(()=>f.bar.remove(),4000);const renew=()=>{window.clearTimeout(nativeTimer);nativeTimer=window.setTimeout(()=>f.bar.remove(),4000);};f.wrapper.addEventListener('mousemove',renew);document.getElementById('control')!.focus();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));vi.advanceTimersByTime(4500);expect(f.bar.isConnected).toBe(true);expect(f.state()).toBe('shown');f.wrapper.removeEventListener('mousemove',renew);window.clearTimeout(nativeTimer);});
 it('keyboard entry reveals hidden controls and restores native wrapper attributes on disposal',()=>{const f=fixture();expect(f.state()).toBe('hidden');expect(f.wrapper.tabIndex).toBe(0);document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));f.wrapper.focus();expect(f.state()).toBe('shown');life.dispose();expect(f.wrapper.hasAttribute('tabindex')).toBe(false);});
+it('marks the clipping shelf that holds the bar, before paint, and unmarks it on removal and disposal',async()=>{
+ document.body.innerHTML='<div id="wrapper"><video id="video-player"></video><div id="shelf"></div></div>';
+ initControlsVisibility(life);
+ const shelf=document.getElementById('shelf')!;
+ expect(shelf.hasAttribute('data-kickflow-bar-shelf')).toBe(false);
+ const bar=document.createElement('div');bar.className='z-controls bottom-0';shelf.append(bar);
+ await Promise.resolve();
+ expect(shelf.hasAttribute('data-kickflow-bar-shelf')).toBe(true);
+ // A bar directly under the host has no shelf of its own: the replaced rule never matched the host.
+ expect(document.getElementById('wrapper')!.hasAttribute('data-kickflow-bar-shelf')).toBe(false);
+ bar.remove();await Promise.resolve();
+ expect(shelf.hasAttribute('data-kickflow-bar-shelf')).toBe(false);
+ shelf.append(bar);await Promise.resolve();
+ expect(shelf.hasAttribute('data-kickflow-bar-shelf')).toBe(true);
+ life.dispose();
+ expect(shelf.hasAttribute('data-kickflow-bar-shelf')).toBe(false);
+});

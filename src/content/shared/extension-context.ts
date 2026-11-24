@@ -32,6 +32,17 @@ export async function safeStorageGet(keys: string | string[]): Promise<Record<st
   }
 }
 
+/** chrome.storage.local.remove that never throws; false when the key could not be removed. */
+export async function safeStorageRemove(keys: string | string[]): Promise<boolean> {
+  if (!isExtensionContextValid()) return false;
+  try {
+    await chrome.storage.local.remove(keys);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Report whether storage accepted the write without throwing on a dead context. */
 export async function safeStorageSet(items: Record<string, unknown>): Promise<boolean> {
   if (!isExtensionContextValid()) return false;

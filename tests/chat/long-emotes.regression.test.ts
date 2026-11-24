@@ -11,7 +11,7 @@ function emotes(text: string): RegExpMatchArray[] {
 }
 
 describe('long emote names use the shared safe tokenizer', () => {
-  it('recognizes the exact owner example in rendering and plain-text reduction', () => {
+  it('recognizes the exact reported example in rendering and plain-text reduction', () => {
     expect(name).toHaveLength(37);
     expect(emotes(token)[0]?.groups).toMatchObject({ emoteId: '5747951', emoteName: name });
     expect(token.replace(EMOTE_TOKEN_RE, '$1')).toBe(name);

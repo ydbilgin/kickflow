@@ -1,4 +1,6 @@
 import { featureFlags } from './feature-flags';
+import { findMainNativeList } from './native-thread';
+import { visibleInterval } from '../shared/coalesce';
 import type { Lifecycle } from '../shared/lifecycle';
 import { mergeIdentityBadges, type ChatIntegrityStore, type ChatMessage } from './message-store';
 import type { ModActionNotice } from './mod-action-feed';
@@ -41,6 +43,20 @@ export const NATIVE_ROW_GROUP_CLASS = 'group';
 // viewport (a mounted neighbor within this many seq); otherwise it stays pending (surfaced by
 // the shared RemovedMessagesPanel, owned by bootstrap.ts, not by this augmenter).
 const ANCHOR_MAX_SEQ_DISTANCE = 20;
+
+interface MountedRow {
+  readonly mid: string;
+  readonly row: HTMLElement;
+  readonly seq: number;
+  readonly ghostCandidate: boolean;
+  readonly preserved: boolean;
+}
+
+interface MountedRowIndex {
+  readonly byMid: Map<string, HTMLElement>;
+  /** Rows whose message the store knows (has a seq), in document order. */
+  readonly ordered: readonly MountedRow[];
+}
 const MAX_GHOSTS_PER_ANCHOR = 4;
 export const MOD_ACTION_MAX_ROWS_IN_CHAT = 3;
 
@@ -108,6 +124,8 @@ export class NativeChatAugmenter {
   private readonly modActionNotices = new Map<string, ModActionNoticeState>();
   private reanchorTimer: number | null = null;
   private ghostEvicted = 0;
+  /** Mounted-row index, set only for the duration of one anchor pass. */
+  private passIndex: MountedRowIndex | null = null;
 
   constructor(
     private readonly lifecycle: Lifecycle,
@@ -135,11 +153,14 @@ export class NativeChatAugmenter {
     });
     activeAugmenter = this;
     attach();
-    lifecycle.setInterval(() => attach(), 1000);
+    visibleInterval(lifecycle, () => {
+      attach();
+      this.healRemovedRendering();
+    }, 1000);
     // Kick also moves virtual rows through layout changes that emit neither a watched DOM
     // mutation nor a chat scroll event. Recheck a stationary mouse at a low rate so the
     // reply action follows the real hit row without requiring another pointer movement.
-    lifecycle.setInterval(() => {
+    visibleInterval(lifecycle, () => {
       if (this.pointerPosition && this.observedRoot && document.visibilityState !== 'hidden') {
         this.refreshPointerRow();
       }
@@ -158,10 +179,17 @@ export class NativeChatAugmenter {
   }
 
   seedBannedGhosts(ids: string[]): void {
-    if (!featureFlags.preserveBansInline) return;
+    this.seedRemovedGhosts(ids);
+  }
+
+  /** A removed message (ban, timeout or delete) that Kick no longer renders gets a ghost row at its
+   * chronological place. Kick drops a banned user's rows and, seen live 2026-10-23, often drops a
+   * deleted message's row within a second or so as well; both must stay visible inline. */
+  seedRemovedGhosts(ids: string[]): void {
+    if (!this.ghostsEnabled()) return;
     let changed = false;
     for (const id of ids) {
-      if (!this.store.isPreservedBanned(id) || this.isMessageMounted(id)) continue;
+      if (!this.isGhostCandidate(id) || this.isMessageMounted(id)) continue;
       this.ghostsNeeded.add(id);
       changed = true;
     }
@@ -199,9 +227,25 @@ export class NativeChatAugmenter {
   }
 
   reconcileAll(): void {
-    if (!featureFlags.preserveBansInline) this.clearGhosts();
+    if (!this.ghostsEnabled()) this.clearGhosts();
     this.reconcileVisibleRows();
-    if (featureFlags.preserveBansInline || this.modActionNotices.size > 0) this.scheduleAnchorPass();
+    if (this.ghostsEnabled() || this.modActionNotices.size > 0) this.scheduleAnchorPass();
+  }
+
+  private ghostsEnabled(): boolean {
+    return featureFlags.preserveBansInline || featureFlags.showDeletedMessages;
+  }
+
+  private isGhostCandidate(id: string): boolean {
+    return this.isGhostCandidateMessage(this.store.getMessageById(id));
+  }
+
+  /** Bans/timeouts follow preserveBansInline, deletes follow showDeletedMessages. */
+  private isGhostCandidateMessage(message: ChatMessage | undefined): boolean {
+    if (!message?.preserved) return false;
+    if (message.preservedReason === 'banned') return featureFlags.preserveBansInline;
+    if (message.preservedReason === 'deleted') return featureFlags.showDeletedMessages;
+    return false;
   }
 
   getGhostStats(): NativeChatGhostStats {
@@ -215,8 +259,42 @@ export class NativeChatAugmenter {
     };
   }
 
+  /** Safety net, once a second: the inline view of removed messages must not depend on some
+   * unrelated chat mutation arriving later. Every trigger above is event-driven (ban event, row
+   * removal record, newly mounted row); when one is missed — a quiet chat, a chat root swapped
+   * between two attach ticks, a removal Kick expresses in a shape the observer does not classify —
+   * a removed message stayed invisible until the next message happened to arrive (user report
+   * 2026-10-23: the removed-messages panel showed three bans, the chat none, 11 s later all). The pass
+   * is idempotent, so running it when nothing is stale changes no DOM. */
+  private healRemovedRendering(): void {
+    if (this.lifecycle.isDisposed || !this.observedRoot || document.visibilityState === 'hidden') return;
+    if (this.reanchorTimer != null) return;
+    if (this.hasStaleRemovedRendering()) this.scheduleAnchorPass();
+  }
+
+  private hasStaleRemovedRendering(): boolean {
+    for (const state of this.modActionNotices.values()) {
+      if (state.anchorMid === null) return true;
+      const row = this.findMountedRowByMid(state.anchorMid);
+      if (!row) continue;
+      if (this.store.getMessageById(state.anchorMid)?.preserved) return true;
+      if (!row.querySelector(`.${MOD_ACTION_BLOCK_CLASS}`)) return true;
+    }
+    if (!this.ghostsEnabled()) return false;
+    if (this.ghostsNeeded.size > 0) return true;
+    for (const [id, anchorMid] of this.ghostAnchorById) {
+      const row = this.findMountedRowByMid(anchorMid);
+      if (row && !this.isGhostMountedUnderAnchor(id, row)) return true;
+    }
+    for (const message of this.store.getPreserved()) {
+      if (!this.isGhostCandidateMessage(message) || this.ghostAnchorById.has(message.id)) continue;
+      if (!this.isMessageMounted(message.id)) return true;
+    }
+    return false;
+  }
+
   private attachToCurrentChat(): void {
-    const root = document.querySelector<HTMLElement>(CHAT_ROOT_SELECTOR);
+    const root = findMainNativeList();
     if (!root) {
       // A collapsed/unmounted chat can stay absent for a long time. Do not retain and keep
       // observing its detached React subtree while the 1s attach loop waits for a new root.
@@ -264,6 +342,9 @@ export class NativeChatAugmenter {
     this.hoverFrame = null;
     this.clearGhosts();
     this.clearModActionNotices();
+    // Session teardown also returns mounted rows to Kick. Otherwise an extension
+    // reload leaves our copied text and hidden-native classes behind after CSS removal.
+    this.observedRoot?.querySelectorAll<HTMLElement>(ROW_SELECTOR).forEach((row) => this.cleanRow(row));
     this.disconnectObserver();
   }
 
@@ -364,9 +445,9 @@ export class NativeChatAugmenter {
         const rows = this.collectRows(node);
         if (rows.length > 0) mountedSetChanged = true;
         if (this.containsModActionBlock(node)) needsAnchorPass = true;
-        if (!featureFlags.preserveBansInline) continue;
+        if (!this.ghostsEnabled()) continue;
         for (const id of this.collectMessageIds(node)) {
-          if (this.store.isPreservedBanned(id)) {
+          if (this.isGhostCandidate(id)) {
             this.ghostsNeeded.add(id);
             needsAnchorPass = true;
           }
@@ -376,7 +457,7 @@ export class NativeChatAugmenter {
     }
 
     if (
-      (featureFlags.preserveBansInline &&
+      (this.ghostsEnabled() &&
         (needsAnchorPass || (mountedSetChanged && (this.ghostsNeeded.size > 0 || this.ghostAnchorById.size > 0))))
       || (this.modActionNotices.size > 0 && (needsAnchorPass || mountedSetChanged))
     ) {
@@ -464,7 +545,7 @@ export class NativeChatAugmenter {
       applyNativeHighlights(row, message);
     }
 
-    if (featureFlags.preserveBansInline) this.reapplyGhostsForAnchor(id, row);
+    if (this.ghostsEnabled()) this.reapplyGhostsForAnchor(id, row);
     if (this.modActionNotices.size > 0) this.scheduleAnchorPass();
   }
 
@@ -516,13 +597,22 @@ export class NativeChatAugmenter {
   }
 
   private reanchorGhosts(): void {
-    if (featureFlags.preserveBansInline) {
+    this.passIndex = this.buildMountedIndex();
+    try {
+      this.reanchorGhostsWithIndex();
+    } finally {
+      this.passIndex = null;
+    }
+  }
+
+  private reanchorGhostsWithIndex(): void {
+    if (this.ghostsEnabled()) {
       this.pruneStrayGhosts();
 
       const ids = new Set<string>(this.ghostsNeeded);
       for (const id of this.ghostAnchorById.keys()) ids.add(id);
       for (const message of this.store.getPreserved()) {
-        if (message.preservedReason === 'banned' && !this.isMessageMounted(message.id)) ids.add(message.id);
+        if (this.isGhostCandidateMessage(message) && !this.isMessageMounted(message.id)) ids.add(message.id);
       }
       Array.from(ids)
         .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0))
@@ -554,8 +644,7 @@ export class NativeChatAugmenter {
     root.querySelectorAll<HTMLElement>(`.${GHOST_ROW_CLASS}[data-kickflow-ghost-mid]`).forEach((el) => {
       const mid = el.dataset.kickflowGhostMid ?? '';
       const message = this.store.getMessageById(mid);
-      const valid = message?.preserved === true
-        && message.preservedReason === 'banned'
+      const valid = this.isGhostCandidateMessage(message)
         && !this.isMessageMounted(mid);
       if (!valid || seen.has(mid)) {
         el.remove();
@@ -582,7 +671,18 @@ export class NativeChatAugmenter {
     // Pinned, it behaves like the chat message it is meant to read as: it appears at
     // the bottom, rides up with the conversation, and leaves the DOM when its host row unmounts.
     for (const state of this.modActionNotices.values()) {
-      if (state.anchorMid !== null) continue;
+      if (state.anchorMid !== null) {
+        // The pin holds, except when the host message itself became a removed message: its native
+        // content holder is hidden (display:none) and, for a ban, Kick drops the row entirely, so a
+        // notice left there is invisible for good. Move it to the nearest older live row instead,
+        // which keeps its place in the conversation. 2026-10-23.
+        if (this.store.getMessageById(state.anchorMid)?.preserved) {
+          const replacement = this.findLiveRowAtOrBefore(this.store.getMessageSeq(state.anchorMid))
+            ?? this.findNewestMountedNativeRow();
+          if (replacement) state.anchorMid = replacement.mid;
+        }
+        continue;
+      }
       const newest = this.findNewestMountedNativeRow();
       if (!newest) continue;
       state.anchorMid = newest.mid;
@@ -647,12 +747,33 @@ export class NativeChatAugmenter {
   }
 
   private findNewestMountedNativeRow(): { mid: string; row: HTMLElement; seq: number } | null {
+    return this.findLiveRowAtOrBefore(undefined);
+  }
+
+  /** Newest mounted row that is not itself a removed message, optionally no newer than `maxSeq`.
+   * A removed message's row is a bad host for a notice: its native content holder is hidden and a
+   * banned user's row is dropped by Kick moments later (the moderator usually bans right after the
+   * offending line, so that row is very often the newest one). */
+  private findLiveRowAtOrBefore(maxSeq: number | undefined): { mid: string; row: HTMLElement; seq: number } | null {
+    if (this.passIndex) {
+      let found: MountedRow | null = null;
+      for (const entry of this.passIndex.ordered) {
+        if (entry.preserved) continue;
+        if (maxSeq != null && entry.seq > maxSeq) continue;
+        if (found && entry.seq <= found.seq) continue;
+        found = entry;
+      }
+      return found ? { mid: found.mid, row: found.row, seq: found.seq } : null;
+    }
     let newest: { mid: string; row: HTMLElement; seq: number } | null = null;
     document.querySelectorAll<HTMLElement>(`${CHAT_LIST_SELECTOR} ${ROW_SELECTOR}[data-kickflow-mid]`).forEach((row) => {
       const mid = row.dataset.kickflowMid;
       if (!mid) return;
-      const seq = this.store.getMessageSeq(mid);
-      if (seq == null || (newest && seq <= newest.seq)) return;
+      const message = this.store.getMessageById(mid);
+      const seq = message?.seq;
+      if (seq == null || message?.preserved) return;
+      if (maxSeq != null && seq > maxSeq) return;
+      if (newest && seq <= newest.seq) return;
       newest = { mid, row, seq };
     });
     return newest;
@@ -710,7 +831,7 @@ export class NativeChatAugmenter {
 
   private reanchorGhost(id: string): void {
     const message = this.store.getMessageById(id);
-    if (!message?.preserved || message.preservedReason !== 'banned') {
+    if (!message || !this.isGhostCandidateMessage(message)) {
       this.forgetGhost(id);
       return;
     }
@@ -752,14 +873,25 @@ export class NativeChatAugmenter {
 
     let previous: { mid: string; row: HTMLElement; seq: number } | null = null;
     let next: { mid: string; row: HTMLElement; seq: number } | null = null;
-    document.querySelectorAll<HTMLElement>(`${CHAT_LIST_SELECTOR} ${ROW_SELECTOR}[data-kickflow-mid]`).forEach((row) => {
-      const mid = row.dataset.kickflowMid;
-      if (!mid || mid === bannedMessage.id || this.store.isPreservedBanned(mid)) return;
-      const seq = this.store.getMessageSeq(mid);
-      if (seq == null) return;
+    const consider = (mid: string, row: HTMLElement, seq: number): void => {
       if (seq < bannedSeq && (!previous || seq > previous.seq)) previous = { mid, row, seq };
       if (seq > bannedSeq && (!next || seq < next.seq)) next = { mid, row, seq };
-    });
+    };
+    if (this.passIndex) {
+      for (const entry of this.passIndex.ordered) {
+        // A removed message's own row is about to leave the DOM; never host another ghost on it.
+        if (entry.mid === bannedMessage.id || entry.ghostCandidate) continue;
+        consider(entry.mid, entry.row, entry.seq);
+      }
+    } else {
+      document.querySelectorAll<HTMLElement>(`${CHAT_LIST_SELECTOR} ${ROW_SELECTOR}[data-kickflow-mid]`).forEach((row) => {
+        const mid = row.dataset.kickflowMid;
+        if (!mid || mid === bannedMessage.id || this.isGhostCandidate(mid)) return;
+        const seq = this.store.getMessageSeq(mid);
+        if (seq == null) return;
+        consider(mid, row, seq);
+      });
+    }
     // `as` cast: previous/next are assigned inside the forEach closure, which TS control-flow
     // narrowing doesn't track (it would otherwise treat them as still-null here).
     const chosen = (previous ?? next) as { mid: string; row: HTMLElement; seq: number } | null;
@@ -771,7 +903,7 @@ export class NativeChatAugmenter {
   }
 
   private reapplyGhostsForAnchor(anchorMid: string, row: HTMLElement): void {
-    if (this.store.isPreservedBanned(anchorMid)) {
+    if (this.isGhostCandidate(anchorMid)) {
       if (this.ghostsByAnchor.has(anchorMid)) this.scheduleAnchorPass();
       return;
     }
@@ -781,10 +913,7 @@ export class NativeChatAugmenter {
 
   private injectGhostBlock(anchorRow: HTMLElement, anchorMid: string): void {
     const ids = Array.from(this.ghostsByAnchor.get(anchorMid) ?? [])
-      .filter((id) => {
-        const message = this.store.getMessageById(id);
-        return message?.preserved === true && message.preservedReason === 'banned';
-      })
+      .filter((id) => this.isGhostCandidate(id))
       .sort((a, b) => (this.store.getMessageSeq(a) ?? 0) - (this.store.getMessageSeq(b) ?? 0))
       .slice(-MAX_GHOSTS_PER_ANCHOR); // cap per-anchor: keep the newest few, never stack a giant block
 
@@ -877,9 +1006,29 @@ export class NativeChatAugmenter {
   }
 
   private findMountedRowByMid(id: string): HTMLElement | null {
+    if (this.passIndex) return this.passIndex.byMid.get(id) ?? null;
     return document.querySelector<HTMLElement>(
       `${CHAT_LIST_SELECTOR} ${ROW_SELECTOR}[data-kickflow-mid="${CSS.escape(id)}"]`,
     );
+  }
+
+  /** One walk over the mounted native rows for a whole anchor pass. An attribute selector is not
+   * indexed, so each per-ghost lookup used to walk the whole document: a pass with 50 pending
+   * ghosts made 100+ document-wide scans, and a pass runs on every chat message while any ghost
+   * is pending (2026-11-11). Ghost and notice blocks are not rows, so the index stays valid while
+   * the pass inserts and removes them. */
+  private buildMountedIndex(): MountedRowIndex {
+    const byMid = new Map<string, HTMLElement>();
+    const ordered: MountedRow[] = [];
+    document.querySelectorAll<HTMLElement>(`${CHAT_LIST_SELECTOR} ${ROW_SELECTOR}[data-kickflow-mid]`).forEach((row) => {
+      const mid = row.dataset.kickflowMid;
+      if (!mid) return;
+      if (!byMid.has(mid)) byMid.set(mid, row);
+      const message = this.store.getMessageById(mid);
+      if (message?.seq == null) return;
+      ordered.push({ mid, row, seq: message.seq, ghostCandidate: this.isGhostCandidateMessage(message), preserved: message.preserved });
+    });
+    return { byMid, ordered };
   }
 
   private isGhostMountedUnderAnchor(id: string, anchorRow: HTMLElement): boolean {

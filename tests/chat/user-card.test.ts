@@ -307,6 +307,28 @@ describe('user-card', () => {
     expect(JSON.stringify(model).toLowerCase()).not.toContain('level');
   });
 
+  it.each([null, '', 'https://tracker.example/avatar.png'])('shows the native default picture without an enlarge action for %s', (profilePic) => {
+    const card = buildUserCardElement({
+      username: 'viewer', slug: 'viewer', profilePic, role: null, verified: false,
+      bio: null, followers: null, createdAt: '-', followingSince: '-', subscribedFor: '-', badges: [],
+    });
+    const image = card.querySelector<HTMLImageElement>('img.kickflow-user-card__avatar');
+    expect(image).not.toBeNull();
+    expect(image?.src).toContain('default-profile');
+    expect(card.querySelector('.kickflow-avatar-enlarge')).toBeNull();
+  });
+
+  it('replaces a broken real image with the default and removes its enlarge action', () => {
+    const card = buildUserCardElement({
+      username: 'viewer', slug: 'viewer', profilePic: 'https://files.kick.com/real.png', role: null,
+      verified: false, bio: null, followers: null, createdAt: '-', followingSince: '-', subscribedFor: '-', badges: [],
+    });
+    expect(card.querySelector('.kickflow-avatar-enlarge')).not.toBeNull();
+    card.querySelector<HTMLImageElement>('img.kickflow-user-card__avatar')!.dispatchEvent(new Event('error'));
+    expect(card.querySelector<HTMLImageElement>('img.kickflow-user-card__avatar')?.src).toContain('default-profile');
+    expect(card.querySelector('.kickflow-avatar-enlarge')).toBeNull();
+  });
+
   it('shows unknown relationships when the card endpoint has no relationship data', () => {
     const model = mapUserCardResponse({}, {}, 'alice', 'alice');
     expect(model.followingSince).toBe('bilinmiyor');
@@ -331,7 +353,7 @@ describe('user-card', () => {
     expect(model.badges).toEqual([expect.objectContaining({ type: 'subscriber', count: 1 })]);
   });
 
-  it('omits inactive role badges from a real Kick user-card response', () => {
+  it('omits inactive roles but retains the historical subscriber badge shown on native cards', () => {
     const model = mapUserCardResponse({
       username: 'c4nkn',
       slug: 'c4nkn',
@@ -357,6 +379,7 @@ describe('user-card', () => {
       'moderator',
       'vip',
       'founder',
+      'subscriber',
     ]);
   });
 
@@ -369,10 +392,12 @@ describe('user-card', () => {
 
     expect(buildUserCardElement(model).querySelector<HTMLImageElement>('.kickflow-user-card__avatar')?.src)
       .toBe('https://files.kick.com/avatar.png');
-    expect(buildUserCardElement({ ...model, profilePic: 'https://tracker.example/avatar.png' })
-      .querySelector('.kickflow-user-card__avatar')).toBeNull();
-    expect(buildUserCardElement({ ...model, profilePic: 'data:image/svg+xml,<svg></svg>' })
-      .querySelector('.kickflow-user-card__avatar')).toBeNull();
+    for (const profilePic of ['https://tracker.example/avatar.png', 'data:image/svg+xml,<svg></svg>']) {
+      const card = buildUserCardElement({ ...model, profilePic });
+      expect(card.querySelector<HTMLImageElement>('img.kickflow-user-card__avatar')?.src)
+        .toBe('https://kick.com/img/default-profile-pictures/default-avatar-2.webp');
+      expect(card.querySelector('.kickflow-avatar-enlarge')).toBeNull();
+    }
   });
 
   it('fetches and renders card fields for left-click popovers', async () => {
@@ -402,7 +427,7 @@ describe('user-card', () => {
     expect(card?.textContent?.toLowerCase()).not.toContain('level');
   });
 
-  it('middle-clicking the card title opens the profile in a new tab (autoscroll-guarded)', () => {
+  it('plain, middle and modified card-title clicks open the native profile with autoscroll guarded', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       expect(this.href).toBe('https://kick.com/alice');
       expect(this.target).toBe('_blank');
@@ -423,13 +448,13 @@ describe('user-card', () => {
     name?.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
     expect(click).toHaveBeenCalledOnce();
 
-    // Plain left-click must stay free (the header is the drag handle) — no tab, no card.
+    // ADDENDUM-1 requires the same native title click; the rest of the header drags.
     name?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
-    expect(click).toHaveBeenCalledOnce();
+    expect(click).toHaveBeenCalledTimes(2);
 
     // Ctrl-left-click is the other new-tab gesture.
     name?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, ctrlKey: true }));
-    expect(click).toHaveBeenCalledTimes(2);
+    expect(click).toHaveBeenCalledTimes(3);
   });
 
   it('opens the card channel link through a detached new-tab anchor, not a popup window', () => {

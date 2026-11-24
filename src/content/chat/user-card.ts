@@ -4,15 +4,19 @@ import { featureFlags } from './feature-flags';
 import { getUserMessageArchive } from './archive-session';
 import { buildUserMessageList, scrollUserMessageListToLatest, type UserMessageListModel } from './user-message-list';
 import { makeDraggable } from '../shared/draggable';
-import { openInNewTab, wireNewTabGestures } from '../shared/new-tab';
+import { createAvatarPreviewAction, dismissAvatarPreview, fullSizeAvatarUrl } from '../shared/avatar-preview';
+import { openInNewTab } from '../shared/new-tab';
 import type { ChatBadge } from './message-store';
 import { formatNumber, getLang, t } from '../shared/i18n';
+import { openNativeUserCard, resetNativeUserCardRequest } from './native-user-card';
 
 const SAFE_SLUG_RE = /^[a-zA-Z0-9_-]+$/;
 const TRUSTED_IMAGE_HOST = 'kick.com';
 const TRUSTED_IMAGE_HOST_SUFFIX = '.kick.com';
 const CARD_CLASS = 'kickflow-user-card';
 const FIELD_CLASS = 'kickflow-user-card__field';
+// Kick's current default asset (the old default2.jpeg URL now serves HTML).
+const DEFAULT_PROFILE_PIC = 'https://kick.com/img/default-profile-pictures/default-avatar-2.webp';
 
 interface UserCardRawBadge {
   type?: unknown;
@@ -55,6 +59,7 @@ export interface UserCardViewModel {
   userId: number | null;
   messages: UserMessageListModel | null;
   username: string;
+  nativeUsername?: string;
   slug: string;
   profilePic: string | null;
   role: string | null;
@@ -74,6 +79,7 @@ let activeOpener: HTMLElement | null = null;
 export function configureUserCardSession(slug: string | null): void {
   channelSlug = slug && SAFE_SLUG_RE.test(slug) ? slug : null;
   cache.clear();
+  resetNativeUserCardRequest();
   dismissUserCard();
 }
 
@@ -161,15 +167,18 @@ export function mapUserCardResponse(
     ? card.subscribed_for > 0 ? t('user.subscribed_months', { n: card.subscribed_for }) : t('user.not_subscribed')
     : t('user.unknown');
   const badges = mergeIdentityBadges({
-    badges: normalizeBadges(card.badges),
+    // Native cards retain historical subscriber badges, including active:false.
+    // Native chat intentionally hides these; keep this exception local to cards.
+    badges: normalizeBadges(card.badges).map(badge => badge.type === 'subscriber' ? { ...badge, active: true } : badge),
     badgesV2: normalizeBadges(card.badges_v2),
   });
   const { profilePic: channelPic, bio } = readChannel(channel);
   const cardPic = typeof card.profile_pic === 'string' && card.profile_pic ? card.profile_pic : null;
   return {
-    userId: null,
+    userId: typeof card.id === 'number' && Number.isSafeInteger(card.id) && card.id > 0 ? card.id : null,
     messages: null,
     username,
+    nativeUsername: typeof card.username === 'string' && SAFE_SLUG_RE.test(card.username) ? card.username : undefined,
     slug,
     profilePic: cardPic ?? channelPic,
     role: roleFrom(card),
@@ -183,9 +192,10 @@ export function mapUserCardResponse(
   };
 }
 
-async function fetchUserCard(username: string, fallbackName: string): Promise<UserCardViewModel | null> {
+async function fetchUserCard(username: string, fallbackName: string, nativeUsername: string): Promise<UserCardViewModel | null> {
   if (!channelSlug || !SAFE_SLUG_RE.test(username)) return null;
-  const cached = cache.get(username);
+  const cacheKey = `${username}:${nativeUsername.toLowerCase()}`;
+  const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const getJson = async (url: string): Promise<unknown> => {
@@ -204,7 +214,11 @@ async function fetchUserCard(username: string, fallbackName: string): Promise<Us
   // Card endpoint = this-channel relationship (following/subscribed/badges); channel endpoint =
   // the user's own profile (avatar, bio, follower count, verified). Fetch both in parallel + merge.
   const promise = Promise.all([
-    getJson(`https://kick.com/api/v2/channels/${encodeURIComponent(channelSlug)}/users/${encodeURIComponent(username)}`),
+    // Kick's relationship endpoint accepts the username, while the profile URL
+    // accepts the canonical slug. They can differ (Verssa_99 / verssa-99).
+    getJson(`https://kick.com/api/v2/channels/${encodeURIComponent(channelSlug)}/users/${encodeURIComponent(
+      nativeUsername
+    )}`),
     getJson(`https://kick.com/api/v2/channels/${encodeURIComponent(username)}`),
   ]).then(([cardRaw, channelRaw]) => {
     // A partial card is usable for this click, but must not pin unknown facts for the session.
@@ -213,7 +227,7 @@ async function fetchUserCard(username: string, fallbackName: string): Promise<Us
       && (relationship.following_since === null || formatDate(relationship.following_since) !== null)
       && typeof relationship.subscribed_for === 'number'
       && Number.isFinite(relationship.subscribed_for) && relationship.subscribed_for >= 0;
-    if (!complete && cache.get(username) === promise) cache.delete(username);
+    if (!complete && cache.get(cacheKey) === promise) cache.delete(cacheKey);
     if (!cardRaw && !channelRaw) return null;
     return mapUserCardResponse(
       (cardRaw ?? {}) as KickUserCardResponse,
@@ -222,7 +236,7 @@ async function fetchUserCard(username: string, fallbackName: string): Promise<Us
       username,
     );
   });
-  cache.set(username, promise);
+  cache.set(cacheKey, promise);
   return promise;
 }
 
@@ -268,14 +282,21 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   const header = document.createElement('div');
   header.className = 'kickflow-user-card__header';
   const profilePic = model.profilePic ? trustedProfileImageUrl(model.profilePic) : null;
-  if (profilePic) {
-    const img = document.createElement('img');
-    img.className = 'kickflow-user-card__avatar';
-    img.src = profilePic.href;
-    img.alt = '';
-    img.loading = 'lazy';
-    header.appendChild(img);
+  const img = document.createElement('img');
+  img.className = 'kickflow-user-card__avatar';
+  img.src = profilePic?.href ?? DEFAULT_PROFILE_PIC;
+  img.alt = '';
+  img.loading = 'lazy';
+  const realImage = profilePic && !profilePic.pathname.startsWith('/img/default-profile-pictures/')
+    && fullSizeAvatarUrl(profilePic.href) !== null;
+  const avatar = realImage ? createAvatarPreviewAction(img, model.username) : img;
+  if (profilePic && profilePic.href !== DEFAULT_PROFILE_PIC) {
+    img.addEventListener('error', () => {
+      if (avatar !== img) avatar.replaceWith(img);
+      img.src = DEFAULT_PROFILE_PIC;
+    }, { once: true });
   }
+  header.appendChild(avatar);
 
   const title = document.createElement('div');
   title.className = 'kickflow-user-card__title';
@@ -284,11 +305,22 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   const name = document.createElement('strong');
   name.className = 'kickflow-user-card__name';
   name.textContent = model.username;
-  // Middle/ctrl-click opens the profile in a new tab. 2026-10-16.
-  // Plain left-click stays free: the header doubles as the drag handle.
+  // Native card titles open the profile. The remaining header remains the drag handle.
   if (SAFE_SLUG_RE.test(model.slug)) {
+    name.setAttribute('role', 'link');
+    name.tabIndex = 0;
     name.title = t('user.open_middle', { slug: model.slug });
-    wireNewTabGestures(name, `https://kick.com/${model.slug}`);
+    name.dataset.kickflowProfileUrl = `https://kick.com/${model.slug}`;
+    const openProfile = (event: Event): void => {
+      event.preventDefault(); event.stopImmediatePropagation();
+      openInNewTab(name.dataset.kickflowProfileUrl!);
+    };
+    name.addEventListener('auxclick', event => { if (event.button === 1) openProfile(event); });
+    name.addEventListener('click', event => {
+      if (event.button === 0) openProfile(event);
+    });
+    name.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') openProfile(event); });
+    name.addEventListener('mousedown', event => { if (event.button === 1) event.preventDefault(); });
   }
   nameRow.appendChild(name);
   if (model.verified) {
@@ -307,28 +339,54 @@ export function buildUserCardElement(model: UserCardViewModel): HTMLElement {
   }
   header.appendChild(title);
   card.appendChild(header);
-  makeDraggable(card, header, '.kickflow-user-card__close, a');
+  makeDraggable(card, header, 'button, a, .kickflow-user-card__name');
 
-  if (model.bio) {
-    const bio = document.createElement('div');
-    bio.className = 'kickflow-user-card__bio';
-    bio.textContent = model.bio;
-    card.appendChild(bio);
-  }
+  // Optional profile data occupies the same slots before and after either request.
+  // The local archive and Close target must never move when those slots hydrate.
+  const bio = document.createElement('div');
+  bio.className = 'kickflow-user-card__bio';
+  bio.textContent = model.bio ?? '';
+  card.appendChild(bio);
 
   const facts = buildFieldGrid();
-  if (model.followers) appendField(facts, t('user.followers'), model.followers);
+  appendField(facts, t('user.followers'), model.followers ?? t('user.unknown'));
   appendField(facts, t('user.created'), model.createdAt);
   appendField(facts, t('user.following'), model.followingSince);
   appendField(facts, t('user.subscription'), model.subscribedFor);
   card.appendChild(facts);
 
-  if (model.badges.length > 0) {
-    const badges = document.createElement('div');
-    badges.className = 'kickflow-user-card__badges';
-    appendBadges(badges, model.badges);
-    card.appendChild(badges);
-  }
+  const badges = document.createElement('div');
+  badges.className = 'kickflow-user-card__badges';
+  appendBadges(badges, model.badges);
+  card.appendChild(badges);
+
+  const actions = document.createElement('div');
+  actions.className = 'kickflow-user-card__actions';
+  const follow = document.createElement('a');
+  follow.className = 'kickflow-user-card__action';
+  follow.dataset.kickflowCardAction = 'follow';
+  follow.href = `https://kick.com/${model.slug}`;
+  follow.target = '_blank';
+  follow.rel = 'noopener noreferrer';
+  follow.textContent = t('user.follow_on_kick');
+  follow.addEventListener('click', event => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault(); event.stopImmediatePropagation(); openInNewTab(follow.href);
+  });
+  const native = document.createElement('button');
+  native.type = 'button';
+  native.className = 'kickflow-user-card__action';
+  native.dataset.kickflowCardAction = 'native';
+  native.dataset.kickflowNativeUsername = model.nativeUsername ?? model.slug;
+  native.dataset.kickflowNativeProfileSlug = model.slug;
+  native.textContent = t('user.kick_controls');
+  native.addEventListener('click', event => {
+    event.preventDefault(); event.stopPropagation();
+    if (openNativeUserCard(native.dataset.kickflowNativeUsername!, native.dataset.kickflowNativeProfileSlug!)) dismissUserCard();
+    else openInNewTab(follow.href);
+  });
+  actions.append(follow, native);
+  card.appendChild(actions);
 
   if (featureFlags.showUserMessages && model.messages) {
     card.appendChild(buildUserMessageList(model.messages));
@@ -359,11 +417,13 @@ function buildMinimalCard(
   displayName: string,
   slug: string,
   messages: UserMessageListModel | null,
+  nativeUsername: string,
 ): HTMLElement {
   const card = buildUserCardElement({
     userId: null,
     messages,
     username: displayName,
+    nativeUsername,
     slug: SAFE_SLUG_RE.test(slug) ? slug : displayName,
     profilePic: null,
     role: null,
@@ -437,7 +497,7 @@ function installDismissHandlers(card: HTMLElement): void {
   // card). NO scroll / outside-click auto-dismiss — the chat scrolls constantly and would snap it
   // shut the instant it appeared.
   const key = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') dismissUserCard();
+    if (event.key === 'Escape' && !event.defaultPrevented) dismissUserCard();
   };
   document.addEventListener('keydown', key);
   const clamp = () => clampCardToViewport(card);
@@ -465,6 +525,7 @@ function clampCardToViewport(card: HTMLElement): void {
 export function dismissUserCard(): void {
   if (!activeCard) return;
   const restoreFocus = activeCard.contains(document.activeElement) && activeOpener?.isConnected;
+  dismissAvatarPreview();
   activeCard.dispatchEvent(new Event('kickflow:dismiss'));
   activeCard.remove();
   activeCard = null;
@@ -506,6 +567,7 @@ export async function openUserCard(
   clientX: number,
   clientY: number,
   userId: number | null,
+  nativeUsername?: string,
 ): Promise<void> {
   const opener = activeCard?.contains(document.activeElement) ? activeOpener
     : document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -513,7 +575,9 @@ export async function openUserCard(
   // Built once and reused for both cards: the archive is a live object, so re-querying it after
   // the await could hand the two cards different rows for the same click.
   const messages = getUserMessageListModel(userId, [username, displayName]);
-  const loading = buildMinimalCard(displayName, username, messages);
+  const lookupName = nativeUsername && SAFE_SLUG_RE.test(nativeUsername) ? nativeUsername : username;
+  const loading = buildMinimalCard(displayName, username, messages, lookupName);
+  loading.setAttribute('aria-busy', 'true');
   document.body.appendChild(loading);
   positionCard(loading, clientX, clientY);
   installDismissHandlers(loading);
@@ -522,8 +586,9 @@ export async function openUserCard(
   activeOpener = opener;
   loading.focus({ preventScroll: true });
 
-  const model = await fetchUserCard(username, displayName);
+  const model = await fetchUserCard(username, displayName, lookupName);
   if (activeCard !== loading) return;
+  loading.setAttribute('aria-busy', 'false');
   if (!model) return;
   const next = buildUserCardElement({ ...model, userId, messages });
   // Hydrate facts in place: root, close button, drag handle, profile link and message rows
@@ -533,18 +598,32 @@ export async function openUserCard(
   const header = loading.querySelector<HTMLElement>('.kickflow-user-card__header')!;
   const name = header.querySelector<HTMLElement>('.kickflow-user-card__name')!;
   name.textContent = model.username;
-  const avatar = next.querySelector('.kickflow-user-card__avatar');
-  if (avatar) header.prepend(avatar);
+  name.dataset.kickflowProfileUrl = `https://kick.com/${model.slug}`;
+  name.title = t('user.open_middle', { slug: model.slug });
+  const profileLink = loading.querySelector<HTMLAnchorElement>('.kickflow-user-card__link');
+  if (profileLink) {
+    profileLink.href = `https://kick.com/${model.slug}`;
+    profileLink.textContent = `kick.com/${model.slug} → ${t('user.open')}`;
+  }
+  const avatar = next.querySelector('.kickflow-avatar-action, .kickflow-user-card__avatar');
+  if (avatar) header.querySelector('.kickflow-avatar-action, .kickflow-user-card__avatar')?.replaceWith(avatar);
   const verified = next.querySelector('.kickflow-user-card__verified');
   if (verified) name.parentElement?.append(verified);
   const role = next.querySelector('.kickflow-user-card__role');
   if (role) header.querySelector('.kickflow-user-card__title')?.append(role);
   const oldFacts = loading.querySelector('.kickflow-user-card__facts')!;
   const bio = next.querySelector('.kickflow-user-card__bio');
-  if (bio) oldFacts.before(bio);
+  if (bio) loading.querySelector('.kickflow-user-card__bio')?.replaceWith(bio);
   oldFacts.replaceWith(next.querySelector('.kickflow-user-card__facts')!);
   const badges = next.querySelector('.kickflow-user-card__badges');
-  if (badges) loading.querySelector('.kickflow-user-card__facts')?.after(badges);
+  if (badges) loading.querySelector('.kickflow-user-card__badges')?.replaceWith(badges);
+  const nativeAction = loading.querySelector<HTMLElement>('[data-kickflow-card-action="native"]');
+  if (nativeAction) {
+    nativeAction.dataset.kickflowNativeUsername = model.nativeUsername ?? lookupName;
+    nativeAction.dataset.kickflowNativeProfileSlug = model.slug;
+  }
+  const followAction = loading.querySelector<HTMLAnchorElement>('[data-kickflow-card-action="follow"]');
+  if (followAction) followAction.href = `https://kick.com/${model.slug}`;
   // Growth uses the available space below the original top. Do not flip the card again
   // after its close button is already under the mouse.
   const top = parseFloat(loading.style.top) || CARD_VIEWPORT_MARGIN_PX;

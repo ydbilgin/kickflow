@@ -95,7 +95,7 @@ describe('ban-guard', () => {
       violatedRules: ['hate'],
     };
     const store = { markMessageDeleted: vi.fn(() => chatMessage('m1')) };
-    const augmenter = { markById: vi.fn(), seedBannedGhosts: vi.fn() };
+    const augmenter = { markById: vi.fn(), seedBannedGhosts: vi.fn(), seedRemovedGhosts: vi.fn() };
 
     featureFlags.showDeletedMessages = true;
     handleMessageDeleted(payload, { store, augmenter } as never);
@@ -105,6 +105,7 @@ describe('ban-guard', () => {
       violatedRules: ['hate'],
     });
     expect(augmenter.markById).toHaveBeenCalledWith('m1');
+    expect(augmenter.seedRemovedGhosts).toHaveBeenCalledWith(['m1']);
 
     store.markMessageDeleted.mockClear();
     augmenter.markById.mockClear();

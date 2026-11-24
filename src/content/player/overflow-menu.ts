@@ -1,6 +1,7 @@
 import { PlayerMenu } from './player-menu';
 import { subscribeLang, t } from '../shared/i18n';
 import type { Lifecycle } from '../shared/lifecycle';
+import { createOverflowIcon } from './bar-chrome.js';
 
 /**
  * The `⋯` button that appears in Kick's bar only when KickFlow's controls do not all fit
@@ -13,24 +14,6 @@ export interface OverflowControl {
   close(): void;
   /** Takes the button out of the bar and closes the menu; the rows are the caller's to own. */
   detach(): void;
-}
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** Three filled dots, matching Kick's `[&_svg]:fill-current` 20px bar icons. */
-function createOverflowIcon(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  const dots = document.createElementNS(SVG_NS, 'path');
-  dots.setAttribute(
-    'd',
-    'M6 9.9a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2z'
-      + 'M12 9.9a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2z'
-      + 'M18 9.9a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2z',
-  );
-  svg.append(dots);
-  return svg;
 }
 
 export function createOverflowControl(lifecycle: Lifecycle, rows: () => readonly HTMLElement[]): OverflowControl {

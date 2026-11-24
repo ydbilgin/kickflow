@@ -1,0 +1,31 @@
+<!-- Captured live from native Kick (no extension), kick.com/nuriben, 2026-10-24, locale en: the
+     "Chat paused for scrolling" button shown while the reader is scrolled up. Structure kept as
+     captured: the wrapper is a direct child of the chat column, next to the #chatroom-messages
+     scroller. Row content trimmed. In Turkish the span reads "kaydırırken sohbet duraklatıldı". -->
+<div class="relative shrink grow overflow-hidden bg-surface-bg-lowest" id="chat-column">
+  <!-- The pinned-message card is a second absolute child of the same column (captured live, kick.com/jahrein,
+       2026-10-24; text and long svg paths trimmed). Its two icon buttons must never be taken for the pause pill. -->
+  <div class="absolute w-full empty:hidden" style="padding-top: 6px; padding-bottom: 6px;">
+    <div class="relative flex h-fit w-full flex-col gap-1.5" style="padding-left: 8px; padding-right: 8px;">
+      <div data-testid="pinned-message-modal" class="z-absolute w-full">
+        <div class="w-full flex-col gap-2 rounded border-2 border-solid bg-surface-bg-highest">
+          <div class="flex items-center justify-between">
+            <div data-testid="sent-by"><svg data-ds-icon="Pin" width="20" height="20" viewBox="0 0 20 20"><path fill="currentColor" d="M0 0"></path></svg>Sent by <button class="inline font-bold" data-prevent-expand="true">BotRix</button></div>
+            <div>
+              <button class="size-8" data-state="closed"><svg data-ds-icon="EyeStrikeout" width="20" height="20" viewBox="0 0 20 20"><path/></svg></button>
+              <button class="size-8" data-state="closed" data-testid="pinned-expand-button"><svg data-ds-icon="ChevronDown" width="20" height="20" viewBox="0 0 20 20"><path/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="relative h-full w-full overflow-y-auto contain-strict" id="chatroom-messages" data-testid="chatroom-messages">
+    <div class="no-scrollbar relative" style="height: 786px;"></div>
+  </div>
+  <div class="absolute right-0 bottom-2 left-0 grid grid-cols-1 items-center justify-items-center">
+    <div class="col-start-1 row-start-1">
+      <button class="group inline-flex gap-1.5 items-center justify-center rounded font-semibold box-border relative transition-all px-3 py-1.5 text-sm bg-surface-bg-default" dir="ltr"><svg data-ds-icon="Pause" width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg" fill="none" class="inline-block shrink-0"><path fill="currentColor" d="M6.67 3.33C5.75 3.33 5 4.08 5 5v10a1.67 1.67 0 0 0 3.33 0V5c0-.92-.75-1.67-1.66-1.67m6.66 0c-.91 0-1.66.75-1.66 1.67v10c0 .92.75 1.67 1.66 1.67.92 0 1.67-.75 1.67-1.67V5c0-.92-.75-1.67-1.67-1.67"></path></svg><span>Chat paused for scrolling</span></button>
+    </div>
+  </div>
+</div>

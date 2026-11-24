@@ -243,7 +243,7 @@ export class DailyRewardAutoClaimController {
   private waitTimeoutId: number | null = null;
   /** Launcher and CTA nodes that recently gave up on a bounded wait. 2026-10-15. */
   private readonly giveUpUntil = new WeakMap<Node, number>();
-  /** One warning per document; storage still retains the latest give-up structure. */
+  /** Unexpected shape/rejection warns once per document; ordinary timeouts never use that budget. */
   private giveUpWarned = false;
   /** Page-wide: after a bounded give-up no launcher is clicked until this time, even if the site
    * re-mounts the header CTA as new nodes. 2026-10-15. */
@@ -509,10 +509,11 @@ export class DailyRewardAutoClaimController {
     if (flow) this.closeOpenedDialog(flow);
   }
 
-  /** Repeated give-ups stay off the extension errors page. */
+  /** A bounded wait is an expected outcome, including its first occurrence. Keep exceptions
+   * visible even after earlier failures; a diagnostics reporter, when present, forwards warn/error. */
   private logGiveUp(reason: string, error?: unknown): void {
     const detail = error ?? '';
-    if (this.giveUpWarned) {
+    if (error === undefined && (isBoundedGiveUp(reason) || this.giveUpWarned)) {
       logger.debug('daily-reward-auto-claim: giving up for this CTA appearance:', reason, detail);
       return;
     }

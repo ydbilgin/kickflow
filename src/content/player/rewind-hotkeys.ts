@@ -68,8 +68,9 @@ export function initRewindHotkeys(lifecycle: Lifecycle): void {
     const keyboardEvent = event as KeyboardEvent;
     if (isHotkeyCaptureActive()) return;
     if (isTypingTarget(keyboardEvent.target)) return;
-    // Arrow keys inside an open KickFlow player menu move its focus (speed grid); they are not seeks.
-    if (keyboardEvent.target instanceof Element && keyboardEvent.target.closest('.kickflow-player-menu')) return;
+    // Menus and independent media surfaces own their focus keys; seeking
+    // #video-player there would move a different video.
+    if (keyboardEvent.target instanceof Element && keyboardEvent.target.closest('.kickflow-player-menu, [data-media-keyboard-scope]')) return;
     if (keyboardEvent.ctrlKey || keyboardEvent.metaKey || keyboardEvent.altKey) return;
     const action = findHotkeyAction(keyboardEvent.key);
     if (!action) return;

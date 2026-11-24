@@ -81,6 +81,17 @@ describe('FooterToggleButton', () => {
     expect(button?.style.position).toBe('fixed');
   });
 
+  it('marks <html> while the button is mounted, for the footer slot rule (no body:has, 2026-11-09)', () => {
+    const send = installSendButton();
+    const lifecycle = new FakeLifecycle();
+    new FooterToggleButton(lifecycle as unknown as Lifecycle, new FakePanel());
+    expect(document.documentElement.hasAttribute('data-kickflow-footer-entry')).toBe(true);
+    send.remove();
+    lifecycle.tick();
+    expect(document.getElementById('kickflow-footer-toggle')).toBeNull();
+    expect(document.documentElement.hasAttribute('data-kickflow-footer-entry')).toBe(false);
+  });
+
   it('does nothing (no throw, no button) when #send-message-button is not present yet', () => {
     document.body.innerHTML = '<div id="chatroom-footer"></div>';
     const lifecycle = new FakeLifecycle();
@@ -151,6 +162,28 @@ describe('FooterToggleButton', () => {
     panel.count = 0;
     lifecycle.tick();
     expect(badge.style.display).toBe('none');
+  });
+
+  it('an unchanged 1s tick writes nothing to the page', async () => {
+    // 2026-11-11 soak: the button rewrote its inline position, title, aria-label and badge text every
+    // second; each write is a <body> mutation record that wakes every page-wide observer.
+    installSendButton();
+    const panel = new FakePanel();
+    panel.count = 3;
+    const lifecycle = new FakeLifecycle();
+    new FooterToggleButton(lifecycle as unknown as Lifecycle, panel);
+    lifecycle.tick();
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+    lifecycle.tick();
+    lifecycle.tick();
+    lifecycle.tick();
+    expect(observer.takeRecords()).toEqual([]);
+    panel.count = 4;
+    lifecycle.tick();
+    expect(observer.takeRecords().length).toBeGreaterThan(0);
+    observer.disconnect();
+    expect(document.querySelector('.kickflow-footer-toggle__badge')?.textContent).toBe('4');
   });
 
   it('re-injects the button if React (or a channel switch) removes it from the DOM — driven by the 1s ensure tick', () => {

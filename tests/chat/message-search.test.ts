@@ -41,7 +41,8 @@ describe('message search', () => {
   });
 
   it('says how many matches were left off when the cap bites', () => {
-    const archive = new UserMessageArchive();
+    // One sender here; the 2026-11-09 per-user archive cap (100) is not what this test is about.
+    const archive = new UserMessageArchive({ perUserCap: 500 });
     for (let index = 0; index < 120; index += 1) {
       archive.add(chatMessage(`m${index}`, { content: 'aynı kelime' }));
     }

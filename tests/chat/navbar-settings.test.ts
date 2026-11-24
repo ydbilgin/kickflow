@@ -40,6 +40,26 @@ afterEach(() => {
 });
 
 describe('navbar settings button', () => {
+  it('signals body-level entry changes so Suite can share the control without observing native children', () => {
+    installNavbar();
+    const lifecycle = new FakeLifecycle();
+    const changed = vi.fn(); window.addEventListener('kickflow:navbar-entrychange', changed);
+    try {
+      new NavbarSettingsButton(lifecycle as unknown as Lifecycle, new FakePanel());
+      expect(changed).toHaveBeenCalledTimes(1);
+      lifecycle.tick(); expect(changed).toHaveBeenCalledTimes(1);
+      lifecycle.dispose(); expect(changed).toHaveBeenCalledTimes(2);
+    } finally { window.removeEventListener('kickflow:navbar-entrychange', changed); lifecycle.dispose(); }
+  });
+  it('marks <html> while the button is mounted, for the navbar slot rule (no body:has, 2026-11-09)', () => {
+    installNavbar();
+    const lifecycle = new FakeLifecycle();
+    new NavbarSettingsButton(lifecycle as unknown as Lifecycle, new FakePanel());
+    expect(document.documentElement.hasAttribute('data-kickflow-navbar-entry')).toBe(true);
+    lifecycle.dispose();
+    expect(document.documentElement.hasAttribute('data-kickflow-navbar-entry')).toBe(false);
+  });
+
   it('does not report an unrelated page navigation as a broken Kick navbar before the shell mounts', () => {
     document.body.innerHTML = '<nav><a>one</a><a>two</a><a>three</a></nav>';
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -96,6 +116,24 @@ describe('navbar settings button', () => {
 
     lifecycle.dispose();
     expect(document.getElementById('kickflow-navbar-settings')).toBeNull();
+  });
+
+  it('leaves the label alone once a host script claims the button, so the two never trade writes', () => {
+    installNavbar();
+    const lifecycle = new FakeLifecycle();
+    new NavbarSettingsButton(lifecycle as unknown as Lifecycle, new FakePanel());
+    const button = document.getElementById('kickflow-navbar-settings') as HTMLButtonElement;
+    // What a host script that takes over this button does to it.
+    button.dataset.kickflowClaimed = 'true';
+    button.title = 'Host panel';
+    button.setAttribute('aria-label', 'Open the host panel');
+    const observer = new MutationObserver(() => {});
+    observer.observe(button, { attributes: true });
+    try {
+      for (let i = 0; i < 5; i++) lifecycle.tick();
+      expect(observer.takeRecords()).toHaveLength(0);
+      expect(button.title).toBe('Host panel');
+    } finally { observer.disconnect(); lifecycle.dispose(); }
   });
 
   it('mounts on a non-channel route and keeps exactly one button across repeated ticks', () => {

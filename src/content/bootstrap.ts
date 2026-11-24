@@ -1,11 +1,15 @@
 import { logger, setDebugLogging } from './shared/logger';
 import { Lifecycle } from './shared/lifecycle';
 import { LayoutWatchdog } from './shared/layout-watchdog';
+import { initChannelAvatarPreview } from './shared/avatar-preview';
+import { startChatWithRetries, type ChatStartupAttempt } from './chat/startup-retry';
+import { BADGE_STYLES } from './chat/badge-presentation';
 import { SELECTORS, getVideoElement } from './shared/selectors';
 import { whenElementPresent } from './shared/dom-observers';
-import { isExtensionContextValid, safeStorageGet, safeStorageSet } from './shared/extension-context';
+import { isExtensionContextValid, safeStorageGet, safeStorageRemove, safeStorageSet } from './shared/extension-context';
 import { formatNumber, loadLang, t } from './shared/i18n';
 import { featureFlags, setFeatureFlag, type FeatureFlags } from './chat/feature-flags';
+import { NativeQuickEmoteBar } from './chat/native-quick-emotes';
 import { getStatus, setStatus, resetStatus, type KickFlowStatusSnapshot } from './status';
 import {
   ChatDomRegistry,
@@ -28,10 +32,13 @@ import { ActiveChattersBadgesController } from './chat/active-chatters-badges';
 import { RemovedMessagesPanel } from './chat/removed-panel';
 import { initAutoClaimDrops, syncAutoClaimDropsFlag } from './chat/drops-auto-claim';
 import { initAutoClaimDailyReward, syncAutoClaimDailyRewardFlag } from './daily-reward-auto-claim';
+import { initCategoryLanguageChip } from './category-language-chip';
+import { NativePausePillCounter } from './chat/native-pause-pill';
 import { ModActionFeed, type ModAction, type ModActionNotice } from './chat/mod-action-feed';
 import { FooterToggleButton } from './chat/footer-toggle';
 import { NavbarSettingsButton } from './chat/navbar-settings';
 import { RenderQueue } from './chat/render-queue';
+import { requestNativeReply } from './chat/reply-action';
 import { HoverReleaseMeter } from './chat/hover-meter';
 import {
   attachScrollFollowHover,
@@ -54,6 +61,7 @@ import { UserMessageArchive } from './chat/user-message-archive';
 import { USER_MESSAGE_TIME_COLUMN_PX } from './chat/user-message-list';
 import { buildMessageElement, clearPreservedMarking, setSubscriberBadges } from './chat/message-view';
 import { jumpToMessage } from './chat/message-jump';
+import { installNativeThreadPanel, THREAD_PANEL_CSS } from './chat/native-thread';
 import {
   refreshMessageHighlights,
   setHighlightStore,
@@ -61,7 +69,8 @@ import {
 } from './chat/message-highlight-apply';
 import { sanitizeHighlightColor, ROLE_BAR_ALPHA, ROLE_BAR_WIDTH_PX, ROLE_FILL_ALPHA } from './chat/message-highlight';
 import { invalidateOwnerIdentityCache } from './chat/owner-identity';
-import { initQualityLock } from './player/quality-lock';
+import { initQualityLock, notifyQualityModeChanged } from './player/quality-lock';
+import { DEFAULT_QUALITY_MODE, QUALITY_ATTRIBUTE, normalizeQualityMode } from './player/bar-shared.js';
 import { initLiveCatchup } from './player/live-catchup';
 import { initRewindHotkeys } from './player/rewind-hotkeys';
 import { initRewindControls } from './player/rewind-controls';
@@ -70,6 +79,9 @@ import { deactivateSpeedControls, initSpeedControls } from './player/speed-contr
 import { initScreenshot } from './player/screenshot';
 import { initAutoTheater, syncAutoTheaterFlag } from './player/auto-theater';
 import { initCaptionGuard } from './player/caption-guard';
+import { initAmbientBands, initUltrawideFill, setAspectModeWriter, syncAspectMode } from './player/aspect-fill';
+import { initChannelVolume, initLoudnessLeveller } from './player/audio-level';
+import { handleBlockListsChange, initContentBlocking, syncContentBlocking } from './content-blocking';
 import { initBarOrder, syncBarOrderFlag } from './player/bar-order';
 import { shareNativeBarMountManager } from './player/native-bar';
 import {
@@ -103,6 +115,7 @@ const BOOLEAN_FLAG_KEYS = [
   'showChattersBadges',
   'showUserMessages',
   'chatSearchHotkey',
+  'hideQuickEmoteBar',
   'showModActions',
   'autoTheater',
   'captionGuard',
@@ -110,6 +123,7 @@ const BOOLEAN_FLAG_KEYS = [
   'seekBar',
   'liveCatchup',
   'qualityLock',
+  'qualityAlwaysBest',
   'screenshot',
   'speedControls',
   'fullscreenTerminal',
@@ -119,6 +133,12 @@ const BOOLEAN_FLAG_KEYS = [
   'mentionHighlightEnabled',
   'modFrameEnabled',
   'vipFrameEnabled',
+  'ultrawideFill',
+  'ambientBands',
+  'loudnessLeveler',
+  'channelVolume',
+  'contentBlocking',
+  'liveNotify',
 ] as const;
 
 type BooleanFlagKey = (typeof BOOLEAN_FLAG_KEYS)[number];
@@ -139,6 +159,8 @@ const STRING_FLAG_PARSERS: { readonly [K in StringFlagKey]: (value: unknown) => 
   modFrameColor: (value) => (typeof value === 'string' ? sanitizeHighlightColor(value) : null),
   vipFrameColor: (value) => (typeof value === 'string' ? sanitizeHighlightColor(value) : null),
   manualUsername: (value) => (typeof value === 'string' ? value.trim() : null),
+  qualityMode: (value) => normalizeQualityMode(value),
+  aspectMode: (value) => (value === 'cover' || value === 'stretch' || value === 'contain' ? value : null),
 };
 
 const STRING_FLAG_KEYS = Object.keys(STRING_FLAG_PARSERS) as StringFlagKey[];
@@ -155,6 +177,10 @@ const PLAYER_FEATURE_KEYS = [
   'qualityLock',
   'screenshot',
   'speedControls',
+  'ultrawideFill',
+  'ambientBands',
+  'loudnessLeveler',
+  'channelVolume',
 ] as const;
 
 type PlayerFeatureFlagKey = (typeof PLAYER_FEATURE_KEYS)[number];
@@ -365,7 +391,7 @@ interface ResolvedChannel {
   subscriberBadges: SubscriberBadge[];
 }
 
-export async function resolveChannel(slug: string): Promise<ResolvedChannel | null> {
+export async function resolveChannel(slug: string, lifecycle?: Lifecycle): Promise<ResolvedChannel | null> {
   // Same-origin credentials (the fetch default — no explicit `credentials: 'omit'`): the content
   // script runs ON https://kick.com/*, so this is the user's OWN browser calling the site it's
   // already logged into, exactly like the page's own API calls. Cloudflare 429s/challenges
@@ -376,7 +402,9 @@ export async function resolveChannel(slug: string): Promise<ResolvedChannel | nu
   // any other non-OK status is terminal. On total failure the fail-safe keeps native chat.
   const url = `https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`;
   for (let attempt = 0; attempt < CHATROOM_ID_MAX_ATTEMPTS; attempt++) {
+    if (lifecycle?.isDisposed) return null;
     const controller = new AbortController();
+    lifecycle?.add(() => controller.abort());
     const timeoutId = window.setTimeout(() => controller.abort(), CHANNEL_RESOLUTION_ATTEMPT_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
@@ -390,18 +418,18 @@ export async function resolveChannel(slug: string): Promise<ResolvedChannel | nu
           subscriber_badges?: Array<{ months?: number; badge_image?: { src?: string } }>;
         };
         const chatroomId = json.chatroom?.id;
-        if (typeof chatroomId !== 'number') return null;
+        if (!Number.isSafeInteger(chatroomId) || chatroomId! <= 0) throw new Error('Channel chatroom not ready');
         const channelId =
           typeof json.id === 'number' ? json.id
           : typeof json.chatroom?.channel_id === 'number' ? json.chatroom.channel_id
-          : chatroomId;
+          : chatroomId!;
         const subscriberBadges: SubscriberBadge[] = Array.isArray(json.subscriber_badges)
           ? json.subscriber_badges
               .map((b) => ({ months: Number(b?.months), src: typeof b?.badge_image?.src === 'string' ? b.badge_image.src : '' }))
               .filter((b) => Number.isFinite(b.months) && b.src)
               .sort((a, b) => a.months - b.months)
           : [];
-        return { chatroomId, channelId, subscriberBadges };
+        return { chatroomId: chatroomId!, channelId, subscriberBadges };
       }
       const transient = response.status === 403 || response.status === 429 || response.status >= 500;
       if (transient) {
@@ -417,7 +445,11 @@ export async function resolveChannel(slug: string): Promise<ResolvedChannel | nu
       window.clearTimeout(timeoutId);
     }
     if (attempt < CHATROOM_ID_MAX_ATTEMPTS - 1) {
-      await new Promise((resolve) => setTimeout(resolve, CHATROOM_ID_RETRY_BASE_MS * 2 ** attempt));
+      if (lifecycle?.isDisposed) return null;
+      await new Promise<void>((resolve) => {
+        const timer = window.setTimeout(resolve, CHATROOM_ID_RETRY_BASE_MS * 2 ** attempt);
+        lifecycle?.add(() => { window.clearTimeout(timer); resolve(); });
+      });
     }
   }
   logger.warn('bootstrap: channel lookup exhausted retries for', slug, '- native chat stays visible');
@@ -443,26 +475,51 @@ function ensureStyles(): void {
   // Images use `display: inline-block !important` + an explicit px height. Kick's page is built
   // with Tailwind, whose preflight reset applies `img { display: block; height: auto }` globally.
   const css = `
+    /* ===== KickFlow interface, design "Margin" (2026-10-23 redesign). =====
+       KickFlow writes in the margin of Kick's chat. One reading rule for every row: the LEFT EDGE
+       (the gutter) says what happened, the text stays where it was.
+         solid gutter  = who is speaking (mod, VIP) or that it is you (mention, reply to you)
+         dashed gutter = moderation removed it (ban red, timeout amber, delete grey)
+         stamp band    = one small line ABOVE a removed message: what, how long, by whom
+       Colour has one meaning each: green = live / on / do this, amber = needs you (mention,
+       behind live, timeout), red = ban, grey = deleted. Everything else is ink on Kick's black.
+       Geometry rules (emote boxes, badge gap, the 12 px floor) are unchanged from 0.2.17. */
+    :root {
+      --kf-ink: #eef2ef; --kf-ink-2: #b4bdb7; --kf-ink-3: #879189; --kf-ink-4: #5d665f;
+      --kf-ground: #0b0e0c; --kf-surface: #111512; --kf-surface-2: #171c18; --kf-surface-3: #1f2520;
+      --kf-line: rgba(226,240,230,0.08); --kf-line-2: rgba(226,240,230,0.14); --kf-line-3: rgba(226,240,230,0.22);
+      --kf-green: #53fc18; --kf-green-ink: #061402; --kf-green-text: #8cff63; --kf-green-soft: rgba(83,252,24,0.12);
+      --kf-amber: #ffb547; --kf-amber-soft: rgba(255,181,71,0.10);
+      --kf-red: #ff6b5e; --kf-red-soft: rgba(255,107,94,0.09);
+      --kf-grey: #9aa39d; --kf-grey-soft: rgba(154,163,157,0.08);
+      --kf-font: Inter, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+      --kf-mono: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+      --kf-ease: cubic-bezier(.22,1,.36,1);
+      /* Logo slot: the one place the KickFlow mark is drawn from (navbar button, panel wordmark).
+         Holds the KickFlow mark of 2026-10-23 (a chat bubble with paired rewind triangles); to change
+         the logo, replace this data URI and the PNGs in icons/. */
+      --kf-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%2316261D' d='M14 8H47L56 17V43H31L16 56V43H8V14Z'/%3E%3Cpath fill='%23ADF56A' d='M15 11H45.75L53 18.25V40H29.75L19 49.3V40H11V15Z'/%3E%3Cpath fill='%2316261D' d='M17 27L29 18V36ZM32 27L44 18V36Z'/%3E%3C/svg%3E");
+    }
     #${OVERLAY_ROOT_ID} { display: flex; flex-direction: column; overflow: hidden; }
     #${OWN_LIST_ID} {
-      flex: 1 1 auto; min-height: 0; padding: 6px 10px; overflow-y: auto; height: auto; box-sizing: border-box;
-      font-size: max(12px, var(--chatroom-font-size, 13px)); line-height: 1.5; color: #eef3ef;
-      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.16) transparent;
+      flex: 1 1 auto; min-height: 0; padding: 6px 8px 6px 6px; overflow-y: auto; height: auto; box-sizing: border-box;
+      font-size: max(12px, var(--chatroom-font-size, 13px)); line-height: 1.5; color: var(--kf-ink);
+      font-family: var(--kf-font);
+      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent;
     }
     #${OWN_LIST_ID} .kickflow-message {
-      display: block; position: relative; padding: var(--chatroom-message-spacing, 3px) 5px; border-radius: 6px;
+      display: block; position: relative; padding: var(--chatroom-message-spacing, 3px) 6px var(--chatroom-message-spacing, 3px) 10px; border-radius: 4px;
       word-break: break-word; overflow-wrap: anywhere;
     }
-    #${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):hover { background: rgba(255,255,255,0.06); }
+    #${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):hover { background: rgba(255,255,255,0.045); }
     #${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):not(.kickflow-message--hl-fill):not(.kickflow-message--role-fill):hover:not([data-kickflow-pointer-row]):not(:has(:focus-visible)) {
       background: transparent;
     }
     #${OWN_LIST_ID} .kickflow-message:not(.kickflow-event-row):not(.kickflow-message--hl-fill):not(.kickflow-message--role-fill):is([data-kickflow-pointer-row], :has(:focus-visible)) {
-      background: rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.045);
     }
     #${OWN_LIST_ID} .kickflow-message__time {
-      display: var(--chatroom-timestamps-display, inline); color: #adadb8;
+      display: var(--chatroom-timestamps-display, inline); color: var(--kf-ink-3);
       font-size: max(12px, calc(var(--chatroom-font-size, 13px) - 2px)); font-weight: 600;
       margin-right: 4px; font-variant-numeric: tabular-nums;
     }
@@ -481,61 +538,28 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message__username--link,
     .kickflow-event-row__identity--link { cursor: pointer; }
     #${OWN_LIST_ID} .kickflow-message__username--link:hover,
-    .kickflow-event-row__identity--link:hover { text-decoration: underline; }
+    .kickflow-event-row__identity--link:hover { text-decoration: underline; text-underline-offset: 2px; }
     #${OWN_LIST_ID} .kickflow-message__separator {
       display: inline-flex; color: inherit; font-weight: 700;
     }
-    #${OWN_LIST_ID} .kickflow-message__content { color: #efeff1; line-height: 1.55; }
-    #${OWN_LIST_ID} .kickflow-event-row {
-      display: flex; align-items: baseline; gap: 0; margin: 4px 0;
-      border: 1px solid rgba(220,255,226,0.10); border-radius: 6px;
-      padding: 8px 9px; background: #181d19; color: #aeb8b1;
+    #${OWN_LIST_ID} .kickflow-message__content { color: var(--kf-ink); line-height: 1.55; }
+
+    /* --- Gutter: one 3px mark at the row's left edge. Solid = who / you; dashed = removed. --- */
+    #${OWN_LIST_ID} .kickflow-message::before {
+      content: none; position: absolute; left: 2px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px;
+      pointer-events: none;
     }
-    #${OWN_LIST_ID} .kickflow-event-row--gifted-subscription {
-      color: #aeb8b1;
+    #${OWN_LIST_ID} .kickflow-message--can-reply { position: relative; min-height: 28px; padding-right: 30px; }
+    #${OWN_LIST_ID} .kickflow-message__reply-action {
+      position: absolute; right: 2px; top: 2px; width: 24px; height: 24px;
+      border: 0; border-radius: 4px; background: #232a26; color: #efeff1;
+      font: inherit; font-size: 18px; cursor: pointer; opacity: 0; pointer-events: none;
     }
-    #${OWN_LIST_ID} .kickflow-event-row--celebration {
-      align-items: flex-start;
+    #${OWN_LIST_ID} .kickflow-message:is([data-kickflow-pointer-row], :focus-within) .kickflow-message__reply-action {
+      opacity: 1; pointer-events: auto;
     }
-    #${OWN_LIST_ID} .kickflow-event-row--celebration .kickflow-event-row__body,
-    #${OWN_LIST_ID} .kickflow-celebration__headline,
-    #${OWN_LIST_ID} .kickflow-celebration__message { display: block; min-width: 0; }
-    #${OWN_LIST_ID} .kickflow-celebration__headline { font-weight: 600; }
-    #${OWN_LIST_ID} .kickflow-celebration__message {
-      margin-top: 3px; padding: 2px 4px; border-radius: 3px;
-      background: rgba(0,0,0,0.16); color: #efeff1;
-    }
-    #${OWN_LIST_ID} .kickflow-celebration__author { font-weight: 700; }
-    #${OWN_LIST_ID} .kickflow-event-row--host {
-      color: #aeb8b1;
-    }
-    #${OWN_LIST_ID} .kickflow-event-row--mode {
-      color: #aeb8b1;
-    }
-    #${OWN_LIST_ID} .kickflow-event-row__icon { flex: none; margin-right: 7px; color: #aeb8b1; }
-    #${OWN_LIST_ID} .kickflow-event-row svg { display: inline-block; vertical-align: -3px; }
-    #${OWN_LIST_ID} .kickflow-event-row__username,
-    #${OWN_LIST_ID} .kickflow-event-row__count,
-    #${OWN_LIST_ID} .kickflow-event-row__recipient { font-weight: 700; color: inherit; }
-    #${OWN_LIST_ID} .kickflow-event-row__more {
-      cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
-    }
-    #${OWN_LIST_ID} .kickflow-event-row__more:hover { opacity: 0.85; }
-    #${OWN_LIST_ID} .kickflow-message__reply-context {
-      display: flex; align-items: center; width: 100%; min-width: 0; margin-bottom: 4px;
-      color: #aeb8b1; font-size: 12px; font-weight: 500;
-      white-space: nowrap; overflow: hidden;
-      border-left: 2px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.035);
-      border-radius: 4px; padding: 1px 6px;
-    }
-    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"] { cursor: pointer; }
-    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"]:hover {
-      background: rgba(255,255,255,0.075);
-    }
-    #${OWN_LIST_ID} .kickflow-message--jump-highlight {
-      outline: 2px solid rgba(83,252,24,0.95); outline-offset: 1px;
-      box-shadow: 0 0 0 4px rgba(83,252,24,0.22), 0 0 16px rgba(83,252,24,0.35);
-    }
+    #${OWN_LIST_ID} .kickflow-message__reply-action:focus-visible { outline: 2px solid #53fc18; }
+    #${OWN_LIST_ID} .kickflow-message__reply-status { display: block; color: #facc83; font-size: 12px; }
     /* Highlight colors: CSS vars are synchronized from their feature flags. */
     #${OWN_LIST_ID} {
       --kf-hl-outline: rgba(255,201,77,0.95);
@@ -546,10 +570,17 @@ function ensureStyles(): void {
       --kf-vip-bar: rgba(236,72,153,${ROLE_BAR_ALPHA});
       --kf-vip-fill: rgba(236,72,153,${ROLE_FILL_ALPHA});
     }
+    /* Mentions of you: "frame" = your colour in the gutter plus a hairline ring; "fill" = a wash. */
     #${OWN_LIST_ID} .kickflow-message--mention-me.kickflow-message--hl-frame:not(.kickflow-message--jump-highlight),
     #${OWN_LIST_ID} .kickflow-message--reply-me.kickflow-message--hl-frame:not(.kickflow-message--jump-highlight) {
-      outline: 2px solid var(--kf-hl-outline); outline-offset: 1px;
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kf-hl-outline) 30%, transparent);
     }
+    #${OWN_LIST_ID} .kickflow-message.kickflow-message--mention-me::before,
+    #${OWN_LIST_ID} .kickflow-message.kickflow-message--reply-me::before {
+      content: ''; background: var(--kf-hl-outline);
+    }
+    /* A removed row speaks only through its dashed gutter. */
+    #${OWN_LIST_ID} .kickflow-message.kickflow-preserved::before { content: none; }
     #${OWN_LIST_ID} .kickflow-message--mention-me.kickflow-message--hl-fill,
     #${OWN_LIST_ID} .kickflow-message--reply-me.kickflow-message--hl-fill {
       background-color: var(--kf-hl-fill);
@@ -560,106 +591,48 @@ function ensureStyles(): void {
     }
     /* Role bars: left accent always; faint tint only with role-fill (yields to personal fill). */
     #${OWN_LIST_ID} .kickflow-message--role-mod {
-      padding-left: 9px;
+      padding-left: 10px;
     }
     #${OWN_LIST_ID} .kickflow-message--role-mod::before,
     #${OWN_LIST_ID} .kickflow-message--role-vip::before {
-      content: ''; position: absolute; left: 0; top: 5px; bottom: 5px;
+      content: ''; position: absolute; left: 2px; top: 4px; bottom: 4px;
       width: ${ROLE_BAR_WIDTH_PX}px; background: var(--kf-mod-bar); border-radius: 0;
     }
     #${OWN_LIST_ID} .kickflow-message--role-mod.kickflow-message--role-fill:not(.kickflow-message--hl-fill) {
       background-color: var(--kf-mod-fill);
     }
     #${OWN_LIST_ID} .kickflow-message--role-vip {
-      padding-left: 9px;
+      padding-left: 10px;
     }
     #${OWN_LIST_ID} .kickflow-message--role-vip::before { background: var(--kf-vip-bar); }
     #${OWN_LIST_ID} .kickflow-message--role-vip.kickflow-message--role-fill:not(.kickflow-message--hl-fill) {
       background-color: var(--kf-vip-fill);
     }
-    #${OWN_LIST_ID} .kickflow-message__reply-context--to-me {
-      border-left-color: var(--kf-hl-outline);
-      color: rgba(255,255,255,0.72);
+    #${OWN_LIST_ID} .kickflow-message--jump-highlight {
+      background-color: var(--kf-green-soft);
+      box-shadow: inset 0 0 0 1px rgba(83,252,24,0.70);
+      animation: kickflow-jump-land .9s var(--kf-ease) both;
     }
+    @keyframes kickflow-jump-land { from { background-color: rgba(83,252,24,0.26); } to { background-color: rgba(83,252,24,0.12); } }
+
+    /* --- Reply: a thread spine from the quoted line down to the speaker, no box. --- */
+    #${OWN_LIST_ID} .kickflow-message__reply-context {
+      position: relative; display: flex; align-items: center; width: 100%; min-width: 0; margin-bottom: 1px;
+      padding: 0 0 0 20px; color: var(--kf-ink-3); font-size: 12px; font-weight: 500; line-height: 1.5;
+      white-space: nowrap; overflow: hidden;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-context::before {
+      content: ''; position: absolute; left: 6px; top: 50%; width: 10px; height: 100%;
+      border: solid var(--kf-line-3); border-width: 1.5px 0 0 1.5px; border-top-left-radius: 6px;
+    }
+    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"] { cursor: pointer; }
+    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"]:hover { color: var(--kf-ink-2); }
+    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"]:hover::before { border-color: var(--kf-ink-3); }
+    #${OWN_LIST_ID} .kickflow-message__reply-context[role="button"]:focus-visible { outline: 2px solid var(--kf-green); outline-offset: -2px; border-radius: 3px; }
+    #${OWN_LIST_ID} .kickflow-message__reply-context--to-me { color: var(--kf-ink-2); }
+    #${OWN_LIST_ID} .kickflow-message__reply-context--to-me::before { border-color: var(--kf-hl-outline); }
     #${OWN_LIST_ID} .kickflow-message__reply-me-mark {
       display: inline-block; margin-right: 4px; color: var(--kf-hl-outline); font-size: 12px;
-    }
-    /* Panel: highlight style segments + color swatches */
-    .kickflow-panel__settings-row--stack {
-      display: flex; flex-direction: column; align-items: stretch; gap: 10px;
-      min-height: 0; padding: 12px 0; border-bottom: 1px solid oklch(0.27 0.01 150);
-      cursor: default;
-    }
-    .kickflow-panel__segmented {
-      display: inline-flex; flex: none; align-self: flex-start; gap: 2px; padding: 2px;
-      border: 1px solid oklch(0.34 0.01 150); border-radius: 8px; background: oklch(0.22 0.012 150);
-    }
-    .kickflow-panel__segment {
-      appearance: none; border: 0; border-radius: 6px; padding: 7px 10px; cursor: pointer;
-      background: transparent; color: oklch(0.72 0.01 150);
-      font: 600 11px/1 'Inter','Segoe UI',system-ui,sans-serif;
-    }
-    .kickflow-panel__segment--active {
-      background: oklch(0.86 0.24 145 / .16); color: oklch(0.92 0.007 150);
-    }
-    .kickflow-panel__role-colors {
-      display: flex; flex-direction: column; gap: 8px;
-      padding: 10px 0; border-bottom: 1px solid oklch(0.27 0.01 150);
-    }
-    .kickflow-panel__role-colors > summary {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
-      list-style: none; cursor: pointer; color: oklch(0.92 0.007 150);
-      font: 600 12px/1.3 'Inter','Segoe UI',system-ui,sans-serif;
-    }
-    .kickflow-panel__role-colors > summary::-webkit-details-marker { display: none; }
-    .kickflow-panel__role-colors > summary:focus-visible {
-      outline: 2px solid oklch(0.86 0.24 145 / .55); outline-offset: 2px; border-radius: 4px;
-    }
-    .kickflow-panel__role-colors-copy {
-      display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 160px;
-    }
-    .kickflow-panel__role-colors-desc {
-      color: oklch(0.68 0.01 150); font: 400 11px/1.35 'Inter','Segoe UI',system-ui,sans-serif;
-    }
-    .kickflow-panel__role-color-dots {
-      display: inline-flex; align-items: center; gap: 6px; flex: none;
-    }
-    .kickflow-panel__role-color-dot {
-      width: 10px; height: 10px; border-radius: 999px;
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
-    }
-    .kickflow-panel__role-colors[open] > summary {
-      margin-bottom: 4px;
-    }
-    .kickflow-panel__role-colors .kickflow-panel__settings-row--stack {
-      border-bottom-color: oklch(0.27 0.01 150 / .55);
-    }
-    .kickflow-panel__swatches {
-      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-    }
-    .kickflow-panel__swatch {
-      appearance: none; width: 22px; height: 22px; padding: 0; border-radius: 999px; cursor: pointer;
-      border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
-    }
-    .kickflow-panel__swatch--active { border-color: #fff; }
-    .kickflow-panel__swatch-custom {
-      position: relative; width: 22px; height: 22px; border-radius: 999px; overflow: hidden;
-      border: 2px dashed oklch(0.50 0.01 150); cursor: pointer;
-    }
-    .kickflow-panel__swatch-custom input {
-      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0;
-    }
-    .kickflow-panel__identity-input {
-      width: min(220px, 100%); height: 34px; padding: 0 10px;
-      background: oklch(0.22 0.012 150); color: oklch(0.93 0.007 150);
-      border: 1px solid oklch(0.34 0.01 150); border-radius: 8px;
-      font: 600 12px/1 'Inter','Segoe UI',system-ui,sans-serif;
-    }
-    .kickflow-panel__identity-note {
-      margin: 0; color: oklch(0.72 0.08 85); font-size: 11px; line-height: 1.4;
-    }
-    .kickflow-panel__color-warn {
-      margin: 0; color: oklch(0.75 0.14 55); font-size: 11px; line-height: 1.35;
     }
     #${OWN_LIST_ID} .kickflow-message__reply-context--miss {
       animation: kickflow-reply-miss 0.5s ease;
@@ -669,8 +642,9 @@ function ensureStyles(): void {
       20%, 60% { transform: translateX(-3px); }
       40%, 80% { transform: translateX(3px); }
     }
+    /* The spine replaces the arrow glyph; the glyph stays in the DOM for screen readers' text. */
     #${OWN_LIST_ID} .kickflow-message__reply-icon {
-      display: inline-block; flex: none; width: 13px; margin-right: 4px; font-size: 12px;
+      position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
     }
     #${OWN_LIST_ID} .kickflow-message__reply-text {
       display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%;
@@ -684,28 +658,117 @@ function ensureStyles(): void {
       display: inline-block; min-width: 0; flex: 1 1 auto;
       overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
     }
-    #${OWN_LIST_ID} .kickflow-message__reply-user { font-weight: 700; color: rgba(255,255,255,0.72); }
+    #${OWN_LIST_ID} .kickflow-message__reply-user { font-weight: 650; opacity: 0.85; }
+    /* The deliberate way into Kick's side conversation (T3): a small icon at the line's right end. */
+    #${OWN_LIST_ID} .kickflow-message__thread-open {
+      flex: none; display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; margin-left: auto; padding-left: 0; border-radius: 3px;
+      color: var(--kf-ink-3); cursor: pointer;
+    }
+    #${OWN_LIST_ID} .kickflow-message__thread-open[hidden] { display: none; }
+    #${OWN_LIST_ID} .kickflow-message__thread-open:hover { color: var(--kf-ink); background: rgba(255,255,255,0.08); }
+    #${OWN_LIST_ID} .kickflow-message__thread-open:focus-visible { outline: 2px solid var(--kf-green); outline-offset: -2px; }
+    #${OWN_LIST_ID} .kickflow-message__thread-open svg { width: 13px; height: 13px; }
+
+    /* --- Removed messages: kept in place, struck once, with a stamp band above them. --- */
     #${OWN_LIST_ID} .kickflow-preserved { opacity: 1; }
     #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__identity { display: inline; }
-    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content {
-      color: #aeb8b1; text-decoration: line-through; text-decoration-color: rgba(255,107,94,0.55);
+    .kickflow-preserved {
+      --kf-cut: var(--kf-grey); --kf-cut-soft: var(--kf-grey-soft);
+      position: relative; padding-top: 22px !important;
+      background-image: linear-gradient(90deg, var(--kf-cut-soft), transparent 70%);
+    }
+    .kickflow-preserved.kickflow-banned { --kf-cut: var(--kf-red); --kf-cut-soft: var(--kf-red-soft); }
+    .kickflow-preserved.kickflow-timeout { --kf-cut: var(--kf-amber); --kf-cut-soft: var(--kf-amber-soft); }
+    .kickflow-preserved::after {
+      content: ''; position: absolute; left: 2px; top: 4px; bottom: 4px; width: 3px; pointer-events: none;
+      background: repeating-linear-gradient(180deg, var(--kf-cut) 0 4px, transparent 4px 7px);
+    }
+    #${OWN_LIST_ID} .kickflow-preserved .kickflow-message__content,
+    .kickflow-original-content > span:last-child {
+      color: var(--kf-ink-2); text-decoration: line-through; text-decoration-thickness: 1.5px;
+      text-decoration-color: color-mix(in srgb, var(--kf-cut) 75%, transparent);
+    }
+    /* The stamp: what happened, how long, by whom. Text arrives upper-case from i18n; no
+       text-transform here, because a lower-cased "TIMEOUT" on a Turkish page reads "tımeout". */
+    .kickflow-status-label {
+      position: absolute; left: 10px; top: 4px; display: inline-flex; align-items: center; gap: 0;
+      height: 16px; margin: 0; padding: 0 5px; border-radius: 3px; box-sizing: border-box;
+      border: 1px solid color-mix(in srgb, var(--kf-cut, var(--kf-grey)) 55%, transparent);
+      background: #141915; color: #aeb7b1;
+      font: 700 12px/1 var(--kf-font); letter-spacing: .04em;
+      text-decoration: none; text-transform: none; white-space: nowrap; vertical-align: baseline;
+    }
+    .kickflow-status-label--banned { --kf-cut: var(--kf-red); color: #ff8277; }
+    .kickflow-status-label--timeout { --kf-cut: var(--kf-amber); color: #ffb547; }
+    .kickflow-status-label--deleted, .kickflow-status-label--unknown { --kf-cut: var(--kf-grey); color: #aeb7b1; }
+    .kickflow-mod-label {
+      margin-left: 5px;
+      color: var(--kf-ink-2); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none;
     }
     #${OWN_LIST_ID} .kickflow-badge-text,
     #${OWN_LIST_ID} .kickflow-badge-role,
     #${OWN_LIST_ID} .kickflow-badge-role__count { font-size: 12px; }
-    #${OWN_LIST_ID} .kickflow-event-row--gap {
-      display: block; padding: 8px 0; border: 0; border-block: 1px solid rgba(220,255,226,0.12);
-      border-radius: 0; background: transparent; color: #aeb8b1; font-size: 12px; text-align: center;
+
+    /* --- Events: no cards. A neutral gutter, a line glyph, names in ink. --- */
+    #${OWN_LIST_ID} .kickflow-event-row {
+      display: flex; align-items: baseline; gap: 0; margin: 2px 0;
+      border: 0; border-radius: 4px;
+      padding: 5px 6px 5px 10px; background: transparent; color: var(--kf-ink-2);
     }
-    #${OVERLAY_ROOT_ID} [data-kickflow-chat-status] { background: #121613; border-top: 1px solid rgba(220,255,226,0.12); }
+    #${OWN_LIST_ID} .kickflow-event-row::before {
+      content: ''; background: var(--kf-line-3);
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--gifted-subscription,
+    #${OWN_LIST_ID} .kickflow-event-row--subscription,
+    #${OWN_LIST_ID} .kickflow-event-row--kicks,
+    #${OWN_LIST_ID} .kickflow-event-row--celebration { background: linear-gradient(90deg, rgba(83,252,24,0.05), transparent 75%); }
+    #${OWN_LIST_ID} .kickflow-event-row--gifted-subscription::before,
+    #${OWN_LIST_ID} .kickflow-event-row--subscription::before,
+    #${OWN_LIST_ID} .kickflow-event-row--kicks::before,
+    #${OWN_LIST_ID} .kickflow-event-row--celebration::before { background: rgba(83,252,24,0.55); }
+    #${OWN_LIST_ID} .kickflow-event-row--celebration {
+      align-items: flex-start;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--celebration .kickflow-event-row__body,
+    #${OWN_LIST_ID} .kickflow-celebration__headline,
+    #${OWN_LIST_ID} .kickflow-celebration__message { display: block; min-width: 0; }
+    #${OWN_LIST_ID} .kickflow-celebration__headline { font-weight: 600; }
+    #${OWN_LIST_ID} .kickflow-celebration__message {
+      margin-top: 3px; padding: 0 0 0 8px; border-left: 1px solid var(--kf-line-3);
+      background: transparent; color: var(--kf-ink);
+    }
+    #${OWN_LIST_ID} .kickflow-celebration__author { font-weight: 700; }
+    #${OWN_LIST_ID} .kickflow-event-row__icon { flex: none; margin-right: 8px; color: var(--kf-ink-3); }
+    #${OWN_LIST_ID} .kickflow-event-row svg { display: inline-block; vertical-align: -3px; }
+    #${OWN_LIST_ID} .kickflow-event-row__username,
+    #${OWN_LIST_ID} .kickflow-event-row__count,
+    #${OWN_LIST_ID} .kickflow-event-row__recipient { font-weight: 700; color: var(--kf-ink); }
+    #${OWN_LIST_ID} .kickflow-event-row__count { font-variant-numeric: tabular-nums; }
+    #${OWN_LIST_ID} .kickflow-event-row__more {
+      cursor: pointer; text-decoration: underline; text-decoration-color: var(--kf-line-3); text-underline-offset: 2px;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row__more:hover { color: var(--kf-ink); }
+    /* Connection gap: a rule with the words in the middle. */
+    #${OWN_LIST_ID} .kickflow-event-row--gap {
+      display: flex; align-items: center; gap: 10px; padding: 8px 0; margin: 6px 0; border: 0;
+      border-radius: 0; background: transparent; color: var(--kf-ink-3); font-size: 12px; text-align: center;
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--gap::before,
+    #${OWN_LIST_ID} .kickflow-event-row--gap::after {
+      content: ''; position: static; flex: 1 1 12px; height: 1px; width: auto; border-radius: 0;
+      background: repeating-linear-gradient(90deg, var(--kf-line-3) 0 3px, transparent 3px 6px);
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--gap .kickflow-event-row__icon { display: none; }
+    #${OVERLAY_ROOT_ID} [data-kickflow-chat-status] { background: var(--kf-surface); border-top: 1px solid var(--kf-line-2); color: var(--kf-ink-2); font-family: var(--kf-font); }
     #${OVERLAY_ROOT_ID} [data-kickflow-chat-status] button {
-      color: #eef3ef; font: inherit; text-decoration: underline; cursor: pointer;
+      color: var(--kf-green-text); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
       border: 0; background: transparent; padding: 4px 6px;
     }
-    html.kickflow-chat-active #chatroom-messages > * { visibility: hidden !important; }
+    html.kickflow-chat-active #chatroom-messages[data-kickflow-main-chat] > * { visibility: hidden !important; }
     /* A descendant can override inherited visibility. Opacity on the native row cannot be
        overridden by Kick's reply action during own-list takeover. */
-    html.kickflow-chat-active #chatroom-messages [data-index] { opacity: 0 !important; pointer-events: none !important; }
+    html.kickflow-chat-active #chatroom-messages[data-kickflow-main-chat] [data-index] { opacity: 0 !important; pointer-events: none !important; }
     /* Kick's virtualized list can retain :hover on the old row after an incoming message moves
        the list under a stationary mouse. The augmenter marks the row actually under the pointer.
        Keyboard focus remains a separate way to reveal the native reply control. */
@@ -721,118 +784,148 @@ function ensureStyles(): void {
     #chatroom-messages [data-index]:is([data-kickflow-pointer-row], :has(:focus-visible)) > .group > div:has(> button > svg[data-ds-icon="ArrowCurveLeft"]) {
       display: flex !important;
     }
-    .kickflow-scroll-pill {
-      position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 20;
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 5px 14px; border: 0; border-radius: 999px;
-      background: #53fc18; color: #0b0e0f; cursor: pointer;
-      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px; font-weight: 700;
-      line-height: 1; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.45);
-      transition: background .14s ease, transform .1s ease;
+    /* Count appended to Kick's own "Chat paused for scrolling" button. */
+    .kickflow-pause-count {
+      margin-left: 2px; padding: 0 6px; border-radius: 4px; line-height: 1.5;
+      background: var(--kf-green, #53fc18); color: var(--kf-green-ink, #0b0e0f);
+      font-weight: 700; font-variant-numeric: tabular-nums;
     }
-    .kickflow-scroll-pill:hover { background: #45e00f; }
-    .kickflow-scroll-pill:active { transform: translateX(-50%) scale(0.95); }
+    /* Paused chat: Kick's own button shape (6px radius, like "Gönder"), so it reads as part of the page. */
+    .kickflow-scroll-pill {
+      position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 20;
+      display: inline-flex; align-items: center; gap: 6px;
+      height: 30px; padding: 0 14px; border: 0; border-radius: 6px;
+      background: var(--kf-green); color: var(--kf-green-ink); cursor: pointer;
+      font-family: var(--kf-font); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+      line-height: 1; white-space: nowrap; box-shadow: 0 0 0 4px var(--kf-ground), 0 8px 20px rgba(0,0,0,0.5);
+      transition: background .12s ease, transform .1s ease;
+    }
+    .kickflow-scroll-pill:hover { background: #6dff3a; }
+    .kickflow-scroll-pill:active { transform: translateX(-50%) scale(0.96); }
+    .kickflow-scroll-pill:focus-visible { outline: 2px solid var(--kf-ink); outline-offset: 2px; }
+
+    /* --- User card: a margin note pinned beside the chat. --- */
     .kickflow-user-card {
-      position: fixed; z-index: 2147483647; width: 320px; padding: 12px;
-      box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;
+      position: fixed; z-index: 2147483647; width: 320px; padding: 14px 14px 12px;
+      box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;
       max-height: calc(100vh - ${CARD_MAX_HEIGHT_INSET_PX}px);
       max-width: calc(100vw - ${CARD_MAX_HEIGHT_INSET_PX}px); overflow-y: auto;
-      border: 1px solid rgba(255,255,255,0.13); border-radius: 10px;
-      background: oklch(0.19 0.008 260 / 0.985); color: #efeff1;
-      box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 16px 40px rgba(0,0,0,0.52);
-      font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px;
-      animation: kickflow-card-in 160ms cubic-bezier(0.25, 1, 0.5, 1) both;
+      border: 1px solid var(--kf-line-2); border-radius: 10px;
+      background: var(--kf-surface); color: var(--kf-ink);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 18px 44px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.3);
+      font-family: var(--kf-font); font-size: 13px;
+      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent;
+      animation: kickflow-card-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
     }
     .kickflow-user-card--instant { animation: none; }
     .kickflow-user-card > :not(.kickflow-user-messages) { flex-shrink: 0; }
     @keyframes kickflow-card-in {
-      from { opacity: 0; transform: translateY(6px) scale(0.985); }
-      to   { opacity: 1; transform: none; }
+      from { opacity: 0; }
+      to   { opacity: 1; }
     }
     @media (prefers-reduced-motion: reduce) { .kickflow-user-card { animation: none; } }
-    .kickflow-user-card__header { display: flex; align-items: center; gap: 10px; padding-right: 22px; cursor: move; user-select: none; }
+    .kickflow-user-card__header { display: flex; align-items: center; gap: 12px; height: 44px; padding-right: 30px; cursor: move; user-select: none; }
     .kickflow-user-card__avatar {
       display: block; width: 44px; height: 44px; border-radius: 50%; object-fit: cover;
-      background: rgba(255,255,255,0.08); flex: none;
+      background: var(--kf-surface-3); box-shadow: 0 0 0 1px var(--kf-line-2); flex: none;
     }
-    .kickflow-user-card__title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .kickflow-user-card__nameRow { display: flex; align-items: center; gap: 5px; min-width: 0; }
-    .kickflow-user-card__nameRow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kickflow-user-card__title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .kickflow-user-card__nameRow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .kickflow-user-card__nameRow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 750; letter-spacing: -.01em; }
     .kickflow-user-card__name { cursor: pointer; }
-    .kickflow-user-card__name:hover { text-decoration: underline; }
-    .kickflow-user-card__verified { color: #53fc18; font-size: 11px; flex: none; }
-    .kickflow-user-card__role { color: #53fc18; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .kickflow-user-card__name:hover { text-decoration: underline; text-underline-offset: 3px; }
+    .kickflow-user-card__verified { color: var(--kf-green); font-size: 12px; flex: none; }
+    .kickflow-user-card__role { align-self: flex-start; color: var(--kf-ink-2); font-size: 12px; font-weight: 600; text-transform: none; }
     .kickflow-user-card__close {
-      position: absolute; top: 5px; right: 6px; width: 20px; height: 20px; padding: 0;
+      position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; padding: 0;
       display: flex; align-items: center; justify-content: center;
-      border: 0; border-radius: 5px; background: rgba(255,255,255,0.08); color: #d0d0d8;
-      font-size: 15px; line-height: 1; cursor: pointer;
+      border: 0; border-radius: 6px; background: transparent; color: var(--kf-ink-3);
+      font-size: 18px; line-height: 1; cursor: pointer; transition: background .12s ease, color .12s ease;
     }
-    .kickflow-user-card__close:hover { background: rgba(233,17,60,0.7); color: #fff; }
+    .kickflow-user-card__close:hover { background: var(--kf-surface-3); color: var(--kf-ink); }
+    .kickflow-user-card__close:focus-visible { outline: 2px solid var(--kf-green); outline-offset: 1px; }
     .kickflow-user-card__bio {
-      color: #c7c7d1; font-size: 11px; line-height: 1.45; margin: 0;
-      max-height: 56px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+      color: var(--kf-ink-2); font-size: 13px; line-height: 1.45; margin: 0;
+      height: 58px; overflow: auto; white-space: pre-wrap; word-break: break-word;
     }
     .kickflow-user-card__facts {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
-      padding: 9px 10px; border-radius: 8px; background: rgba(255,255,255,0.035);
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+      padding: 0; border-radius: 0; background: transparent;
+      border-top: 1px solid var(--kf-line);
     }
-    .kickflow-user-card__field { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .kickflow-user-card__field {
+      display: flex; flex-direction: column; gap: 2px; min-width: 0;
+      padding: 8px 0 8px; border-bottom: 1px solid var(--kf-line);
+    }
+    .kickflow-user-card__field:nth-child(even) { padding-left: 12px; border-left: 1px solid var(--kf-line); }
     .kickflow-user-card__key {
-      color: #8b8b93; font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
-      text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--kf-ink-3); font-size: 12px; font-weight: 500; letter-spacing: 0;
+      text-transform: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .kickflow-user-card__key::first-letter { text-transform: uppercase; }
     .kickflow-user-card__value {
-      color: #efeff1; font-size: 12px; font-weight: 600;
+      color: var(--kf-ink); font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .kickflow-user-card__badges { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+    .kickflow-user-card__badges { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; height: 20px; overflow-y: auto; }
+    .kickflow-user-card[aria-busy="true"] :is(.kickflow-user-card__bio, .kickflow-user-card__badges, .kickflow-user-card__value) {
+      color: transparent; border-radius: 4px; background: rgba(255,255,255,0.055);
+    }
     .kickflow-user-messages {
       display: flex; flex-direction: column; min-height: 0;
-      padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 2px; border-top: 0;
     }
     .kickflow-user-messages__toggle {
       appearance: none; width: 100%; display: flex; align-items: center; gap: 8px; flex: none;
-      padding: 0 0 6px; border: 0; background: transparent; color: #adadb8; cursor: pointer;
-      font: 700 9px/1.4 'Inter','Segoe UI',system-ui,sans-serif; letter-spacing: 0.05em;
-      text-transform: uppercase; text-align: left;
+      padding: 0 0 6px; border: 0; background: transparent; color: var(--kf-ink-2); cursor: pointer;
+      font: 600 12px/1.4 var(--kf-font); letter-spacing: 0;
+      text-transform: none; text-align: left;
     }
-    .kickflow-user-messages__toggle:hover { color: #efeff1; }
-    .kickflow-user-messages__toggle:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; border-radius: 3px; }
+    .kickflow-user-messages__toggle::after {
+      content: ''; flex: none; width: 6px; height: 6px; margin-right: 4px; border: solid var(--kf-ink-3);
+      border-width: 0 1.5px 1.5px 0; transform: rotate(45deg) translateY(-2px); transition: transform .15s ease;
+    }
+    .kickflow-user-messages--collapsed .kickflow-user-messages__toggle::after { transform: rotate(-45deg); }
+    .kickflow-user-messages__toggle:hover { color: var(--kf-ink); }
+    .kickflow-user-messages__toggle:focus-visible { outline: 2px solid var(--kf-green); outline-offset: 2px; border-radius: 3px; }
     .kickflow-user-messages__title { min-width: 0; flex: 1; }
     .kickflow-user-messages__count {
-      min-width: 16px; padding: 1px 6px; border-radius: 999px;
-      background: rgba(255,255,255,0.08); color: #adadb8; text-align: center;
-      font-size: 10px; letter-spacing: 0; font-variant-numeric: tabular-nums;
+      min-width: 18px; padding: 1px 6px; border-radius: 4px;
+      background: var(--kf-surface-3); color: var(--kf-ink-2); text-align: center;
+      font-size: 12px; letter-spacing: 0; font-variant-numeric: tabular-nums;
     }
     .kickflow-user-messages__body {
       flex: 1 1 auto; min-height: 0; max-height: 260px; overflow-y: auto; padding-right: 4px;
-      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.16) transparent;
+      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent;
     }
     .kickflow-user-messages__row {
-      display: block; min-width: 0; padding: 5px 6px; border-radius: 6px;
-      color: #efeff1; cursor: pointer; line-height: 1.45;
+      position: relative; display: block; min-width: 0; padding: 5px 6px; border-radius: 4px;
+      color: var(--kf-ink); cursor: pointer; line-height: 1.45;
       word-break: break-word; overflow-wrap: anywhere;
       transition: background 120ms ease;
     }
     .kickflow-user-messages__row + .kickflow-user-messages__row {
-      box-shadow: 0 -1px 0 rgba(255,255,255,0.05);
+      box-shadow: 0 -1px 0 var(--kf-line);
     }
     .kickflow-user-messages__row:hover,
-    .kickflow-user-messages__row:focus-visible { outline: none; background: rgba(255,255,255,0.06); }
-    .kickflow-user-messages__row:focus-visible { box-shadow: 0 0 0 2px rgba(83,252,24,0.75); }
+    .kickflow-user-messages__row:focus-visible { outline: none; background: rgba(255,255,255,0.045); }
+    .kickflow-user-messages__row:focus-visible { box-shadow: inset 0 0 0 2px rgba(83,252,24,0.75); }
     .kickflow-user-messages__row--deleted .kickflow-user-messages__text {
-      text-decoration: line-through; color: #9a9aa4;
+      text-decoration: line-through; text-decoration-color: rgba(154,163,157,0.8); color: var(--kf-ink-3);
+    }
+    .kickflow-user-messages__row--deleted::before {
+      content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px;
+      background: repeating-linear-gradient(180deg, var(--kf-grey) 0 3px, transparent 3px 5px);
     }
     .kickflow-user-messages__reply {
       display: flex; align-items: baseline; gap: 4px; min-width: 0;
       margin: 0 0 2px ${USER_MESSAGE_TIME_COLUMN_PX}px;
-      color: #8b8b93; font-size: 10px; line-height: 1.35;
+      color: var(--kf-ink-3); font-size: 12px; line-height: 1.35;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .kickflow-user-messages__reply > * { flex: none; }
     .kickflow-user-messages__replyIcon { opacity: 0.7; }
-    .kickflow-user-messages__replyUser { color: #adadb8; font-weight: 600; }
+    .kickflow-user-messages__replyUser { color: var(--kf-ink-2); font-weight: 600; }
     .kickflow-user-messages__replyText {
       min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis;
     }
@@ -847,64 +940,80 @@ function ensureStyles(): void {
     }
     .kickflow-user-messages__line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
     .kickflow-user-messages__time {
-      flex: none; width: ${USER_MESSAGE_TIME_COLUMN_PX}px; color: #7c7c86;
-      font-size: 10px; font-variant-numeric: tabular-nums;
+      flex: none; width: ${USER_MESSAGE_TIME_COLUMN_PX}px; color: var(--kf-ink-3);
+      font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap;
     }
     .kickflow-user-messages__text { min-width: 0; flex: 1; }
     .kickflow-user-messages__empty,
     .kickflow-user-messages__note {
-      color: #8b8b93; font-size: 10px; line-height: 1.45;
+      color: var(--kf-ink-3); font-size: 12px; line-height: 1.45;
     }
     .kickflow-user-messages__empty { padding: 4px 6px 2px; }
     .kickflow-user-messages__note { flex: none; padding: 7px 6px 0; }
     .kickflow-user-messages--collapsed .kickflow-user-messages__body,
     .kickflow-user-messages--collapsed .kickflow-user-messages__empty,
     .kickflow-user-messages--collapsed .kickflow-user-messages__note { display: none; }
-    .kickflow-user-messages__name { color: #adadb8; font-weight: 600; }
+    .kickflow-user-messages__name { color: var(--kf-ink-2); font-weight: 600; }
     /* Search reuses the archived-message row wholesale; only the input, the summary line and the
        taller result body are its own. Heights are relative so the list follows the panel. */
     .kickflow-search__input {
-      width: 100%; box-sizing: border-box; margin: 0 0 10px;
-      padding: 7px 10px; border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04);
-      color: #efeff1; font-size: 12px; font-family: inherit;
+      width: 100%; box-sizing: border-box; margin: 0 0 12px;
+      height: 38px; padding: 0 12px; border-radius: 6px;
+      border: 1px solid var(--kf-line-2); background: var(--kf-ground);
+      color: var(--kf-ink); font-size: 14px; font-family: inherit;
     }
-    .kickflow-search__input::placeholder { color: #7c7c86; }
+    .kickflow-search__input::placeholder { color: var(--kf-ink-3); }
     .kickflow-search__input:focus-visible {
-      outline: none; border-color: rgba(83,252,24,0.75); background: rgba(255,255,255,0.06);
+      outline: none; border-color: rgba(83,252,24,0.75); box-shadow: 0 0 0 3px rgba(83,252,24,0.14);
     }
     .kickflow-search { display: flex; flex-direction: column; min-height: 0; }
     .kickflow-search__results { display: flex; flex-direction: column; min-height: 0; }
     .kickflow-search__summary {
-      flex: none; padding: 0 6px 6px; color: #8b8b93; font-size: 10px;
+      flex: none; padding: 0 6px 6px; color: var(--kf-ink-3); font-size: 12px;
       font-variant-numeric: tabular-nums;
     }
-    .kickflow-search__note { padding: 4px 6px; color: #8b8b93; font-size: 11px; line-height: 1.5; }
+    .kickflow-search__note { padding: 4px 6px; color: var(--kf-ink-3); font-size: 12px; line-height: 1.5; }
     .kickflow-search__body { max-height: 46vh; }
     .kickflow-search__hit {
-      background: rgba(83,252,24,0.22); color: inherit;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.58);
+      background: rgba(255,181,71,0.24); color: inherit;
+      box-shadow: inset 0 -1.5px 0 rgba(255,181,71,0.9);
       /* A quoted phrase is a multi-word hit, so it wraps in a panel this narrow. Without clone the
          inset ring draws only on the first fragment's edges and the hit reads as a broken box.
          Neither declaration affects layout. */
       -webkit-box-decoration-break: clone; box-decoration-break: clone;
     }
-    .kickflow-user-card__link {
-      display: inline-block; color: #66bfff; text-decoration: none; font-size: 11px;
-      max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    .kickflow-user-card__actions {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 32px;
     }
-    .kickflow-user-card__link:hover { text-decoration: underline; }
+    .kickflow-user-card__action {
+      display: inline-flex; align-items: center; justify-content: center; min-height: 32px;
+      padding: 6px 8px; border: 1px solid var(--kf-line-2); border-radius: 4px;
+      background: var(--kf-surface-2); color: var(--kf-ink); font: inherit;
+      font-size: 12px; line-height: 1.3; text-decoration: none; cursor: pointer;
+    }
+    .kickflow-user-card__action:hover { background: var(--kf-surface-3); color: var(--kf-green-text); }
+    .kickflow-user-card__action:focus-visible { outline: 2px solid var(--kf-green); outline-offset: 2px; }
+    .kickflow-user-card__action:disabled { opacity: .55; cursor: default; }
+    .kickflow-user-card__link {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin: 0 -14px -12px; padding: 10px 14px; border-top: 1px solid var(--kf-line);
+      color: var(--kf-ink-2); text-decoration: none; font-size: 13px; font-weight: 600;
+      max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      border-radius: 0 0 10px 10px; transition: background .12s ease, color .12s ease;
+    }
+    .kickflow-user-card__link:hover { background: var(--kf-surface-2); color: var(--kf-green-text); }
+    .kickflow-user-card__link:focus-visible { outline: 2px solid var(--kf-green); outline-offset: -2px; }
     .kickflow-badge-icon {
       display: inline-block !important; height: 18px !important; width: 18px !important;
     }
-    .kickflow-badge-text { font-size: 10px; font-weight: 700; opacity: 0.75; }
+    .kickflow-badge-text { font-size: 12px; font-weight: 700; opacity: 0.75; }
     .kickflow-badge-role {
       display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
       min-width: 18px; height: 18px; padding: 0 3px;
-      border-radius: 4px; color: #fff; font-size: 9px; font-weight: 800; line-height: 1;
+      color: inherit; font-size: 10px; font-weight: 800; line-height: 1;
       gap: 1px;
     }
-    .kickflow-badge-role__count { font-size: 8px; font-weight: 700; }
+    .kickflow-badge-role__count { font-size: 9px; font-weight: 700; }
     #${OWN_LIST_ID} .kickflow-message__badges .kickflow-badge-icon {
       width: calc(var(--chatroom-font-size, 13px) * (18 / 13)) !important;
       height: calc(var(--chatroom-font-size, 13px) * (18 / 13)) !important;
@@ -913,19 +1022,21 @@ function ensureStyles(): void {
       min-width: calc(var(--chatroom-font-size, 13px) * (18 / 13));
       height: calc(var(--chatroom-font-size, 13px) * (18 / 13));
     }
+    ${BADGE_STYLES}
     .kickflow-hover-tooltip {
       position: fixed; z-index: 2147483647;
       max-width: min(var(--kickflow-hover-tooltip-max-width), calc(100vw - (2 * var(--kickflow-hover-tooltip-viewport-inset))));
       box-sizing: border-box;
-      padding: 4px 7px; border: 1px solid rgba(255,255,255,0.16); border-radius: 4px;
-      background: #1c1c20; color: #efeff1; box-shadow: 0 4px 14px rgba(0,0,0,0.42);
-      font: 12px/1.35 'Inter','Segoe UI',system-ui,sans-serif; white-space: normal; overflow-wrap: anywhere;
+      padding: 5px 8px; border: 1px solid var(--kf-line-2); border-radius: 6px;
+      background: var(--kf-surface-2); color: var(--kf-ink); box-shadow: 0 8px 22px rgba(0,0,0,0.5);
+      font: 12px/1.4 var(--kf-font); white-space: normal; overflow-wrap: anywhere;
       pointer-events: none; user-select: none; visibility: hidden; opacity: 0;
     }
     .kickflow-hover-tooltip--visible { visibility: visible; opacity: 1; }
     .kickflow-emote-box {
       position: relative; display: inline-block;
       width: 24px; height: 24px; vertical-align: middle; margin: 0 2px;
+      cursor: pointer;
     }
     .kickflow-emote {
       position: absolute; left: 0; top: 50%; transform: translateY(-50%);
@@ -947,47 +1058,51 @@ function ensureStyles(): void {
     #${OWN_LIST_ID} .kickflow-message__reply-snippet .kickflow-emote {
       width: 16px !important; height: 16px !important;
     }
-    .kickflow-mention { color: #53fc18; font-weight: 600; }
-    .kickflow-mention--link { cursor: pointer; }
-    .kickflow-mention--link:hover { text-decoration: underline; }
-    .kickflow-link { color: #66bfff; text-decoration: underline; }
-    .kickflow-status-label {
-      display: inline; margin-left: 5px; padding: 1px 5px; border-radius: 3px;
-      font-size: 12px; font-weight: 600; vertical-align: baseline;
-      text-decoration: none; text-transform: lowercase; background: rgba(220,255,226,0.08); color: #aeb8b1;
+    /* @name takes the mentioned chatter's own name colour (seen colour first, else the hashed
+       palette system rows use), so a glance ties the mention to that speaker's rows. A link is
+       "do this", so it takes the green text with a quiet rule. 2026-11-22. */
+    .kickflow-mention {
+      color: var(--kf-mention-color, var(--kf-ink)); font-weight: 650;
     }
-    .kickflow-status-label--banned { background: rgba(255,107,94,0.12); color: #ff6b5e; }
-    .kickflow-status-label--timeout { background: rgba(240,184,78,0.12); color: #f0b84e; }
-    .kickflow-status-label--deleted, .kickflow-status-label--unknown { background: #20261f; color: #aeb8b1; }
+    .kickflow-mention--link { cursor: pointer; }
+    .kickflow-mention--link:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+    .kickflow-link {
+      color: var(--kf-green-text); text-decoration: underline; text-decoration-color: rgba(140,255,99,0.45);
+      text-decoration-thickness: 1px; text-underline-offset: 3px;
+    }
+    .kickflow-link:hover { text-decoration-color: currentColor; }
     .kickflow-active-chatters-badge {
       flex: none; min-width: auto; height: 18px; margin-left: auto; padding: 0 6px;
-      border: 1px solid rgba(230,147,43,0.45); border-radius: 999px;
-      background: rgba(156,122,30,0.30); color: #ffd27a; cursor: pointer;
-      font-size: 9px; font-weight: 800; letter-spacing: 0.02em; text-transform: none;
+      border: 1px solid rgba(255,107,94,0.45); border-radius: 4px;
+      background: var(--kf-red-soft); color: #ffb1a9; cursor: pointer;
+      font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums;
     }
-    .kickflow-active-chatters-badge:hover { background: rgba(230,147,43,0.38); color: #fff; }
-    .kickflow-active-chatters-badge:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
-    .kickflow-mod-label { margin-left: 4px; font-size: 12px; font-weight: 500; text-transform: none; }
-    .kickflow-preserved { position: relative; }
+    .kickflow-active-chatters-badge:hover { background: rgba(255,107,94,0.2); color: #fff; }
+    .kickflow-active-chatters-badge:focus-visible { outline: 2px solid var(--kf-green); outline-offset: 1px; }
     .kickflow-original-content {
-      margin-left: 6px; color: #efeff1; opacity: 0.6; text-decoration: line-through;
+      margin-left: 0; color: var(--kf-ink); opacity: 1;
       word-break: break-word; overflow-wrap: anywhere;
     }
     /* Preserved (deleted/banned) rows: hide the native content entirely — Kick may leave the
        original text OR swap in a "Deleted by a moderator" placeholder — and show our stored copy. */
     .kickflow-native-content-dimmed { display: none !important; }
-    .kickflow-preserved-username { font-weight: 600; }
+    .kickflow-preserved-username { font-weight: 700; }
     .kickflow-preserved-username--link { cursor: pointer; }
     .kickflow-preserved-username--link:hover { text-decoration: underline; }
+    /* Ghost block (native view): a banned user's earlier lines, kept under the row they belong to. */
     .kickflow-ghost-block {
-      display: block; margin: 3px 0 0 18px; padding-left: 8px;
-      border-left: 2px solid rgba(233,17,60,0.55);
+      position: relative; display: block; margin: 4px 0 2px 0; padding: 2px 0 2px 12px;
+      border-left: 0;
+    }
+    .kickflow-ghost-block::before {
+      content: ''; position: absolute; left: 2px; top: 3px; bottom: 3px; width: 3px;
+      background: repeating-linear-gradient(180deg, var(--kf-red) 0 4px, transparent 4px 7px);
     }
     .kickflow-ghost-row {
-      display: block; padding: 2px 0; color: #efeff1; opacity: 0.78;
+      display: block; padding: 2px 0; color: var(--kf-ink-2); opacity: 1;
       font-size: 13px; line-height: 1.45; word-break: break-word; overflow-wrap: anywhere;
     }
-    .kickflow-ghost-row__time { margin-right: 4px; color: #8b8b93; font-size: 10px; }
+    .kickflow-ghost-row__time { margin-right: 5px; color: var(--kf-ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
     .kickflow-ghost-row__badges {
       margin-right: 4px; display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
     }
@@ -995,9 +1110,10 @@ function ensureStyles(): void {
     .kickflow-ghost-row__username--link { cursor: pointer; }
     .kickflow-ghost-row__username--link:hover { text-decoration: underline; }
     .kickflow-ghost-row__separator { font-weight: 700; }
-    .kickflow-ghost-row__content { text-decoration: line-through; opacity: 0.7; }
-    .kickflow-ghost-empty { color: #8b8b93; font-size: 11px; text-align: center; padding: 22px 10px; opacity: 0.9; }
+    .kickflow-ghost-row__content { text-decoration: line-through; text-decoration-color: rgba(255,107,94,0.7); opacity: 1; }
+    .kickflow-ghost-empty { color: var(--kf-ink-3); font-size: 12px; text-align: center; padding: 22px 10px; }
 
+    /* --- Moderator actions: same gutter + stamp language as removed messages. --- */
     .kickflow-event-row__victim {
       font-weight: 700; color: inherit;
     }
@@ -1013,7 +1129,7 @@ function ensureStyles(): void {
       cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
     }
     .kickflow-event-row__jump-control[role="button"] {
-      display: inline-flex; align-items: baseline; margin-left: 4px; padding: 0 2px;
+      display: inline-flex; align-items: baseline; margin-left: 4px; padding: 0 3px; border-radius: 3px;
       color: var(--kickflow-modaction-meta-color); text-decoration: none; vertical-align: baseline;
     }
     .kickflow-event-row__jump-control[role="button"] > [aria-hidden="true"] {
@@ -1031,38 +1147,43 @@ function ensureStyles(): void {
     .kickflow-event-row__victims { min-width: 0; }
     .kickflow-event-row__remainder { color: inherit; }
     .kickflow-modaction-surface {
-      --kickflow-modaction-accent: #aeb8b1;
-      --kickflow-modaction-band: #181d19;
-      --kickflow-modaction-moderator-color: #eef3ef;
-      --kickflow-modaction-body-color: #aeb8b1;
-      --kickflow-modaction-meta-color: #aeb8b1;
+      --kickflow-modaction-accent: var(--kf-grey);
+      --kickflow-modaction-band: linear-gradient(90deg, color-mix(in srgb, var(--kickflow-modaction-accent) 9%, transparent), transparent 80%);
+      --kickflow-modaction-moderator-color: #eef2ef;
+      --kickflow-modaction-body-color: #b4bdb7;
+      --kickflow-modaction-meta-color: #b4bdb7;
       background: var(--kickflow-modaction-band);
       color: var(--kickflow-modaction-body-color);
-      border: 1px solid rgba(220,255,226,0.10);
-      border-radius: 6px;
+      border: 0;
+      border-radius: 4px;
       box-shadow: none;
     }
     .kickflow-modaction-kind--ban {
-      --kickflow-modaction-accent: oklch(0.64 0.19 22);
+      --kickflow-modaction-accent: #ff6b5e;
     }
     .kickflow-modaction-kind--timeout {
-      --kickflow-modaction-accent: oklch(0.75 0.14 72);
+      --kickflow-modaction-accent: #ffb547;
     }
     .kickflow-modaction-kind--delete {
-      --kickflow-modaction-accent: #aeb8b1;
+      --kickflow-modaction-accent: #9aa39d;
     }
     .kickflow-event-row--mod-action {
       cursor: pointer;
     }
     .kickflow-event-row--mod-action .kickflow-event-row__kind-tag {
-      display: inline-flex;
+      padding: 0; border: 0; background: transparent; font-family: inherit;
+      display: inline-flex; align-items: center; box-sizing: border-box;
       margin-right: 6px;
       color: var(--kickflow-modaction-accent);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       line-height: 1;
-      vertical-align: middle;
+      vertical-align: 1px;
       white-space: nowrap;
+    }
+    .kickflow-event-row__kind-tag:is(button) { cursor: pointer; }
+    .kickflow-event-row__kind-tag:is(button):focus-visible {
+      outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px;
     }
     .kickflow-event-row--mod-action .kickflow-event-row__moderator {
       color: var(--kickflow-modaction-moderator-color);
@@ -1080,6 +1201,7 @@ function ensureStyles(): void {
     .kickflow-event-row--mod-action .kickflow-event-row__victim {
       font-weight: 700;
       text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
       text-underline-offset: 2px;
     }
     .kickflow-event-row--mod-action .kickflow-event-row__count,
@@ -1094,16 +1216,20 @@ function ensureStyles(): void {
       align-items: baseline;
       min-width: 0;
       margin: 2px 0;
-      padding: 4px 5px;
+      padding: 4px 6px 4px 10px;
       line-height: 1.45;
       word-break: break-word;
       overflow-wrap: anywhere;
       background: var(--kickflow-modaction-band);
       color: var(--kickflow-modaction-body-color);
-      border: 1px solid rgba(220,255,226,0.10);
-      border-radius: 6px;
+      border: 0;
+      border-radius: 4px;
       box-shadow: none;
     }
+    #${OWN_LIST_ID} .kickflow-event-row--mod-action::before {
+      content: ''; background: repeating-linear-gradient(180deg, var(--kickflow-modaction-accent) 0 4px, transparent 4px 7px);
+    }
+    #${OWN_LIST_ID} .kickflow-event-row--mod-action .kickflow-event-row__icon { display: none; }
     #${OWN_LIST_ID} .kickflow-event-row--mod-action .kickflow-event-row__moderator {
       color: var(--kickflow-modaction-moderator-color);
     }
@@ -1117,12 +1243,17 @@ function ensureStyles(): void {
     }
     .kickflow-modaction-block {
       --kickflow-native-content-inline-padding: 8px;
+      position: relative;
       display: block; box-sizing: border-box; flex: 0 0 auto;
       width: calc(100% + (2 * var(--kickflow-native-content-inline-padding)));
       max-width: calc(100% + (2 * var(--kickflow-native-content-inline-padding))); min-width: 0;
-      margin: 3px 0 0 calc(-1 * var(--kickflow-native-content-inline-padding)); padding-left: 0;
+      margin: 3px 0 0 calc(-1 * var(--kickflow-native-content-inline-padding)); padding-left: 10px;
       font: inherit;
       border: 0;
+    }
+    .kickflow-modaction-block::before {
+      content: ''; position: absolute; left: 2px; top: 4px; bottom: 4px; width: 3px;
+      background: repeating-linear-gradient(180deg, var(--kickflow-modaction-accent) 0 4px, transparent 4px 7px);
     }
     .kickflow-modaction-block .kickflow-event-row {
       display: flex; align-items: baseline; min-width: 0; margin: 0; padding: 4px 0;
@@ -1133,10 +1264,12 @@ function ensureStyles(): void {
     }
     .kickflow-modaction-block .kickflow-event-row__body { min-width: 0; }
 
-    /* --- KickFlow settings dashboard: one shared body-level modal for navbar + footer. --- */
+    /* --- KickFlow settings dashboard: one shared body-level modal for navbar + footer.
+       Layout: a dark rail (where you are) beside a lighter sheet (what you change). Rows are
+       label + one-line hint + control; hints wrap instead of being cut with an ellipsis. --- */
     @keyframes kickflow-dashboard-in {
-      from { opacity: 0; transform: scale(.98); }
-      to { opacity: 1; transform: scale(1); }
+      from { opacity: 0; transform: translateY(8px) scale(.99); }
+      to { opacity: 1; transform: none; }
     }
     @keyframes kickflow-hotkey-capture {
       0%, 100% { opacity: .62; transform: scale(.985); }
@@ -1145,340 +1278,361 @@ function ensureStyles(): void {
     .kickflow-panel {
       position: fixed; inset: 0; z-index: 2147483000;
       display: flex; align-items: center; justify-content: center; padding: 24px;
-      background: oklch(0.12 0.01 150 / 0.55); color: oklch(0.95 0.006 150);
-      font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+      background: rgba(3,5,4,0.62); color: var(--kf-ink);
+      font-family: var(--kf-font);
       line-height: 1.4; overscroll-behavior: contain;
     }
     .kickflow-panel, .kickflow-panel * { box-sizing: border-box; }
     .kickflow-panel__shell {
-      width: min(760px, 92vw); height: min(620px, 82vh); max-height: 82vh;
-      display: grid; grid-template-columns: 202px minmax(0, 1fr); overflow: hidden;
-      border: 1px solid oklch(0.30 0.01 150); border-radius: 14px;
-      background: oklch(0.17 0.012 150);
-      box-shadow: 0 24px 70px oklch(0.08 0.008 150 / .64);
-      animation: kickflow-dashboard-in 180ms cubic-bezier(.16,1,.3,1) both;
+      width: min(780px, 92vw); height: min(620px, 84vh); max-height: 84vh;
+      display: grid; grid-template-columns: 200px minmax(0, 1fr); overflow: hidden;
+      border: 1px solid var(--kf-line-2); border-radius: 12px;
+      background: var(--kf-surface);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 28px 80px rgba(0,0,0,0.6);
+      animation: kickflow-dashboard-in 200ms var(--kf-ease) both;
     }
     .kickflow-panel__rail {
-      min-width: 0; display: flex; flex-direction: column; padding: 25px 16px 17px;
-      border-right: 1px solid oklch(0.30 0.01 150);
-      background: oklch(0.20 0.012 150);
+      min-width: 0; display: flex; flex-direction: column; padding: 20px 12px 16px;
+      border-right: 1px solid var(--kf-line);
+      background: var(--kf-ground);
     }
     .kickflow-panel__wordmark {
-      padding: 0 10px; color: oklch(0.95 0.006 150);
-      font-size: 18px; font-weight: 800; letter-spacing: -.035em;
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 8px; color: var(--kf-ink);
+      font-size: 16px; font-weight: 800; letter-spacing: -.02em;
+    }
+    .kickflow-panel__wordmark::before {
+      content: ''; flex: none; width: 24px; height: 24px; background: var(--kf-mark) center / contain no-repeat;
     }
     .kickflow-panel__rail-caption {
-      margin: 20px 10px 8px; color: oklch(0.65 0.01 150);
-      font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+      margin: 22px 8px 6px; color: var(--kf-ink-4);
+      font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
     }
-    .kickflow-panel__nav { display: flex; flex-direction: column; gap: 4px; }
+    .kickflow-panel__nav { display: flex; flex-direction: column; gap: 1px; }
     .kickflow-panel__nav-item {
-      appearance: none; width: 100%; min-height: 38px; padding: 0 12px; border: 0; border-radius: 9px;
-      background: transparent; color: oklch(0.74 0.01 150); cursor: pointer;
+      position: relative; appearance: none; width: 100%; min-height: 36px; padding: 0 10px 0 14px; border: 0; border-radius: 6px;
+      background: transparent; color: var(--kf-ink-2); cursor: pointer;
       display: flex; align-items: center; gap: 8px;
-      font: 600 13px/1 'Inter','Segoe UI',system-ui,sans-serif; text-align: left;
-      transition: background-color 140ms ease, color 140ms ease;
+      font: 550 14px/1.3 var(--kf-font); text-align: left;
+      transition: background-color 120ms ease, color 120ms ease;
+    }
+    .kickflow-panel__nav-item::before {
+      content: ''; position: absolute; left: 3px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px;
+      background: transparent; transition: background-color 120ms ease;
     }
     .kickflow-panel__nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .kickflow-panel__nav-item:hover { background: oklch(0.26 0.01 150); color: oklch(0.90 0.008 150); }
+    .kickflow-panel__nav-item:hover { background: var(--kf-surface-2); color: var(--kf-ink); }
     .kickflow-panel__nav-item--active,
     .kickflow-panel__nav-item--active:hover {
-      background: oklch(0.86 0.24 145 / .11); color: oklch(0.86 0.24 145);
+      background: var(--kf-surface-2); color: var(--kf-ink); font-weight: 650;
     }
+    .kickflow-panel__nav-item--active::before { background: var(--kf-green); }
     .kickflow-panel__version {
-      margin: auto 10px 0; color: oklch(0.56 0.01 150); font-size: 10px; font-variant-numeric: tabular-nums;
+      margin: auto 8px 0; color: var(--kf-ink-4); font-size: 12px; font-variant-numeric: tabular-nums;
     }
     .kickflow-panel__main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
     .kickflow-panel__header {
-      flex: none; display: flex; align-items: center; min-height: 65px; padding: 0 25px 0 30px;
-      background: oklch(0.17 0.012 150); border-bottom: 1px solid oklch(0.30 0.01 150);
+      flex: none; display: flex; align-items: center; min-height: 60px; padding: 0 16px 0 28px;
+      background: var(--kf-surface); border-bottom: 1px solid var(--kf-line);
     }
     .kickflow-panel__title {
-      min-width: 0; flex: 1; margin: 0; color: oklch(0.95 0.006 150);
-      font-size: 18px; font-weight: 700; letter-spacing: -.015em;
+      min-width: 0; flex: 1; margin: 0; color: var(--kf-ink);
+      font-size: 18px; font-weight: 750; letter-spacing: -.015em;
     }
     .kickflow-panel__count {
-      min-width: 21px; margin-left: auto; padding: 2px 6px; border: 1px solid oklch(0.86 0.24 145 / .28);
-      border-radius: 999px; background: oklch(0.86 0.24 145 / .11); color: oklch(0.86 0.24 145);
-      font-size: 10px; font-weight: 800; line-height: 1.35; text-align: center;
+      min-width: 20px; margin-left: auto; padding: 1px 6px; border: 0;
+      border-radius: 4px; background: var(--kf-red-soft); color: #ffb1a9;
+      font-size: 12px; font-weight: 700; line-height: 1.4; text-align: center;
       font-variant-numeric: tabular-nums;
     }
     .kickflow-panel__btn {
       appearance: none; width: 32px; height: 32px; padding: 0; margin: 0; border: 0;
-      border-radius: 8px; background: transparent; color: oklch(0.68 0.01 150); cursor: pointer;
+      border-radius: 6px; background: transparent; color: var(--kf-ink-3); cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
       font-size: 20px; font-weight: 400; line-height: 1;
-      transition: background-color 140ms ease, color 140ms ease;
+      transition: background-color 120ms ease, color 120ms ease;
     }
-    .kickflow-panel__btn:hover { background: oklch(0.24 0.01 150); color: oklch(0.95 0.006 150); }
+    .kickflow-panel__btn:hover { background: var(--kf-surface-3); color: var(--kf-ink); }
     .kickflow-panel__settings {
-      min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 30px 30px;
-      scrollbar-color: oklch(0.34 0.01 150) transparent; scrollbar-width: thin;
+      min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 28px 28px;
+      scrollbar-color: rgba(255,255,255,0.16) transparent; scrollbar-width: thin;
     }
-    .kickflow-panel__section { padding-top: 22px; }
+    .kickflow-panel__section { padding-top: 20px; }
     .kickflow-panel__section[hidden] { display: none !important; }
     .kickflow-panel__section-intro {
-      max-width: 480px; margin: 0 0 28px; color: oklch(0.70 0.01 150); font-size: 12px; line-height: 1.55;
+      max-width: 500px; margin: 0 0 22px; color: var(--kf-ink-2); font-size: 14px; line-height: 1.5;
     }
-    .kickflow-panel__group { margin-top: 28px; }
+    .kickflow-panel__group { margin-top: 26px; }
     .kickflow-panel__section-intro + .kickflow-panel__group { margin-top: 0; }
     .kickflow-panel__settings-title {
-      display: flex; align-items: center; margin: 0 0 8px; color: oklch(0.78 0.01 150);
-      font-size: 12px; font-weight: 700; letter-spacing: .01em;
+      display: flex; align-items: center; margin: 0 0 6px; color: var(--kf-ink-3);
+      font-size: 12px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
     }
+    /* Live status as tiles: the number is the thing you read, the label says what it counts. */
     .kickflow-panel__stats {
-      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; margin: 0;
-      border-top: 1px solid oklch(0.30 0.01 150);
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0;
+      border: solid var(--kf-line); border-width: 1px 0 0 1px; border-radius: 8px; overflow: hidden; background: var(--kf-surface);
     }
     .kickflow-panel__stat {
-      min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      min-height: 39px; border-bottom: 1px solid oklch(0.27 0.01 150);
+      min-width: 0; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px;
+      min-height: 62px; padding: 10px 12px; border-bottom: 0; background: var(--kf-surface);
+      box-shadow: inset -1px -1px 0 var(--kf-line);
     }
-    .kickflow-panel__stat dt { color: oklch(0.66 0.01 150); font-size: 11px; }
+    .kickflow-panel__stat dt { color: var(--kf-ink-3); font-size: 12px; }
     .kickflow-panel__stat dd {
-      min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0; overflow: hidden;
-      color: oklch(0.91 0.007 150); font-size: 12px; font-weight: 650;
+      max-width: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0; overflow: hidden;
+      color: var(--kf-ink); font-size: 17px; font-weight: 650; letter-spacing: -.01em;
       font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis;
     }
     .kickflow-panel__stat dd.kickflow-panel__stat-value--missing {
-      color: oklch(0.58 0.01 150); font-weight: 500;
+      color: var(--kf-ink-4); font-weight: 500;
     }
     .kickflow-panel__live-dot {
-      display: inline-block; width: 7px; height: 7px; flex: none; border-radius: 50%; background: oklch(0.45 0.01 150);
+      display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--kf-ink-4);
     }
-    .kickflow-panel__live-dot--connected { background: oklch(0.86 0.24 145); }
+    .kickflow-panel__live-dot--connected { background: var(--kf-green); box-shadow: 0 0 0 3px rgba(83,252,24,0.16); }
     .kickflow-panel__settings-row {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer;
     }
     .kickflow-panel__settings-row--mode {
-      min-height: 58px; padding: 10px 0; border-top: 1px solid oklch(0.30 0.01 150);
-      border-bottom: 1px solid oklch(0.27 0.01 150);
+      min-height: 60px; padding: 10px 0; border-top: 1px solid var(--kf-line);
+      border-bottom: 1px solid var(--kf-line);
     }
+    .kickflow-panel__settings-row--mode + .kickflow-panel__settings-row--mode { border-top: 0; }
     .kickflow-panel__settings-row--toggle {
-      min-height: 59px; padding: 10px 0; border-bottom: 1px solid oklch(0.27 0.01 150);
-      border-radius: 7px;
+      min-height: 58px; padding: 10px 10px; margin: 0 -10px; border-bottom: 1px solid var(--kf-line);
+      border-radius: 0;
     }
-    .kickflow-panel__settings-row--toggle:first-child { border-top: 1px solid oklch(0.30 0.01 150); }
-    .kickflow-panel__settings-row--toggle:hover { background: oklch(0.20 0.01 150); }
-    .kickflow-panel__settings-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-right: 12px; }
-    .kickflow-panel__settings-label { color: oklch(0.92 0.007 150); font-size: 14px; font-weight: 500; }
+    .kickflow-panel__settings-row--toggle:first-child { border-top: 1px solid var(--kf-line); }
+    .kickflow-panel__settings-row--toggle:hover { background: rgba(255,255,255,0.025); }
+    .kickflow-panel__settings-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; padding-right: 12px; }
+    .kickflow-panel__settings-label { color: var(--kf-ink); font-size: 14px; font-weight: 550; }
     .kickflow-panel__settings-description {
-      overflow: hidden; color: oklch(0.66 0.01 150); font-size: 12px; line-height: 1.35;
-      white-space: nowrap; text-overflow: ellipsis;
+      overflow: visible; color: var(--kf-ink-3); font-size: 13px; line-height: 1.4;
+      white-space: normal; text-overflow: clip;
     }
     .kickflow-panel__settings select {
-      min-width: 132px; height: 36px; padding: 0 10px;
-      background: oklch(0.22 0.012 150); color: oklch(0.93 0.007 150);
-      border: 1px solid oklch(0.34 0.01 150); border-radius: 8px;
-      font: 600 12px/1 'Inter','Segoe UI',system-ui,sans-serif; cursor: pointer;
+      min-width: 136px; height: 36px; padding: 0 30px 0 12px; appearance: none;
+      background: var(--kf-surface-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b4bdb7' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center;
+      color: var(--kf-ink);
+      border: 1px solid var(--kf-line-2); border-radius: 6px;
+      font: 600 13px/1 var(--kf-font); cursor: pointer;
     }
+    .kickflow-panel__settings select:hover { border-color: var(--kf-line-3); }
     .kickflow-panel__settings-toggle {
-      appearance: none; position: relative; flex: 0 0 auto; width: 38px; height: 22px; margin: 0;
-      border: 1px solid oklch(0.38 0.01 150); border-radius: 999px; background: oklch(0.28 0.012 150);
-      cursor: pointer; transition: background-color 160ms ease, border-color 160ms ease;
+      appearance: none; position: relative; flex: 0 0 auto; width: 36px; height: 20px; margin: 0;
+      border: 0; border-radius: 999px; background: rgba(255,255,255,0.16);
+      cursor: pointer; transition: background-color 140ms ease;
     }
     .kickflow-panel__settings-toggle::after {
-      content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%;
-      background: oklch(0.72 0.01 150); box-shadow: 0 1px 2px oklch(0.08 0.008 150 / .42);
-      transition: transform 160ms ease, background-color 160ms ease;
+      content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+      background: #d7ddd8; box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+      transition: transform 140ms var(--kf-ease), background-color 140ms ease;
     }
-    .kickflow-panel__settings-toggle:checked { border-color: oklch(0.86 0.24 145); background: oklch(0.86 0.24 145); }
-    .kickflow-panel__settings-toggle:checked::after { background: oklch(0.18 0.012 150); transform: translateX(16px); }
+    .kickflow-panel__settings-toggle:checked { background: var(--kf-green); }
+    .kickflow-panel__settings-toggle:checked::after { background: var(--kf-green-ink); transform: translateX(16px); }
     .kickflow-panel__settings-toggle:focus-visible,
     .kickflow-panel__settings select:focus-visible,
     .kickflow-panel__nav-item:focus-visible,
-    .kickflow-panel__btn:focus-visible { outline: 2px solid oklch(0.86 0.24 145); outline-offset: 2px; }
+    .kickflow-panel__btn:focus-visible { outline: 2px solid var(--kf-green); outline-offset: 2px; }
     .kickflow-panel__settings-hint {
-      margin: 15px 0 0; color: oklch(0.58 0.01 150); font-size: 11px; text-align: right;
+      margin: 16px 0 0; color: var(--kf-ink-3); font-size: 12px; text-align: left;
     }
     .kickflow-panel__save-status {
-      flex: 0 0 auto; margin: 8px 24px; overflow-wrap: anywhere; text-align: left;
+      flex: 0 0 auto; margin: 8px 24px; overflow-wrap: anywhere; text-align: left; color: var(--kf-amber); font-size: 13px;
     }
     .kickflow-panel__hotkeys {
-      border-top: 1px solid oklch(0.30 0.01 150);
+      border-top: 1px solid var(--kf-line);
     }
     .kickflow-panel__hotkey-row {
       display: grid; grid-template-columns: minmax(0,1fr) auto auto 38px;
-      align-items: center; gap: 10px; min-height: 60px;
-      border-bottom: 1px solid oklch(0.27 0.01 150);
+      align-items: center; gap: 10px; min-height: 56px;
+      border-bottom: 1px solid var(--kf-line);
     }
     .kickflow-panel__hotkey-label {
-      overflow: hidden; color: oklch(0.92 0.007 150); font-size: 14px; font-weight: 500;
+      overflow: hidden; color: var(--kf-ink); font-size: 14px; font-weight: 550;
       white-space: nowrap; text-overflow: ellipsis;
     }
+    /* A key is a keycap, not a green badge: green stays for "on". */
     .kickflow-panel__hotkey-chip {
-      min-width: 42px; padding: 6px 9px; border: 1px solid oklch(0.86 0.24 145 / .32); border-radius: 7px;
-      background: oklch(0.86 0.24 145 / .08); color: oklch(0.86 0.24 145);
-      font: 700 11px/1.2 ui-monospace,'SFMono-Regular',Consolas,monospace; text-align: center;
+      min-width: 34px; padding: 5px 9px 4px; border: 1px solid var(--kf-line-3); border-bottom-width: 2px; border-radius: 5px;
+      background: var(--kf-surface-2); color: var(--kf-ink);
+      font: 650 12px/1.2 var(--kf-mono); text-align: center;
     }
     .kickflow-panel__hotkey-chip--capturing {
-      min-width: 94px; animation: kickflow-hotkey-capture 1.1s ease-in-out infinite;
+      min-width: 94px; border-color: rgba(255,181,71,0.6); color: var(--kf-amber);
+      animation: kickflow-hotkey-capture 1.1s ease-in-out infinite;
     }
     .kickflow-panel__hotkey-change,
     .kickflow-panel__hotkey-reset {
-      appearance: none; border: 1px solid oklch(0.34 0.01 150); border-radius: 7px;
-      background: transparent; color: oklch(0.72 0.01 150); cursor: pointer;
-      font: 600 11px/1 'Inter','Segoe UI',system-ui,sans-serif;
-      transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+      appearance: none; border: 1px solid var(--kf-line-2); border-radius: 6px;
+      background: transparent; color: var(--kf-ink-2); cursor: pointer;
+      font: 600 13px/1 var(--kf-font);
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
     }
-    .kickflow-panel__hotkey-change { min-width: 68px; height: 31px; padding: 0 10px; }
+    .kickflow-panel__hotkey-change { min-width: 76px; height: 32px; padding: 0 12px; }
     .kickflow-panel__hotkey-change:hover,
-    .kickflow-panel__hotkey-reset:hover { background: oklch(0.22 0.01 150); color: oklch(0.92 0.007 150); }
-    .kickflow-panel__hotkey-change--capturing { border-color: oklch(0.86 0.24 145 / .55); color: oklch(0.86 0.24 145); }
+    .kickflow-panel__hotkey-reset:hover { background: var(--kf-surface-3); color: var(--kf-ink); }
+    .kickflow-panel__hotkey-change--capturing { border-color: rgba(255,181,71,0.6); color: var(--kf-amber); }
     .kickflow-panel__hotkey-footer { display: flex; align-items: center; gap: 12px; min-height: 42px; margin-top: 10px; }
-    .kickflow-panel__hotkey-status { min-width: 0; flex: 1; color: oklch(0.66 0.01 150); font-size: 11px; line-height: 1.35; }
-    .kickflow-panel__hotkey-reset { flex: none; height: 32px; padding: 0 11px; }
+    .kickflow-panel__hotkey-status { min-width: 0; flex: 1; color: var(--kf-ink-3); font-size: 12px; line-height: 1.35; }
+    .kickflow-panel__hotkey-reset { flex: none; height: 32px; padding: 0 12px; }
     .kickflow-panel__hotkey-change:focus-visible,
-    .kickflow-panel__hotkey-reset:focus-visible { outline: 2px solid oklch(0.86 0.24 145); outline-offset: 2px; }
+    .kickflow-panel__hotkey-reset:focus-visible { outline: 2px solid var(--kf-green); outline-offset: 2px; }
     .kickflow-panel__removed-list {
-      border-top: 1px solid oklch(0.31 0.01 150);
-      border-bottom: 1px solid oklch(0.27 0.01 150);
+      border-top: 1px solid var(--kf-line);
     }
     .kickflow-panel__filter-chip {
-      align-self: flex-start; margin: 0 0 12px; padding: 5px 9px; border: 1px solid oklch(0.43 0.012 150);
-      border-radius: 999px; background: oklch(0.23 0.012 150); color: oklch(0.82 0.01 150);
-      cursor: pointer; font: 650 11px/1.2 'Inter','Segoe UI',system-ui,sans-serif;
+      align-self: flex-start; margin: 0 0 12px; padding: 5px 10px; border: 1px solid var(--kf-line-3);
+      border-radius: 6px; background: var(--kf-surface-2); color: var(--kf-ink);
+      cursor: pointer; font: 600 13px/1.2 var(--kf-font);
     }
     .kickflow-panel__filter-chip[hidden] { display: none; }
-    .kickflow-panel__filter-chip:hover { border-color: oklch(0.56 0.02 145); color: #fff; }
-    .kickflow-panel__filter-chip:focus-visible { outline: 2px solid oklch(0.86 0.24 145); outline-offset: 2px; }
+    .kickflow-panel__filter-chip:hover { border-color: var(--kf-ink-3); }
+    .kickflow-panel__filter-chip:focus-visible { outline: 2px solid var(--kf-green); outline-offset: 2px; }
+    /* Removed list: a log. Time | who + what (struck) | stamp + moderator. */
     .kickflow-removed-row {
-      display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(104px, auto);
-      align-items: start; gap: 14px; padding: 15px 2px 14px;
-      border-bottom: 1px solid oklch(0.27 0.01 150);
-      color: oklch(0.91 0.007 150); word-break: break-word; overflow-wrap: anywhere;
+      position: relative;
+      display: grid; grid-template-columns: 48px minmax(0, 1fr) minmax(110px, auto);
+      align-items: start; gap: 14px; padding: 13px 4px 13px 14px;
+      border-bottom: 1px solid var(--kf-line);
+      color: var(--kf-ink); word-break: break-word; overflow-wrap: anywhere;
     }
+    .kickflow-removed-row::before {
+      content: ''; position: absolute; left: 2px; top: 14px; bottom: 14px; width: 3px;
+      background: repeating-linear-gradient(180deg, var(--kf-grey) 0 4px, transparent 4px 7px);
+    }
+    .kickflow-removed-row:has(.kickflow-status-label--banned)::before { background: repeating-linear-gradient(180deg, var(--kf-red) 0 4px, transparent 4px 7px); }
+    .kickflow-removed-row:has(.kickflow-status-label--timeout)::before { background: repeating-linear-gradient(180deg, var(--kf-amber) 0 4px, transparent 4px 7px); }
     .kickflow-removed-row:last-child { border-bottom: 0; }
     .kickflow-removed-row__time {
-      padding-top: 2px; color: oklch(0.65 0.01 150); font-size: 10px; font-weight: 600;
+      padding-top: 2px; color: var(--kf-ink-3); font-size: 12px; font-weight: 600;
       font-variant-numeric: tabular-nums; line-height: 1.4;
     }
-    .kickflow-removed-row__message { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+    .kickflow-removed-row__message { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
     .kickflow-removed-row__username {
-      width: fit-content; color: oklch(0.94 0.007 150); font-size: 13px; font-weight: 750; line-height: 1.25;
+      width: fit-content; color: var(--kf-ink); font-size: 14px; font-weight: 700; line-height: 1.25;
     }
     .kickflow-removed-row__username--link { cursor: pointer; }
     .kickflow-removed-row__username--link:hover { text-decoration: underline; }
     .kickflow-removed-row__content {
-      color: oklch(0.77 0.01 150); font-size: 12px; line-height: 1.5;
-      text-decoration-line: line-through; text-decoration-color: oklch(0.58 0.01 150);
-      text-decoration-thickness: 1px;
+      color: var(--kf-ink-2); font-size: 14px; line-height: 1.5;
+      text-decoration-line: line-through; text-decoration-color: rgba(154,163,157,0.75);
+      text-decoration-thickness: 1.5px;
     }
     .kickflow-removed-row__action {
-      min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+      min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
     }
     .kickflow-panel .kickflow-removed-row .kickflow-status-label {
-      margin: 0; padding: 3px 7px; border: 1px solid transparent; background: transparent;
-      font-size: 9px; line-height: 1.2; letter-spacing: .045em;
-    }
-    .kickflow-panel .kickflow-removed-row .kickflow-status-label--banned {
-      border-color: oklch(0.50 0.10 25 / .42); background: oklch(0.35 0.07 25 / .52); color: oklch(0.84 0.11 25);
-    }
-    .kickflow-panel .kickflow-removed-row .kickflow-status-label--timeout {
-      border-color: oklch(0.57 0.09 78 / .38); background: oklch(0.36 0.055 78 / .48); color: oklch(0.86 0.10 84);
-    }
-    .kickflow-panel .kickflow-removed-row .kickflow-status-label--deleted {
-      border-color: oklch(0.43 0.012 150 / .52); background: oklch(0.26 0.012 150); color: oklch(0.76 0.01 150);
-    }
-    .kickflow-panel .kickflow-removed-row .kickflow-status-label--unknown {
-      border-color: rgb(102,113,130); background: rgb(65,72,86); color: #fff;
+      position: static; margin: 0;
     }
     .kickflow-panel .kickflow-removed-row .kickflow-mod-label {
-      max-width: 128px; margin: 0; overflow: hidden; color: oklch(0.65 0.01 150); opacity: 1;
-      font-size: 10px; font-weight: 550; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 140px; margin: 0; padding: 0; border: 0; overflow: hidden; color: var(--kf-ink-3); opacity: 1;
+      font-size: 12px; font-weight: 500; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap;
     }
     .kickflow-removed-empty {
-      min-height: 300px; display: grid; place-items: center; padding: 28px;
-      color: oklch(0.66 0.01 150); font-size: 12px; text-align: center;
+      min-height: 280px; display: grid; place-items: center; padding: 28px;
+      color: var(--kf-ink-3); font-size: 14px; text-align: center;
     }
     .kickflow-panel__about-mark {
-      margin-top: 28px; color: oklch(0.95 0.006 150); font-size: 28px; font-weight: 800; letter-spacing: -.045em;
+      display: flex; align-items: center; gap: 14px;
+      margin-top: 24px; color: var(--kf-ink); font-size: 28px; font-weight: 800; letter-spacing: -.03em;
+    }
+    .kickflow-panel__about-mark::before {
+      content: ''; flex: none; width: 44px; height: 44px; background: var(--kf-mark) center / contain no-repeat;
     }
     .kickflow-panel__about-copy {
-      max-width: 430px; margin: 10px 0 30px; color: oklch(0.70 0.01 150); font-size: 13px; line-height: 1.6;
+      max-width: 460px; margin: 12px 0 28px; color: var(--kf-ink-2); font-size: 14px; line-height: 1.6;
     }
-    .kickflow-panel__about-facts { max-width: 430px; margin: 0; border-top: 1px solid oklch(0.30 0.01 150); }
+    .kickflow-panel__about-facts { max-width: 460px; margin: 0; border-top: 1px solid var(--kf-line); }
     .kickflow-panel__about-facts > div {
       display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 44px;
-      border-bottom: 1px solid oklch(0.27 0.01 150);
+      border-bottom: 1px solid var(--kf-line);
     }
-    .kickflow-panel__about-facts dt { color: oklch(0.66 0.01 150); font-size: 12px; }
-    .kickflow-panel__about-facts dd { margin: 0; color: oklch(0.90 0.007 150); font-size: 12px; font-weight: 600; }
+    .kickflow-panel__about-facts dt { color: var(--kf-ink-3); font-size: 13px; }
+    .kickflow-panel__about-facts dd { margin: 0; color: var(--kf-ink); font-size: 13px; font-weight: 600; }
     @media (max-width: 640px) {
       .kickflow-panel { padding: 12px; }
       .kickflow-panel__shell {
-        width: min(94vw, 600px); height: 82vh; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr);
+        width: min(94vw, 600px); height: 84vh; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr);
       }
       .kickflow-panel__rail {
-        padding: 14px 16px 12px; border-right: 0; border-bottom: 1px solid oklch(0.30 0.01 150);
+        padding: 12px 12px 10px; border-right: 0; border-bottom: 1px solid var(--kf-line);
       }
-      .kickflow-panel__wordmark { padding: 0 4px; font-size: 16px; }
+      .kickflow-panel__wordmark { padding: 0 4px; font-size: 15px; }
       .kickflow-panel__rail-caption, .kickflow-panel__version { display: none; }
       .kickflow-panel__nav {
-        flex-direction: row; gap: 6px; margin-top: 11px; overflow-x: auto; overscroll-behavior-inline: contain;
+        flex-direction: row; gap: 4px; margin-top: 10px; overflow-x: auto; overscroll-behavior-inline: contain;
         scrollbar-width: none;
       }
       .kickflow-panel__nav::-webkit-scrollbar { display: none; }
-      .kickflow-panel__nav-item { width: auto; min-height: 32px; flex: 0 0 auto; padding: 0 12px; border-radius: 999px; white-space: nowrap; }
+      .kickflow-panel__nav-item { width: auto; min-height: 32px; flex: 0 0 auto; padding: 0 12px; white-space: nowrap; }
+      .kickflow-panel__nav-item::before { left: 10px; right: 10px; top: auto; bottom: 0; width: auto; height: 2px; }
       .kickflow-panel__count { margin-left: 2px; }
-      .kickflow-panel__header { min-height: 56px; padding: 0 18px; }
+      .kickflow-panel__header { min-height: 52px; padding: 0 12px 0 18px; }
       .kickflow-panel__settings { padding: 0 18px 24px; }
-      .kickflow-panel__section { padding-top: 18px; }
-      .kickflow-panel__section-intro { margin-bottom: 22px; }
+      .kickflow-panel__section { padding-top: 16px; }
+      .kickflow-panel__section-intro { margin-bottom: 18px; }
+      .kickflow-panel__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .kickflow-panel__hotkey-row { gap: 8px; }
-      .kickflow-panel__settings-description { max-width: 300px; }
     }
     @media (max-width: 430px) {
-      .kickflow-panel__stats { grid-template-columns: 1fr; }
-      .kickflow-panel__settings-description { max-width: 205px; }
-      .kickflow-panel__hotkey-chip { min-width: 36px; padding-inline: 7px; }
+      .kickflow-panel__hotkey-chip { min-width: 32px; padding-inline: 7px; }
       .kickflow-panel__hotkey-chip--capturing { min-width: 82px; }
-      .kickflow-panel__hotkey-change { min-width: 62px; padding-inline: 7px; }
+      .kickflow-panel__hotkey-change { min-width: 62px; padding-inline: 8px; }
       .kickflow-removed-row { grid-template-columns: 40px minmax(0, 1fr); gap: 10px; }
       .kickflow-removed-row__action {
         grid-column: 2; flex-direction: row; align-items: center; justify-content: flex-start; flex-wrap: wrap;
       }
     }
     @media (prefers-reduced-motion: reduce) {
-      .kickflow-panel__shell, .kickflow-panel__hotkey-chip--capturing { animation: none; }
+      .kickflow-panel__shell, .kickflow-panel__hotkey-chip--capturing, #${OWN_LIST_ID} .kickflow-message--jump-highlight { animation: none; }
     }
 
     /* A CSS-only slot leaves the native footer child/text sequence intact during hydration.
-       The body-level control occupies this space beside the native send/gear cluster. */
-    body:has(> .kickflow-footer-toggle) div:has(> #send-message-button)::before {
+       The body-level control occupies this space beside the native send/gear cluster.
+       Keyed on an <html> mark from footer-toggle.ts: a body-level :has() here made every inserted
+       chat row restyle the whole page (2026-11-09). */
+    html[data-kickflow-footer-entry] div:has(> #send-message-button)::before {
       content: ''; width: 30px; height: 30px; flex: 0 0 30px;
     }
     .kickflow-footer-toggle {
       position: relative; appearance: none; width: 30px; height: 30px; padding: 0; margin: 0;
-      border: 0; border-radius: 8px; background: transparent; color: #b5b5be; cursor: pointer;
+      border: 0; border-radius: 6px; background: transparent; color: #b5bdb7; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
-      transition: background .14s ease, color .14s ease;
+      transition: background .12s ease, color .12s ease;
     }
-    .kickflow-footer-toggle:hover { background: rgba(255,255,255,0.1); }
-    .kickflow-footer-toggle--active { color: #53fc18; }
-    .kickflow-footer-toggle svg { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .kickflow-footer-toggle:hover { background: rgba(255,255,255,0.08); color: #eef2ef; }
+    .kickflow-footer-toggle:focus-visible { outline: 2px solid #53fc18; outline-offset: 1px; }
+    .kickflow-footer-toggle--active { color: #53fc18; background: rgba(83,252,24,0.10); }
+    .kickflow-footer-toggle svg { width: 17px; height: 17px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .kickflow-footer-toggle__badge {
-      position: absolute; top: 2px; right: 2px;
-      background: #e9113c; color: #fff; border-radius: 999px;
-      min-width: 14px; height: 14px; padding: 0 3px;
-      font-size: 9px; font-weight: 800; line-height: 1;
+      position: absolute; top: 1px; right: 0;
+      background: #ff6b5e; color: #1a0503; border-radius: 4px; box-shadow: 0 0 0 2px #0b0e0f;
+      min-width: 15px; height: 15px; padding: 0 3px;
+      font: 800 10px/1 Inter, 'Segoe UI', system-ui, sans-serif; font-variant-numeric: tabular-nums;
       display: flex; align-items: center; justify-content: center;
     }
 
-    /* Body-level mark aligned before the native navbar actions. */
-    body:has(> .kickflow-navbar-settings) nav > div:nth-child(3).flex.items-center.gap-2::before {
+    /* Body-level KickFlow mark (logo slot --kf-mark), aligned before the native navbar actions.
+       34px matches the reserved slot below and the placement math in navbar-settings.ts. */
+    html[data-kickflow-navbar-entry] nav > div:nth-child(3).flex.items-center.gap-2::before {
       content: ''; width: 34px; height: 34px; flex: 0 0 34px;
     }
     .kickflow-navbar-settings {
-      appearance: none; width: 34px; height: 34px; padding: 0; margin: 0; border: 1px solid rgba(255,255,255,.10);
-      border-radius: 9px; background: rgba(255,255,255,.055); color: #53fc18; cursor: pointer;
+      appearance: none; width: 34px; height: 34px; padding: 0; margin: 0; border: 0;
+      border-radius: 6px; background: transparent; color: transparent; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
-      font: 950 17px/1 'Arial Black','Segoe UI',system-ui,sans-serif; letter-spacing: -.08em;
-      text-shadow: 0 0 8px rgba(83,252,24,.18); transition: background .14s ease, border-color .14s ease, transform .09s ease;
+      font-size: 0; line-height: 0; overflow: hidden;
+      transition: background .12s ease, transform .09s ease;
     }
-    .kickflow-navbar-settings:hover { background: rgba(83,252,24,.10); border-color: rgba(83,252,24,.35); }
+    .kickflow-navbar-settings::before {
+      content: ''; width: 28px; height: 28px; background: var(--kf-mark) center / contain no-repeat;
+      transition: transform .12s ease;
+    }
+    .kickflow-navbar-settings:hover { background: rgba(255,255,255,.08); }
     .kickflow-navbar-settings:active { transform: scale(.94); }
-    .kickflow-navbar-settings--active { background: rgba(83,252,24,.13); border-color: rgba(83,252,24,.45); }
+    .kickflow-navbar-settings--active { background: rgba(83,252,24,.12); box-shadow: inset 0 0 0 1px rgba(83,252,24,.45); }
     .kickflow-navbar-settings:focus-visible { outline: 2px solid #53fc18; outline-offset: 2px; }
 
     /* --- Player controls, injected inline into Kick's native control bar.
@@ -1498,7 +1652,8 @@ function ensureStyles(): void {
       flex: none;
     }
     /* The plate: one glass piece across our consecutive groups. The behind-live chip joins it
-       only while it shows; at the live edge its reserved box stays outside and invisible. */
+       only while it shows; at the live edge its reserved box stays outside and invisible.
+       The run's last group carries --plate-end, set by syncPlateRunEnds (bar-chrome.js). */
     .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip)::before {
       content: ''; position: absolute; z-index: -1; inset: 4px 0;
       background: rgba(255,255,255,0.04);
@@ -1509,7 +1664,7 @@ function ensureStyles(): void {
     .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip):not(.kickflow-player-group + .kickflow-player-group)::before {
       border-left-width: 1px; border-top-left-radius: 12px; border-bottom-left-radius: 12px; left: 0;
     }
-    .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip):not(:has(+ .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip)))::before {
+    .kickflow-player-group:is(:not(#kickflow-catchup-controls), .kickflow-player-group--chip).kickflow-player-group--plate-end::before {
       border-right-width: 1px; border-top-right-radius: 12px; border-bottom-right-radius: 12px;
     }
     /* Divider after the 10 s pair, as in the design. */
@@ -1615,8 +1770,9 @@ function ensureStyles(): void {
     [data-kickflow-controls="shown"] div.z-controls.bottom-0 {
       opacity: 1 !important; visibility: visible !important; pointer-events: auto !important;
     }
-    /* Current Kick nests the 80px customized bar in a 44px clipping shelf. */
-    [data-kickflow-controls] div:has(> div.z-controls.bottom-0) { overflow: visible !important; }
+    /* Current Kick nests the 80px customized bar in a 44px clipping shelf; controls-visibility
+       marks that shelf (it was a div:has(> bar) rule, a page-wide restyle per chat row). */
+    [data-kickflow-controls] [data-kickflow-bar-shelf] { overflow: visible !important; }
     html[data-kickflow-strip] div.z-controls.bottom-0 {
       padding: 26px 18px 10px;
       background-image: none; background-color: transparent;
@@ -1634,9 +1790,18 @@ function ensureStyles(): void {
       background: rgba(10,13,11,0.72);
     }
     /* Behind live, the unwatched part of the seek line turns into an amber dashed gap (FINAL 6.3,
-       moment 1): ours and Kick's own track, keyed on the chip being shown. */
-    div.z-controls.bottom-0:has(.kickflow-player-btn--behind) .kickflow-seek-bar__track,
-    div.z-controls.bottom-0:has(.kickflow-player-btn--behind) [class*="group/seekbar"] [class*="bg-subtle"] {
+       moment 1): ours and Kick's own track, keyed on the chip being shown. The bar showing the chip
+       sets data-kickflow-behind (KickFlow bar) / data-fallback-bar-behind (a fallback player bar) on <html>.
+       2026-11-09: this used to be a descendant :has() on the bar keyed on the behind chip, with the
+       Kick seek line matched by two class-substring selectors (group/seekbar, then bg-subtle). A class-substring
+       selector LEFT of a combinator makes Chrome restyle every classed descendant whenever any
+       element's class changes; that one rule made each style recalculation on a Kick page 40-90x
+       slower (measured: forced recalc 0.9 ms without it, 60-160 ms with it), and Kick's chat pays it on
+       every message. Keep [class*=...] only in the rightmost compound; match ancestors by class. */
+    html[data-kickflow-behind] div.z-controls.bottom-0 .kickflow-seek-bar__track,
+    html[data-kickflow-behind] div.z-controls.bottom-0 .group\\/seekbar [class*="bg-subtle"],
+    html[data-fallback-bar-behind] div.z-controls.bottom-0 .kickflow-seek-bar__track,
+    html[data-fallback-bar-behind] div.z-controls.bottom-0 .group\\/seekbar [class*="bg-subtle"] {
       background: repeating-linear-gradient(90deg, #ffb547 0 4px, rgba(255,181,71,0) 4px 7px);
     }
 
@@ -1788,7 +1953,138 @@ function ensureStyles(): void {
       font-family: 'Inter','Segoe UI',system-ui,sans-serif; font-size: 12px; font-weight: 700;
       line-height: 1; white-space: nowrap;
     }
+    /* Layout for a bar drawn when Kick's own control strip is absent.
+       The same text is FALLBACK_BAR_CSS in player/bar-chrome.js. Colours and
+       the 44px boxes stay on the rules above. */
+.kickflow-fallback-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  pointer-events: auto;
+}
+.kickflow-fallback-bar input[type="range"] {
+  width: 72px;
+  margin: 0 8px;
+  flex: 0 0 auto;
+  accent-color: var(--kf-green, #53fc18);
+  cursor: pointer;
+}
+.kickflow-fallback-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+/* Our display rules would otherwise beat the hidden attribute (quality chip, PiP, overflow). */
+.kickflow-fallback-bar [hidden] { display: none !important; }
+.kickflow-quality-btn {
+  gap: 6px;
+}
+.kickflow-quality-btn__sub {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: rgba(242,246,242,0.72);
+}
+.kickflow-quality-btn--held { color: #c8ffb2; }
+.kickflow-quality-btn--held .kickflow-quality-btn__sub { color: inherit; }
+.kickflow-quality-btn--held::after {
+  inset: 6px 1px;
+  border-radius: 9px;
+  background: rgba(83,252,24,0.10);
+  box-shadow: inset 0 0 0 1px rgba(83,252,24,0.42);
+}
+.kickflow-quality-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 248px;
+}
+.kickflow-quality-menu__head {
+  padding: 2px 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(242,246,242,0.62);
+}
+.kickflow-quality-menu__item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: 600 14px/1 'Inter','Segoe UI',system-ui,sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.kickflow-quality-menu__item:hover:not([aria-checked="true"]) {
+  background: rgba(255,255,255,0.10);
+}
+.kickflow-quality-menu__item[aria-checked="true"] {
+  background: #53fc18;
+  color: #071a04;
+}
+.kickflow-quality-menu__item:focus-visible,
+.kickflow-quality-menu__more:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #53fc18;
+}
+.kickflow-quality-menu__intent {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  min-height: 44px;
+  padding: 6px 10px;
+}
+.kickflow-quality-menu__intent b { font-size: 14px; font-weight: 700; }
+.kickflow-quality-menu__intent small {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: rgba(242,246,242,0.62);
+}
+.kickflow-quality-menu__intent[aria-checked="true"] small { color: rgba(7,26,4,0.75); }
+.kickflow-quality-menu__sep {
+  height: 1px;
+  margin: 4px 0;
+  background: rgba(220,255,226,0.16);
+}
+.kickflow-quality-menu__more {
+  appearance: none;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(242,246,242,0.72);
+  cursor: pointer;
+  text-align: left;
+  font: 600 13px/1 'Inter','Segoe UI',system-ui,sans-serif;
+}
+.kickflow-quality-menu__more:hover { background: rgba(255,255,255,0.08); }
+.kickflow-quality-menu__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-top: 4px;
+}
+.kickflow-quality-menu__grid[hidden] { display: none; }
+.kickflow-quality-menu__exact {
+  justify-content: center;
+  padding: 0;
+  background: rgba(255,255,255,0.04);
+  text-align: center;
+}
 
+    ${THREAD_PANEL_CSS}
   `;
   adoptedStyleSheet = installStyleSheet(css);
   stylesInstalled = true;
@@ -1849,6 +2145,8 @@ function initNativeChatIntegrity(
     configureUserCardSession(null);
   });
   let augmenter: NativeChatAugmenter | null = null;
+  // Kick pauses the list while the reader is scrolled up and its pill does not say how much is waiting.
+  const pausePill = new NativePausePillCounter(lifecycle);
   const store = new ChatIntegrityStore({
     onPreservedEvicted: (message) => {
       augmenter?.forgetGhost(message.id);
@@ -1857,6 +2155,7 @@ function initNativeChatIntegrity(
       augmenter?.markById(message.id);
     },
     onMessageAdded: (message) => {
+      pausePill.noteMessage();
       archive.add(message);
       if (message.preserved) archive.markDeleted(message.id);
     },
@@ -2005,6 +2304,15 @@ function initOwnChatIntegrity(
   lifecycle: Lifecycle,
   panel: RemovedMessagesPanel,
 ): void {
+  startChatWithRetries(lifecycle, (attempt, controls) => initOwnChatAttempt(context, attempt, panel, controls));
+}
+
+function initOwnChatAttempt(
+  context: ChatSessionContext,
+  lifecycle: Lifecycle,
+  panel: RemovedMessagesPanel,
+  startup: ChatStartupAttempt,
+): void {
   const { slug } = context;
   setSubscriberBadges([]);
   configureUserCardSession(slug);
@@ -2034,6 +2342,15 @@ function initOwnChatIntegrity(
 
   const mount = new ChatOverlayMount(lifecycle);
   mount.setProbing();
+  // Kick's side-conversation panel: dressed and placed in the chat column, and a click on one of
+  // its messages jumps to that message in KickFlow's list (native-thread.ts).
+  installNativeThreadPanel(lifecycle, (messageId, cue) => { jumpToMessage(messageId, cue); });
+  let wasReady = false;
+  const markReady = (): void => {
+    if (mount.state !== 'active') return;
+    wasReady = true;
+    startup.ready();
+  };
   const ownList = mount.ownList;
 
   const scrollPill = document.createElement('button');
@@ -2113,6 +2430,7 @@ function initOwnChatIntegrity(
   });
   lifecycle.add(() => scrollFollow.dispose());
   const hoverFollow = attachScrollFollowHover(ownList, scrollFollow, {
+    hoverContinuationSelector: '.kickflow-user-card, [data-kickflow-native-quick-emotes]',
     getHoveredBehavior: () => resolveModeAScrollFollowBehavior(true),
     onHoverChange: (nextHovered) => {
       hovered = nextHovered;
@@ -2141,6 +2459,9 @@ function initOwnChatIntegrity(
     // flush rows and also prevents a replayed Pusher/history id from creating a duplicate row.
     shouldRender: (message) => store.getMessageById(message.id) === message,
     onOpenRemovedPanel: () => panel.showSettings('removed'),
+    onReply: context.kind === 'live'
+      ? (message, cue) => { if (!lifecycle.isDisposed) requestNativeReply(message, cue, context.sessionKey); }
+      : undefined,
     onPendingChange: updatePendingPill,
     formatTimestamp: context.kind === 'vod'
       ? (message) => vodStartTimeMs === null
@@ -2150,6 +2471,7 @@ function initOwnChatIntegrity(
     onFlush: (appended /*, wasAtBottom */) => {
       mount.noteContentAppended(appended);
       if (mount.state === 'active') {
+        markReady();
         setStatus({
           active: true,
           pusherConnected: context.kind === 'live' ? getStatus().pusherConnected : false,
@@ -2160,7 +2482,10 @@ function initOwnChatIntegrity(
       }
 
       const decision = hoverFollow.decide(appended.length);
-      trimMessageWindow(ownList, registry, decision.trimCap);
+      // A pinned list that snaps instantly to the bottom right after the trim needs no offset
+      // correction; checked after preserveScrollIntent has read any pending upward scroll.
+      const snapsAfterTrim = (): boolean => decision.scrollToBottom && decision.scrollBehavior === 'auto' && scrollFollow.isPinned;
+      scrollFollow.preserveScrollIntent(() => trimMessageWindow(ownList, registry, decision.trimCap, () => !snapsAfterTrim()));
       scrollFollow.observeRows(appended);
       hoverFollow.apply(decision);
       if (decision.showPill) {
@@ -2212,25 +2537,27 @@ function initOwnChatIntegrity(
     clear: () => undefined,
   });
 
-  lifecycle.setTimeout(() => {
-    mount.initialNoContentDeadline();
-    if (mount.state === 'fallback') {
-      mount.showFailure();
-      setStatus({ active: false, reason: t('status.content_not_ready') });
-    }
-  }, INITIAL_NO_CONTENT_FALLBACK_MS);
+  const failed = (): void => startup.fail(() => {
+    mount.showFailure();
+    setStatus({ active: false, reason: t('status.content_not_ready') });
+  });
 
-  const start = (): void => { void resolveChannel(slug).then(async (resolved) => {
+  const start = (): void => { void resolveChannel(slug, lifecycle).then(async (resolved) => {
     if (lifecycle.isDisposed) return;
     if (!resolved) {
       logger.warn('bootstrap: could not resolve channel for', slug, '- chat integrity inactive, native chat stays visible');
       mount.failOpen('channel-resolution-failed');
-      mount.showFailure();
+      failed();
       setStatus({ active: false, reason: t('status.chatroom_unresolved_native') });
       return;
     }
     setSubscriberBadges(resolved.subscriberBadges);
     const { chatroomId, channelId } = resolved;
+    // Resolution alone can take 20.4 seconds. The old 15-second deadline fired
+    // before it finished, leaving a stale failure banner over healthy native chat.
+    lifecycle.setTimeout(() => {
+      if (!wasReady && mount.state !== 'active') { mount.failOpen('startup-not-ready'); failed(); }
+    }, INITIAL_NO_CONTENT_FALLBACK_MS);
     setStatus({
       chatroomId,
       pusherConnected: false,
@@ -2270,6 +2597,7 @@ function initOwnChatIntegrity(
           },
           onReady: () => {
             mount.setReplayReady();
+            markReady();
             setStatus({
               active: mount.state === 'active',
               pusherConnected: false,
@@ -2278,6 +2606,7 @@ function initOwnChatIntegrity(
           },
           onUnavailable: () => {
             mount.failOpen('vod-replay-unavailable');
+            failed();
             setStatus({
               active: false,
               pusherConnected: false,
@@ -2320,7 +2649,10 @@ function initOwnChatIntegrity(
         outage = null;
         historyLoaded = true;
         for (const message of plan.messages) {
-          enqueueOnce(message);
+          // History is fetched for this resolved channel, but its newer payloads can carry
+          // channel_id instead of chatroom_id. Bind the reply target to the known room here;
+          // a channel id must never be mistaken for a chatroom id or left as the parser's 0.
+          enqueueOnce({ ...message, chatroomId });
         }
       },
       onResult: (result) => {
@@ -2346,6 +2678,7 @@ function initOwnChatIntegrity(
         primaryReady = true;
         clearReconnectGrace();
         mount.setPrimaryReady();
+        markReady();
         setStatus({
           pusherConnected: true,
           active: mount.state === 'active',
@@ -2360,6 +2693,7 @@ function initOwnChatIntegrity(
         primaryReady = false;
         clearReconnectGrace();
         mount.setPrimaryUnavailable(`primary-${reason}`);
+        if (!wasReady) failed();
         setStatus({
           pusherConnected: false,
           active: false,
@@ -2379,7 +2713,7 @@ function initOwnChatIntegrity(
           reconnectGraceTimer = null;
           if (primaryReady || lifecycle.isDisposed) return;
           mount.setPrimaryUnavailable('primary-reconnect-grace-expired');
-          mount.showFailure();
+          failed();
           setStatus({ active: false, reason: t('status.reconnect_failed') });
         }, PRIMARY_RECONNECT_GRACE_MS);
       },
@@ -2412,13 +2746,13 @@ function initOwnChatIntegrity(
       setStatus({ pusherConnected: false });
     });
     client.connect();
+  }).catch((error) => {
+    if (lifecycle.isDisposed) return;
+    logger.warn('bootstrap: chat startup attempt failed', error);
+    mount.failOpen('startup-exception');
+    failed();
   }); };
-  // Retry starts a fresh session so old clients, queues and deadlines are disposed together.
-  mount.setRetryHandler(() => {
-    lifecycle.dispose();
-    navigationInitialized = false;
-    handlePotentialNavigation();
-  });
+  mount.setRetryHandler(startup.retry);
   start();
 }
 
@@ -2442,22 +2776,43 @@ const playerFeatureInitializers: Record<PlayerFeatureFlagKey, (lifecycle: Lifecy
   qualityLock: initQualityLock,
   screenshot: initScreenshot,
   speedControls: initSpeedControls,
+  ultrawideFill: initUltrawideFill,
+  ambientBands: initAmbientBands,
+  loudnessLeveler: initLoudnessLeveller,
+  channelVolume: initChannelVolume,
 };
 
 let playerSessionLifecycle: Lifecycle | null = null;
 const playerFeatureLifecycles = new Map<PlayerFeatureFlagKey, Lifecycle>();
 
+/** Review K-3 (2026-11-24): the quality controller also runs without its chip while "always
+ * highest" is on, so switching the quality button off no longer silently ends that setting. */
+function playerFeatureEnabled(key: PlayerFeatureFlagKey): boolean {
+  return key === 'qualityLock' ? featureFlags.qualityLock || featureFlags.qualityAlwaysBest : featureFlags[key];
+}
+
+/** Whether the running quality controller was started with its chip (featureFlags.qualityLock). */
+let qualityControllerChip: boolean | null = null;
+
 function syncPlayerFeature(key: PlayerFeatureFlagKey): void {
   const session = playerSessionLifecycle;
-  const active = playerFeatureLifecycles.get(key);
+  let active = playerFeatureLifecycles.get(key);
   const liveOnlyOnRecording = key === 'liveCatchup'
     && parseChatSessionContext(window.location.pathname)?.kind === 'vod';
-  if (!featureFlags[key] || !session || session.isDisposed || liveOnlyOnRecording) {
+  if (!playerFeatureEnabled(key) || !session || session.isDisposed || liveOnlyOnRecording) {
     active?.dispose();
     playerFeatureLifecycles.delete(key);
     return;
   }
+  // The chip is mounted at start: a controller started without it (or with it) restarts when
+  // the quality button is switched on (or off) while "always highest" keeps it running.
+  if (key === 'qualityLock' && active && !active.isDisposed && qualityControllerChip !== featureFlags.qualityLock) {
+    active.dispose();
+    playerFeatureLifecycles.delete(key);
+    active = undefined;
+  }
   if (active && !active.isDisposed) return;
+  if (key === 'qualityLock') qualityControllerChip = featureFlags.qualityLock;
 
   const featureLifecycle = new Lifecycle();
   playerFeatureLifecycles.set(key, featureLifecycle);
@@ -2498,6 +2853,7 @@ export function initPlayerQolSession(lifecycle: Lifecycle): void {
 }
 
 let currentLifecycle: Lifecycle | null = null;
+let activeQuickEmoteBar: NativeQuickEmoteBar | null = null;
 let currentSessionContext: ChatSessionContext | null = null;
 let sessionToken = 0;
 let navPollId: number | null = null;
@@ -2520,8 +2876,11 @@ export function initSiteLifecycle(): SiteLifecycleServices {
   ensureStyles();
   const panel = new RemovedMessagesPanel(lifecycle, null, getLiveStatusSnapshot);
   new NavbarSettingsButton(lifecycle, panel);
+  void initContentBlocking(lifecycle);
   initAutoClaimDrops(lifecycle);
   initAutoClaimDailyReward(lifecycle);
+  initChannelAvatarPreview(lifecycle);
+  void initCategoryLanguageChip(lifecycle);
   siteLifecycleServices = { lifecycle, panel, layoutWatchdog: null };
   return siteLifecycleServices;
 }
@@ -2717,6 +3076,9 @@ function startSession(context: ChatSessionContext): void {
   const lifecycle = new Lifecycle();
   currentLifecycle = lifecycle;
 
+  activeQuickEmoteBar = new NativeQuickEmoteBar(lifecycle, () => featureFlags.hideQuickEmoteBar);
+  lifecycle.add(() => { activeQuickEmoteBar = null; });
+
   // Player QoL and chat integrity are started concurrently and never gate each other.
   initPlayerQolSession(lifecycle);
 
@@ -2763,6 +3125,7 @@ function teardownZombie(): void {
   document.getElementById('kickflow-footer-toggle')?.remove();
   document.getElementById('kickflow-navbar-settings')?.remove();
   document.documentElement.classList.remove('kickflow-chat-active');
+  document.documentElement.removeAttribute(QUALITY_ATTRIBUTE);
   removeStyles();
 }
 
@@ -2809,6 +3172,7 @@ function handlePotentialNavigation(): void {
 export function applyFlagChange(key: string, value: boolean | string): Promise<boolean> {
   if (isBooleanFlagKey(key) && typeof value === 'boolean') {
     setFeatureFlag(key, value);
+    if (key === 'hideQuickEmoteBar') activeQuickEmoteBar?.sync();
     if (key === 'speedControls' && !value) deactivateSpeedControls();
     if (key === 'showDeletedMessages' || key === 'preserveBansInline') reconcileActiveNativeChat();
     if (key === 'debugLogging') {
@@ -2816,9 +3180,16 @@ export function applyFlagChange(key: string, value: boolean | string): Promise<b
       syncLayoutWatchdog();
     }
     if (key === 'autoTheater') syncAutoTheaterFlag();
+    if (key === 'contentBlocking') syncContentBlocking();
     if (key === 'fullscreenTerminal' || key === 'floatingStrip') syncBarOrderFlag();
     if (key === 'autoClaimDrops') syncAutoClaimDropsFlag();
     if (key === 'autoClaimDailyReward') syncAutoClaimDailyRewardFlag();
+    if (key === 'qualityLock') syncQualityAttribute();
+    if (key === 'qualityAlwaysBest') {
+      syncQualityAttribute();
+      syncPlayerFeature('qualityLock');
+      notifyQualityModeChanged();
+    }
     if (isPlayerFeatureFlagKey(key)) syncPlayerFeature(key);
     if (key === 'showChattersBadges') {
       syncActiveChattersBadges();
@@ -2845,6 +3216,11 @@ export function applyFlagChange(key: string, value: boolean | string): Promise<b
         resetStatus(currentSessionContext.slug);
         startSession(currentSessionContext);
       }
+    } else if (key === 'qualityMode') {
+      syncQualityAttribute();
+      notifyQualityModeChanged();
+    } else if (key === 'aspectMode') {
+      syncAspectMode();
     } else if (key !== 'hoverFollowMode') {
       if (key === 'manualUsername') invalidateOwnerIdentityCache();
       refreshMessageHighlights();
@@ -2871,6 +3247,7 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     showChattersBadges: featureFlags.showChattersBadges,
     showUserMessages: featureFlags.showUserMessages,
     chatSearchHotkey: featureFlags.chatSearchHotkey,
+    hideQuickEmoteBar: featureFlags.hideQuickEmoteBar,
     showModActions: featureFlags.showModActions,
     autoTheater: featureFlags.autoTheater,
     captionGuard: featureFlags.captionGuard,
@@ -2878,6 +3255,8 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     seekBar: featureFlags.seekBar,
     liveCatchup: featureFlags.liveCatchup,
     qualityLock: featureFlags.qualityLock,
+    qualityMode: featureFlags.qualityMode,
+    qualityAlwaysBest: featureFlags.qualityAlwaysBest,
     screenshot: featureFlags.screenshot,
     speedControls: featureFlags.speedControls,
     fullscreenTerminal: featureFlags.fullscreenTerminal,
@@ -2893,6 +3272,13 @@ export function getPopupFeatureFlags(): Omit<FeatureFlags, 'modLogPanel'> {
     vipFrameEnabled: featureFlags.vipFrameEnabled,
     vipFrameColor: featureFlags.vipFrameColor,
     manualUsername: featureFlags.manualUsername,
+    ultrawideFill: featureFlags.ultrawideFill,
+    aspectMode: featureFlags.aspectMode,
+    ambientBands: featureFlags.ambientBands,
+    loudnessLeveler: featureFlags.loudnessLeveler,
+    channelVolume: featureFlags.channelVolume,
+    contentBlocking: featureFlags.contentBlocking,
+    liveNotify: featureFlags.liveNotify,
   };
 }
 
@@ -2995,6 +3381,7 @@ function installStatusBridge(): void {
  * echo of this tab's own save and is skipped, so a change never loops. */
 export function applyStoredFlagChanges(changes: Record<string, { newValue?: unknown }>, area: string): void {
   if (area !== 'local' || !changes || typeof changes !== 'object') return;
+  handleBlockListsChange(changes);
   for (const [name, change] of Object.entries(changes)) {
     if (!name.startsWith('kf_flag_')) continue;
     const key = name.slice('kf_flag_'.length);
@@ -3014,6 +3401,7 @@ export async function applySavedFlags(): Promise<void> {
   const saved = await safeStorageGet([
     ...BOOLEAN_FLAG_KEYS.map((key) => `kf_flag_${key}`),
     ...STRING_FLAG_KEYS.map((key) => `kf_flag_${key}`),
+    LEGACY_QUALITY_PREFERENCE_KEY,
   ]);
   for (const key of BOOLEAN_FLAG_KEYS) {
     const value = saved[`kf_flag_${key}`];
@@ -3023,6 +3411,31 @@ export async function applySavedFlags(): Promise<void> {
     const parsed = parseStringFlag(key, saved[`kf_flag_${key}`]);
     if (parsed !== null) setFeatureFlag(key, parsed);
   }
+  await migrateQualityPreference(saved);
+}
+
+/** Before quality design B (2026-10-29) the only quality choice was the switch "Highest quality"
+ * (kf_flag_qualityLock), and the controller stored 'highest' under kickflow.qualityPreference.
+ * That choice is now the first of three: qualityMode 'best'. The switch keeps its stored value
+ * and its meaning (KickFlow manages quality or leaves it to Kick), so nobody's quality changes. */
+const LEGACY_QUALITY_PREFERENCE_KEY = 'kickflow.qualityPreference';
+
+async function migrateQualityPreference(saved: Record<string, unknown>): Promise<void> {
+  if (saved.kf_flag_qualityMode === undefined) {
+    const mode = normalizeQualityMode(saved[LEGACY_QUALITY_PREFERENCE_KEY]) ?? DEFAULT_QUALITY_MODE;
+    setFeatureFlag('qualityMode', mode);
+    await safeStorageSet({ kf_flag_qualityMode: mode });
+  }
+  if (saved[LEGACY_QUALITY_PREFERENCE_KEY] !== undefined) await safeStorageRemove(LEGACY_QUALITY_PREFERENCE_KEY);
+}
+
+/** A fallback player bar runs in the page world without extension storage. It reads the
+ * effective choice from <html>: 'best' while "always highest" is on (with or without the quality
+ * button), else the stored mode, or 'auto' (let the player choose) while both are off. A pick on
+ * that bar holds for its channel only (player-controls.js qualityState, review K-2). */
+function syncQualityAttribute(): void {
+  const mode = featureFlags.qualityAlwaysBest ? DEFAULT_QUALITY_MODE : featureFlags.qualityMode;
+  document.documentElement.setAttribute(QUALITY_ATTRIBUTE, featureFlags.qualityLock || featureFlags.qualityAlwaysBest ? mode : 'auto');
 }
 
 function installNavigationHooks(): void {
@@ -3056,6 +3469,8 @@ function afterPageSettled(mount: () => void): void {
 
 async function main(): Promise<void> {
   await Promise.all([applySavedFlags(), loadHotkeyBindings(), loadLang()]);
+  setAspectModeWriter((mode) => { void applyFlagChange('aspectMode', mode); });
+  syncQualityAttribute();
   setDebugLogging(featureFlags.debugLogging);
   installStatusBridge();
   installNavigationHooks();
@@ -3066,4 +3481,10 @@ async function main(): Promise<void> {
   });
 }
 
-void main();
+// Dynamic injection can repeat before the first asynchronous settings load ends.
+// All site/session controllers belong to the first instance in this isolated world.
+const bootstrapScope = globalThis as typeof globalThis & { __kickflowContentStarted?: boolean };
+if (!bootstrapScope.__kickflowContentStarted) {
+  bootstrapScope.__kickflowContentStarted = true;
+  void main();
+}

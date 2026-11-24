@@ -5,7 +5,7 @@ import { t } from '../shared/i18n';
 
 /** Width of the clock gutter. The reply quote is indented by exactly this much so a quote and the
  * message answering it sit on the same left edge instead of stair-stepping. */
-export const USER_MESSAGE_TIME_COLUMN_PX = 32;
+export const USER_MESSAGE_TIME_COLUMN_PX = 38;
 
 export interface UserMessageListModel {
   readonly messages: readonly ArchivedMessage[];

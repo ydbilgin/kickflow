@@ -1,3 +1,7 @@
+import { installReplyBridge } from './reply-bridge';
+import { installCategoryLanguageBridge } from './category-language-bridge';
+import { threadPanelRowFor } from '../content/chat/native-thread';
+
 export const CHAT_LIST_SELECTOR = '#chatroom-messages .no-scrollbar';
 export const ROW_SELECTOR = '[data-index]';
 export const REACT_FIBER_PROPERTY_PREFIX = '__reactFiber';
@@ -35,6 +39,28 @@ export const REACT_MESSAGE_KEY = /^(\d+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
  * instead of slicing arbitrary text into a plausible-but-wrong message id. */
 export function parseMessageId(key: string): string | null {
   return REACT_MESSAGE_KEY.exec(key)?.[2] ?? null;
+}
+
+/** Rows of Kick's side-conversation panel. Their key shape was not captured live, so the index
+ * prefix is optional here; anything else is still rejected. Never used for main-list rows. */
+const THREAD_ROW_KEY = /^(?:\d+-)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+export function parseThreadRowMessageId(key: string): string | null {
+  return THREAD_ROW_KEY.exec(key)?.[1] ?? null;
+}
+
+/** Stamps one panel row just before the content script reads it (T6: a click on a panel message
+ * jumps to it in KickFlow's list). Stamping on the click itself needs no observer on the panel. */
+export function stampThreadPanelRow(row: HTMLElement): void {
+  const rawKey = rawReactKey(row);
+  const messageId = rawKey ? parseThreadRowMessageId(rawKey) : null;
+  if (messageId) row.setAttribute(MID_ATTR, messageId);
+  else row.removeAttribute(MID_ATTR);
+}
+
+function stampThreadPanelClick(event: Event): void {
+  const row = threadPanelRowFor(event.target);
+  if (row) stampThreadPanelRow(row);
 }
 
 function readMessageId(row: HTMLElement): string | null {
@@ -163,6 +189,7 @@ export function initReactKeyStamper(root: Document | HTMLElement = document): Re
     bodyObserver.observe(observerRoot, { childList: true, subtree: true });
   }
   const intervalId = window.setInterval(() => {
+    if (document.visibilityState === 'hidden') return;
     attachToCurrentList();
     restampCurrentList();
   }, 1000);
@@ -181,9 +208,19 @@ export function initReactKeyStamper(root: Document | HTMLElement = document): Re
 }
 
 let autoController: ReactKeyStamperController | null = null;
+let stopReplyBridge: (() => void) | null = null;
+let stopCategoryLanguageBridge: (() => void) | null = null;
+let threadClickStamping = false;
 
 function start(): void {
   autoController ??= initReactKeyStamper();
+  if (!threadClickStamping) {
+    // Capture on window runs before the content script's document listener sees the click.
+    window.addEventListener('click', stampThreadPanelClick, true);
+    threadClickStamping = true;
+  }
+  stopReplyBridge ??= installReplyBridge();
+  stopCategoryLanguageBridge ??= installCategoryLanguageBridge();
 }
 
 if (document.body) {
@@ -195,5 +232,11 @@ if (document.body) {
 window.addEventListener('pagehide', () => {
   autoController?.teardown();
   autoController = null;
+  stopReplyBridge?.();
+  stopReplyBridge = null;
+  stopCategoryLanguageBridge?.();
+  stopCategoryLanguageBridge = null;
+  window.removeEventListener('click', stampThreadPanelClick, true);
+  threadClickStamping = false;
 });
 window.addEventListener('pageshow', start);

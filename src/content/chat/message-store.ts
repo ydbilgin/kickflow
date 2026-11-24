@@ -61,12 +61,21 @@ export function normalizeChatIdentity(value: string): string {
 
 // System-event payloads carry only bare usernames. Remember colors from real chat senders so
 // those otherwise-thin events can reuse Kick's identity color for the rest of this page session.
+// Bounded (2026-11-09): a busy channel sees thousands of distinct chatters per hour; keep the most
+// recently seen ones, oldest out.
+const SEEN_IDENTITY_COLOR_CAP = 2_000;
 const seenChatIdentityColors = new Map<string, string>();
 
 export function rememberChatIdentityColor(sender: ChatMessageSender): void {
   const key = normalizeChatIdentity(sender.username);
   const color = sender.identity.color.trim();
-  if (key && color) seenChatIdentityColors.set(key, color);
+  if (!key || !color) return;
+  seenChatIdentityColors.delete(key);
+  seenChatIdentityColors.set(key, color);
+  if (seenChatIdentityColors.size > SEEN_IDENTITY_COLOR_CAP) {
+    const oldest = seenChatIdentityColors.keys().next().value;
+    if (oldest !== undefined) seenChatIdentityColors.delete(oldest);
+  }
 }
 
 export function getSeenChatIdentityColor(username: string): string | undefined {
@@ -165,10 +174,19 @@ export interface ChatMessage {
 export const GLOBAL_CAPACITY = 800;
 const PRESERVED_CAPACITY = 50;
 const PRESERVED_TTL_MS = 10 * 60 * 1000;
+// A banned user's line that was sent before the ban took effect can arrive a few hundred ms AFTER
+// the ban event; Kick then drops it like the rest (seen live 2026-10-23). A banned user cannot
+// post during this window, so a line from them inside it predates the ban and is part of it.
+export const LATE_BAN_WINDOW_MS = 5_000;
+const LATE_BAN_CAPACITY = 200;
 
-/** Dairesel buffer / circular ring buffer with a fixed capacity. */
+/** Dairesel buffer / circular ring buffer with a fixed capacity. A real ring since 2026-11-11:
+ * the old array push + shift moved every slot on each eviction (measured on a Linux server, node 2e6
+ * pushes: 167-219 ns per push at 800 slots, 8-14 ns as a ring). Oldest first in toArray(). */
 export class LimitedQueue<T> {
-  private items: T[] = [];
+  private slots: (T | undefined)[] = [];
+  private head = 0;
+  private count = 0;
 
   constructor(private readonly capacity: number) {
     if (capacity <= 0) {
@@ -178,28 +196,138 @@ export class LimitedQueue<T> {
 
   /** Pushes an item; returns the item evicted from the front, if the queue was full. */
   push(item: T): T | undefined {
-    this.items.push(item);
-    if (this.items.length > this.capacity) {
-      return this.items.shift();
+    if (this.count < this.capacity) {
+      this.slots[(this.head + this.count) % this.capacity] = item;
+      this.count += 1;
+      return undefined;
     }
-    return undefined;
+    const evicted = this.slots[this.head];
+    this.slots[this.head] = item;
+    this.head = (this.head + 1) % this.capacity;
+    return evicted;
   }
 
   toArray(): readonly T[] {
-    return this.items.slice();
+    const out: T[] = new Array(this.count);
+    for (let i = 0; i < this.count; i++) out[i] = this.slots[(this.head + i) % this.capacity] as T;
+    return out;
   }
 
   includes(item: T): boolean {
-    return this.items.includes(item);
+    for (let i = 0; i < this.count; i++) {
+      if (this.slots[(this.head + i) % this.capacity] === item) return true;
+    }
+    return false;
   }
 
   get size(): number {
-    return this.items.length;
+    return this.count;
   }
 
   clear(): void {
-    this.items = [];
+    this.slots = [];
+    this.head = 0;
+    this.count = 0;
   }
+}
+
+/** How many removed-message records one stream session keeps for the Removed list. */
+export const REMOVED_LEDGER_CAPACITY = 300;
+
+/** One ban, timeout or delete as the Removed list shows it: a frozen copy taken when the
+ * moderation event arrived, so the record outlives the chat row, the 10-minute preserved
+ * window, the 50-entry preserved cap and every chat-history trim. */
+export type RemovedRecord = Readonly<ChatMessage> & {
+  readonly preserved: true;
+  readonly preservedReason: PreservedReason;
+};
+
+/** The session's ban/delete list (2026-11-11: the list must stay when the chat history is
+ * cleared). Bounded (REMOVED_LEDGER_CAPACITY, oldest out), O(1) per record, and independent of
+ * the chat history: trims, the preserved TTL/cap and VOD seeks never remove a record. It is
+ * created per chat session, so a new channel or stream starts empty. `version` changes on every
+ * write; readers compare it instead of re-reading the list. */
+export class RemovedLedger {
+  private readonly records = new Map<string, RemovedRecord>();
+  private readonly changeListeners = new Set<() => void>();
+  private revision = 0;
+
+  constructor(private readonly capacity: number = REMOVED_LEDGER_CAPACITY) {}
+
+  get size(): number {
+    return this.records.size;
+  }
+
+  get version(): number {
+    return this.revision;
+  }
+
+  /** Inserts or refreshes the record for a preserved message. A refresh keeps the record's place
+   * (first moderation time) and takes the richer reason/metadata. */
+  record(message: ChatMessage): void {
+    if (!message.preserved || !message.preservedReason || message.systemEvent) return;
+    const previous = this.records.get(message.id);
+    const snapshot: RemovedRecord = Object.freeze({
+      ...message,
+      sender: message.sender,
+      preserved: true as const,
+      preservedReason: message.preservedReason,
+      preservedMeta: message.preservedMeta ? Object.freeze({ ...message.preservedMeta }) : undefined,
+      preservedAt: previous?.preservedAt ?? message.preservedAt,
+    });
+    if (previous && sameRecord(previous, snapshot)) return;
+    this.records.set(message.id, snapshot);
+    while (this.records.size > this.capacity) {
+      const oldest = this.records.keys().next().value;
+      if (oldest === undefined) break;
+      this.records.delete(oldest);
+    }
+    this.changed();
+  }
+
+  get(messageId: string): RemovedRecord | undefined {
+    return this.records.get(messageId);
+  }
+
+  /** Oldest first. A fresh array; the records themselves are frozen. */
+  toArray(): RemovedRecord[] {
+    return Array.from(this.records.values());
+  }
+
+  forSlug(slug: string): RemovedRecord[] {
+    const normalizedSlug = normalizeChatIdentity(slug);
+    if (!normalizedSlug) return [];
+    return this.toArray().filter((record) => normalizeChatIdentity(record.sender.slug) === normalizedSlug);
+  }
+
+  /** Called synchronously after every change. Returns the unsubscribe function. */
+  subscribe(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
+  }
+
+  clear(): void {
+    if (this.records.size === 0) return;
+    this.records.clear();
+    this.changed();
+  }
+
+  private changed(): void {
+    this.revision += 1;
+    for (const listener of this.changeListeners) {
+      try {
+        listener();
+      } catch (error) {
+        logger.debug('RemovedLedger listener threw', error);
+      }
+    }
+  }
+}
+
+function sameRecord(a: RemovedRecord, b: RemovedRecord): boolean {
+  return a.preservedReason === b.preservedReason
+    && a.content === b.content
+    && JSON.stringify(a.preservedMeta ?? null) === JSON.stringify(b.preservedMeta ?? null);
 }
 
 /** DOM node <-> message association for Mode A's own-rendered rows. WeakMap is used in the
@@ -261,6 +389,8 @@ export interface ChatIntegrityStoreOptions {
   onMessageAdded?: (message: ChatMessage) => void;
   /** Fired when a message becomes preserved (banned or deleted). */
   onMessagePreserved?: (message: ChatMessage, reason: PreservedReason) => void;
+  /** Clock for the late-ban window; tests inject it. */
+  now?: () => number;
 }
 
 interface PendingDelete {
@@ -288,6 +418,10 @@ export class ChatIntegrityStore {
   private readonly pendingDeletedById = new Map<string, PendingDelete>();
   private readonly pendingDeleteOrder = new LimitedQueue<PendingDelete>(GLOBAL_CAPACITY);
   private nextSeq = 1;
+  // userId -> the most recent ban, for lines that arrive just after it (LATE_BAN_WINDOW_MS).
+  private readonly recentBans = new Map<number, { meta: PreservedMeta; at: number }>();
+  /** The session's ban/delete list. Survives the preserved TTL/cap, ring eviction and reset(). */
+  readonly removed = new RemovedLedger();
 
   constructor(private readonly options: ChatIntegrityStoreOptions = {}) {}
 
@@ -308,6 +442,7 @@ export class ChatIntegrityStore {
       this.pendingDeletedById.delete(message.id);
       this.preserveMessage(message, 'deleted', pendingDelete.meta);
     }
+    if (!message.systemEvent) this.applyRecentBan(message);
     if (!message.systemEvent) {
       try {
         this.options.onMessageAdded?.(message);
@@ -397,7 +532,27 @@ export class ChatIntegrityStore {
     for (const message of messages) {
       this.preserveMessage(message, 'banned', meta);
     }
+    this.recentBans.delete(userId);
+    this.recentBans.set(userId, { meta, at: this.now() });
+    if (this.recentBans.size > LATE_BAN_CAPACITY) {
+      const oldest = this.recentBans.keys().next().value;
+      if (oldest !== undefined) this.recentBans.delete(oldest);
+    }
     return messages;
+  }
+
+  private applyRecentBan(message: ChatMessage): void {
+    const ban = this.recentBans.get(message.sender.id);
+    if (!ban) return;
+    if (this.now() - ban.at > LATE_BAN_WINDOW_MS) {
+      this.recentBans.delete(message.sender.id);
+      return;
+    }
+    this.preserveMessage(message, 'banned', ban.meta);
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
   }
 
   markMessageDeleted(messageId: string, meta: PreservedMeta = {}): ChatMessage | undefined {
@@ -433,8 +588,11 @@ export class ChatIntegrityStore {
       if (reason === 'banned' && message.preservedReason !== 'banned') {
         message.preservedReason = 'banned';
         message.preservedAt = Date.now();
+        this.removed.record(message);
         this.notifyMessagePreserved(message, reason);
+        return;
       }
+      this.removed.record(message);
       return;
     }
     message.preserved = true;
@@ -462,6 +620,7 @@ export class ChatIntegrityStore {
       // scenario this extension is built for).
       this.unpreserve(evicted);
     }
+    this.removed.record(message);
     this.notifyMessagePreserved(message, reason);
   }
 
@@ -532,25 +691,21 @@ export class ChatIntegrityStore {
     return this.preserved.toArray();
   }
 
-  /** Returns preserved evidence for one canonical Kick slug. The returned array is detached from
-   * the bounded queue, so callers cannot mutate store membership. */
+  /** Returns this session's removed-message records for one canonical Kick slug, from the
+   * removed ledger, so the answer does not change when the preserved window expires. */
   getPreservedForSlug(slug: string): ChatMessage[] {
-    const normalizedSlug = normalizeChatIdentity(slug);
-    if (!normalizedSlug) return [];
-    return this.preserved.toArray().filter(
-      (message) => normalizeChatIdentity(message.sender.slug) === normalizedSlug,
-    );
+    return this.removed.forSlug(slug);
   }
 
   /** The native Active Chatters row renders `username` but keeps `slug` only as a React key. Use
    * the exact session-known username solely to recover a canonical slug, and fail closed if the
-   * preserved ledger maps that username to more than one slug. */
+   * removed ledger maps that username to more than one slug. */
   resolvePreservedSlugForUsername(username: string): string | null {
     const normalizedUsername = normalizeChatIdentity(username);
     if (!normalizedUsername) return null;
 
     const slugs = new Map<string, string>();
-    for (const message of this.preserved.toArray()) {
+    for (const message of this.removed.toArray()) {
       if (normalizeChatIdentity(message.sender.username) !== normalizedUsername) continue;
       const normalizedSlug = normalizeChatIdentity(message.sender.slug);
       if (normalizedSlug) slugs.set(normalizedSlug, message.sender.slug.trim());
@@ -558,6 +713,8 @@ export class ChatIntegrityStore {
     return slugs.size === 1 ? slugs.values().next().value ?? null : null;
   }
 
+  /** Clears the chat history (a VOD seek). The removed ledger is deliberately kept: clearing the
+   * history must not clear the ban/delete list. A new session gets a new store and ledger. */
   reset(): void {
     this.messageById.clear();
     this.messagesByUserId.clear();

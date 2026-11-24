@@ -1,16 +1,25 @@
 import { logger } from '../shared/logger';
 import { buildMessageElement } from './message-view';
-import { isNearBottom } from './dom-window';
 import {
   UNMETERED_RELEASE_POLICY,
   type RenderReleasePolicy,
 } from './hover-meter';
 import type { ChatDomRegistry, ChatMessage } from './message-store';
+import type { ReplyAction } from './reply-action';
 
 const FLUSH_INTERVAL_MS = 250;
 const MAX_BATCH_SIZE = 50;
-const HIDDEN_FLUSH_DELAY_MS = 0;
 const MOUNT_RETRY_DELAY_MS = 250;
+/** Rows a hidden tab keeps waiting for its return: the newest this many ordinary rows plus every
+ * preserved (banned/deleted) row. A pinned list trims to MAX_NON_PRESERVED_NODES (dom-window.ts,
+ * 200) anyway, so building older rows on return would only build rows to delete them. */
+export const HIDDEN_BACKLOG_ROWS = 200;
+/** A hidden backlog is compacted only when it reaches twice its target, which keeps the filter
+ * amortised O(1) per message. */
+const HIDDEN_COMPACT_AT = HIDDEN_BACKLOG_ROWS * 2;
+/** Before the first row has ever rendered, a hidden tab still renders (on a timer, since animation
+ * frames are suspended) so a chat opened in a background tab passes its startup readiness check. */
+const HIDDEN_FIRST_RENDER_DELAY_MS = 0;
 
 export interface RenderQueueOptions {
   getContainer: () => HTMLElement | null;
@@ -29,9 +38,12 @@ export interface RenderQueueOptions {
   formatTimestamp?: (message: ChatMessage) => string;
   /** Opens the removed-message panel from a multi-victim moderator-action event row. */
   onOpenRemovedPanel?: () => void;
+  onReply?: ReplyAction;
   /** Reports the exact number of rows still waiting behind the release policy. */
   onPendingChange?: (pendingCount: number) => void;
-  onFlush?: (appended: HTMLElement[], wasAtBottom: boolean) => void;
+  /** Called after rows reach the DOM. It deliberately carries no scroll position: measuring one
+   * here forced a layout before every append (2026-11-10). A caller that needs it reads it. */
+  onFlush?: (appended: HTMLElement[]) => void;
 }
 
 export class RenderQueue {
@@ -41,6 +53,11 @@ export class RenderQueue {
   private frameUsesTimeout = false;
   private forceUnmeteredOnNextRender = false;
   private disposed = false;
+  /** True once any row reached the DOM. From then on a hidden tab builds no rows. */
+  private hasRendered = false;
+  /** True while the last render found no mount. Enqueue then waits for the mount retry instead of
+   * re-filtering the whole backlog on every message (the eviction test took 28 s that way). */
+  private mountUnavailable = false;
   private readonly releasePolicy: RenderReleasePolicy;
   private readonly now: () => number;
   private readonly scheduleTimer: (callback: () => void, delayMs: number) => number;
@@ -62,7 +79,13 @@ export class RenderQueue {
     if (this.disposed) return;
     this.pending.push(message);
     this.notifyPendingChange();
-    if (this.pending.length >= MAX_BATCH_SIZE) {
+    if (this.parkedWhileHidden()) {
+      // A hidden tab builds no rows (2026-11-11): nobody can see them, and a pinned list would trim
+      // most of them before the tab returns. Keep the backlog bounded until visibilitychange.
+      if (this.pending.length >= HIDDEN_COMPACT_AT) this.compactHiddenBacklog();
+      return;
+    }
+    if (this.pending.length >= MAX_BATCH_SIZE && !this.mountUnavailable) {
       this.flush();
       return;
     }
@@ -109,16 +132,47 @@ export class RenderQueue {
   }
 
   private readonly handleVisibilityChange = (): void => {
-    if (!document.hidden || this.frameId === null || this.frameUsesTimeout) return;
-    window.cancelAnimationFrame(this.frameId);
-    this.frameId = null;
+    if (this.disposed) return;
+    if (document.hidden) {
+      if (this.frameId === null || this.frameUsesTimeout) return;
+      window.cancelAnimationFrame(this.frameId);
+      this.frameId = null;
+      // Parked: the backlog waits for the tab to return. Before the first render it still renders.
+      if (!this.hasRendered) this.scheduleRender();
+      return;
+    }
+    if (this.pending.length === 0) return;
+    // Back in view: drop what a pinned list would trim at once, then render the rest by frames.
+    this.compactHiddenBacklog();
     this.scheduleRender();
   };
+
+  private parkedWhileHidden(): boolean {
+    return this.hasRendered && document.hidden;
+  }
+
+  /** Releases evicted references and keeps preserved rows plus the newest HIDDEN_BACKLOG_ROWS. */
+  private compactHiddenBacklog(): void {
+    const shouldRender = this.options.shouldRender;
+    const live = shouldRender ? this.pending.filter(shouldRender) : this.pending;
+    let ordinary = 0;
+    for (const message of live) if (!message.preserved) ordinary += 1;
+    let skip = Math.max(0, ordinary - HIDDEN_BACKLOG_ROWS);
+    const kept = skip === 0 ? live : live.filter((message) => {
+      if (message.preserved || skip === 0) return true;
+      skip -= 1;
+      return false;
+    });
+    if (kept.length === this.pending.length) return;
+    this.pending = kept;
+    this.notifyPendingChange();
+  }
 
   private scheduleRender(forceUnmetered = false): void {
     if (this.disposed || this.pending.length === 0) return;
     if (forceUnmetered) this.forceUnmeteredOnNextRender = true;
     if (this.frameId !== null) return;
+    if (this.parkedWhileHidden()) return;
     const render = (): void => {
       this.frameId = null;
       this.frameUsesTimeout = false;
@@ -128,7 +182,7 @@ export class RenderQueue {
     };
     if (document.hidden) {
       this.frameUsesTimeout = true;
-      this.frameId = this.scheduleTimer(render, HIDDEN_FLUSH_DELAY_MS);
+      this.frameId = this.scheduleTimer(render, HIDDEN_FIRST_RENDER_DELAY_MS);
     } else {
       this.frameUsesTimeout = false;
       // Test harnesses and browser shims may invoke RAF synchronously. Do not overwrite the
@@ -144,9 +198,21 @@ export class RenderQueue {
 
   private renderNextBatch(forceUnmetered: boolean): void {
     if (this.disposed || this.pending.length === 0) return;
+    if (this.parkedWhileHidden()) return;
+    // Store eviction must also release queued references while the chat mount is absent or
+    // metered; otherwise a long collapsed chat retains every message received in that gap.
+    const shouldRender = this.options.shouldRender;
+    if (shouldRender) {
+      const retained = this.pending.filter(shouldRender);
+      if (retained.length !== this.pending.length) {
+        this.pending = retained;
+        this.notifyPendingChange();
+      }
+      if (this.pending.length === 0) return;
+    }
     const container = this.options.getContainer();
+    this.mountUnavailable = !container;
     if (!container) {
-      logger.debug('render-queue: guarded container unavailable; retaining', this.pending.length, 'queued rows');
       if (this.timerId === null) {
         this.timerId = this.scheduleTimer(() => {
           this.timerId = null;
@@ -166,7 +232,6 @@ export class RenderQueue {
     const batchSize = Math.min(this.pending.length, decision.maxRows, MAX_BATCH_SIZE);
     const batch = this.pending.splice(0, batchSize);
     this.notifyPendingChange();
-    const wasAtBottom = isNearBottom(container);
     const fragment = document.createDocumentFragment();
     const appended: HTMLElement[] = [];
     for (const message of batch) {
@@ -176,6 +241,7 @@ export class RenderQueue {
         const element = buildMessageElement(message, {
           timestampText,
           onOpenRemovedPanel: this.options.onOpenRemovedPanel,
+          onReply: this.options.onReply,
         });
         element.dataset.createdAt = message.createdAt;
         this.options.registry.register(element, message);
@@ -186,6 +252,7 @@ export class RenderQueue {
       }
     }
     if (appended.length > 0) {
+      this.hasRendered = true;
       // Live batches normally follow the current tail. Commit their fragment once rather
       // than re-reading and parsing the entire live child collection for every message.
       let previous = container.lastElementChild instanceof HTMLElement
@@ -211,7 +278,7 @@ export class RenderQueue {
         }
       }
       try {
-        this.options.onFlush?.(appended, wasAtBottom);
+        this.options.onFlush?.(appended);
       } catch (error) {
         logger.error('render-queue: flush callback failed', error);
       }

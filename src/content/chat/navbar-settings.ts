@@ -1,11 +1,17 @@
+import { isInsideChatScroller, visibleInterval } from '../shared/coalesce';
 import type { Lifecycle } from '../shared/lifecycle';
 import { subscribeLang, t } from '../shared/i18n';
 import { logger } from '../shared/logger';
+import { px, setStyleIfChanged } from '../shared/style-write';
 
 const BUTTON_ID = 'kickflow-navbar-settings';
 const BUTTON_CLASS = 'kickflow-navbar-settings';
 const ACTIVE_CLASS = 'kickflow-navbar-settings--active';
 const ENSURE_INTERVAL_MS = 1000;
+/** On <html> while our button is a direct child of <body>; the stylesheet's navbar slot keys on
+ * it. It replaces `body:has(> .kickflow-navbar-settings)`, which made every chat row inserted
+ * anywhere restyle the whole page (~150 ms per row on a busy channel, 2026-11-09). */
+export const NAVBAR_ENTRY_ATTRIBUTE = 'data-kickflow-navbar-entry';
 export const NAVBAR_RIGHT_CLUSTER_INDEX = 2;
 export const NAVBAR_RIGHT_CLUSTER_CLASSES = ['flex', 'items-center', 'gap-2'] as const;
 // Native navbar height utilities captured 2026-10-13 (repair-evidence live/VOD shells),
@@ -47,14 +53,21 @@ export class NavbarSettingsButton {
   ) {
     this.ensureInjected();
     const reposition = (): void => this.ensureInjected();
+    // Capture-phase scroll also reports every scroll inside the chat lists (each new row on a busy
+    // channel). Those scrollers move nothing this fixed button is aligned to; measuring here forced
+    // a style and layout pass per row batch (2026-11-09 profile: ~4% of the page's main thread).
+    const repositionOnScroll = (event: Event): void => {
+      if (isInsideChatScroller(event.target)) return;
+      this.ensureInjected();
+    };
     window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('scroll', repositionOnScroll, true);
     lifecycle.add(() => {
       window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('scroll', repositionOnScroll, true);
     });
     lifecycle.add(subscribeLang(() => this.refresh()));
-    lifecycle.setInterval(() => this.ensureInjected(), ENSURE_INTERVAL_MS);
+    visibleInterval(lifecycle, () => this.ensureInjected(), ENSURE_INTERVAL_MS);
     lifecycle.add(() => this.dispose());
   }
 
@@ -85,13 +98,17 @@ export class NavbarSettingsButton {
     const button = this.button;
     const mounted = button.parentElement !== document.body;
     if (mounted) document.body.append(button);
+    if (!document.documentElement.hasAttribute(NAVBAR_ENTRY_ATTRIBUTE)) document.documentElement.setAttribute(NAVBAR_ENTRY_ATTRIBUTE, '');
     const box = cluster.getBoundingClientRect();
-    button.style.position = 'fixed';
-    button.style.zIndex = '1000';
-    button.style.left = `${Math.max(8, Math.min(innerWidth - 42, box.left))}px`;
-    button.style.top = `${Math.max(8, box.top + (box.height - 34) / 2)}px`;
-    button.style.display = box.width > 0 && box.height > 0 ? '' : 'none';
+    // Runs every second: an unchanged inline style still queues a mutation record on <body> and
+    // wakes every page-wide observer (2026-11-11 soak: ~3.4 records/s from this button).
+    setStyleIfChanged(button, 'position', 'fixed');
+    setStyleIfChanged(button, 'zIndex', '1000');
+    setStyleIfChanged(button, 'left', px(Math.max(8, Math.min(innerWidth - 42, box.left))));
+    setStyleIfChanged(button, 'top', px(Math.max(8, box.top + (box.height - 34) / 2)));
+    setStyleIfChanged(button, 'display', box.width > 0 && box.height > 0 ? '' : 'none');
     this.refresh();
+    if (mounted) window.dispatchEvent(new Event('kickflow:navbar-entrychange'));
   }
 
   private build(): HTMLButtonElement {
@@ -110,15 +127,25 @@ export class NavbarSettingsButton {
   }
 
   private refresh(): void {
-    if (!this.button) return;
-    this.button.classList.toggle(ACTIVE_CLASS, this.panel.isOpen());
-    this.button.title = t('entry.settings_title');
-    this.button.setAttribute('aria-label', t('entry.settings_aria'));
+    const button = this.button;
+    if (!button) return;
+    const open = this.panel.isOpen();
+    if (button.classList.contains(ACTIVE_CLASS) !== open) button.classList.toggle(ACTIVE_CLASS, open);
+    // A host page script may claim this button with data-kickflow-claimed and set
+    // its own label. Writing ours back each second made the two scripts trade the title and
+    // aria-label twice a second: ~3.5 mutation records/s on <body> in the 2026-11-11 soak.
+    if (button.dataset.kickflowClaimed === 'true') return;
+    const title = t('entry.settings_title');
+    if (button.title !== title) button.title = title;
+    const aria = t('entry.settings_aria');
+    if (button.getAttribute('aria-label') !== aria) button.setAttribute('aria-label', aria);
   }
 
   private dispose(): void {
     if (!this.button) return;
     this.button.remove();
     this.button = null;
+    if (!document.querySelector(`body > .${BUTTON_CLASS}`)) document.documentElement.removeAttribute(NAVBAR_ENTRY_ATTRIBUTE);
+    window.dispatchEvent(new Event('kickflow:navbar-entrychange'));
   }
 }

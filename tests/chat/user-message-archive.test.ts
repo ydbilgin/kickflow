@@ -431,22 +431,8 @@ describe('UserMessageArchive', () => {
     expect(result.matches[0]?.deleted).toBe(true);
   });
 
-  it('finds Turkish İzmir with an ASCII izmir query', () => {
-    const archive = new UserMessageArchive({ now: () => NOW });
-    archive.add(chatMessage('izmir-msg', { content: 'İzmir güzel' }));
-
-    expect(searchArchive(archive, 'izmir').matches.map((record) => record.id)).toEqual(['izmir-msg']);
-  });
-
-  it('folds ş both ways between query and haystack', () => {
-    const archive = new UserMessageArchive({ now: () => NOW });
-    archive.add(chatMessage('upper', { content: 'MAŞALLAH' }));
-    archive.add(chatMessage('lower', { content: 'masallah' }));
-
-    expect(searchArchive(archive, 'masallah').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
-    expect(searchArchive(archive, 'MAŞALLAH').matches.map((record) => record.id)).toEqual(['lower', 'upper']);
-  });
-
+  // 2026-11-11: three more Turkish folding cases were removed; text-fold.test.ts covers the folding
+  // itself, and this one proves the archive search uses it in both directions.
   it('folds ışık / IŞIK / isik to the same form', () => {
     const archive = new UserMessageArchive({ now: () => NOW });
     archive.add(chatMessage('isik-upper', { content: 'IŞIK' }));
@@ -454,15 +440,6 @@ describe('UserMessageArchive', () => {
 
     expect(searchArchive(archive, 'ışık').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
     expect(searchArchive(archive, 'isik').matches.map((record) => record.id)).toEqual(['isik-lower', 'isik-upper']);
-  });
-
-  it('folds güneş and gunes both ways', () => {
-    const archive = new UserMessageArchive({ now: () => NOW });
-    archive.add(chatMessage('with-diacritic', { content: 'güneş' }));
-    archive.add(chatMessage('ascii', { content: 'gunes' }));
-
-    expect(searchArchive(archive, 'gunes').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
-    expect(searchArchive(archive, 'güneş').matches.map((record) => record.id)).toEqual(['ascii', 'with-diacritic']);
   });
 
   it('folds the sender name in the haystack', () => {

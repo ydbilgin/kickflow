@@ -14,41 +14,29 @@ import {
 } from './player-state';
 import type { Lifecycle } from '../shared/lifecycle';
 import { getLang, subscribeLang, t } from '../shared/i18n';
+import {
+  SPEED_GRID_COLUMNS,
+  SPEED_GRID_RATES,
+  displayObservedRate as sharedDisplayObservedRate,
+  formatPlaybackRate,
+} from './bar-shared.js';
+import { createBoltIcon } from './bar-chrome.js';
 
 const CONTROLS_ID = 'kickflow-speed-controls';
-const MANUAL_RATES = [3, 2.5, 2, 1.5, 1.25, 1, 0.75, 0.5, 0.25] as const;
-/** The menu's 3 x 3 grid reads slow to fast, left to right (FINAL design 2026-10-18). */
-const GRID_RATES = [...MANUAL_RATES].reverse();
-const GRID_COLUMNS = 3;
-const SVG_NS = 'http://www.w3.org/2000/svg';
+// Rates, their grid order and their wording live in bar-shared.js (2026-10-29), so a
+// fallback player bar offers the same menu.
+const GRID_COLUMNS = SPEED_GRID_COLUMNS;
 const STARVATION_RATE_THRESHOLD = 2.5;
 const STARVATION_WINDOW_MS = 5000;
 const STARVATION_WAITING_COUNT = 2;
 const STARVATION_FALLBACK_RATE = 1.5;
 
 function formatRate(rate: number): string {
-  const text = Number.isInteger(rate) ? rate.toFixed(0) : String(rate);
-  return `${getLang() === 'tr' ? text.replace('.', ',') : text}×`;
-}
-
-/** FINAL icons.svg #i-bolt, shown only while auto catch-up runs faster than 1x. */
-function createBoltIcon(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('class', 'kickflow-speed-btn__bolt');
-  const path = document.createElementNS(SVG_NS, 'path');
-  path.setAttribute('d', 'M13.5 2.5 5 13.5h6l-1 8 8.5-11h-6Z');
-  svg.append(path);
-  return svg;
+  return formatPlaybackRate(rate, getLang());
 }
 
 function displayObservedRate(rate: number): string {
-  const knownRates = [NORMAL_PLAYBACK_RATE, ...MANUAL_RATES];
-  const nearest = knownRates.reduce((best, candidate) =>
-    Math.abs(candidate - rate) < Math.abs(best - rate) ? candidate : best,
-  );
-  return Math.abs(nearest - rate) <= 0.03 ? formatRate(nearest) : formatRate(Number(rate.toFixed(2)));
+  return sharedDisplayObservedRate(rate, getLang());
 }
 
 /** Live flag teardown path: a disabled speed feature must not leave a manual rate/state behind
@@ -184,7 +172,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
         // Auto off keeps playing at 1x by hand; Auto on hands the rate back to catch-up.
         if (getPlayerState().mode === 'auto') selectManualRate(NORMAL_PLAYBACK_RATE);
         else selectAuto();
-        speedMenu.close();
+        updateMenuSelection();
       });
       root.append(auto);
 
@@ -192,7 +180,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
       grid.className = 'kickflow-speed-menu__grid';
       grid.setAttribute('role', 'group');
       const items: HTMLButtonElement[] = [];
-      for (const rate of GRID_RATES) {
+      for (const rate of SPEED_GRID_RATES) {
         const item = document.createElement('button');
         item.type = 'button';
         item.className = 'kickflow-speed-menu__item';
@@ -238,6 +226,18 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
       ?? root.querySelector<HTMLElement>('.kickflow-speed-menu__auto'),
   });
 
+  // Repaint checks in place: replacing/closing the menu loses the switch's focus.
+  const updateMenuSelection = (): void => {
+    const root = speedMenu.element;
+    if (!root) return;
+    const state = getPlayerState();
+    root.querySelector('.kickflow-speed-menu__auto')?.setAttribute('aria-checked', String(state.mode === 'auto'));
+    root.querySelectorAll('.kickflow-speed-menu__item').forEach((item, index) => {
+      item.setAttribute('aria-checked', String(state.mode === 'manual'
+        && Math.abs(state.manualRate - SPEED_GRID_RATES[index]) < 0.001));
+    });
+  };
+
   const onWaiting = (event: Event): void => {
     const current = event.currentTarget;
     if (!(current instanceof HTMLVideoElement)) return;
@@ -280,7 +280,7 @@ export function initSpeedControls(lifecycle: Lifecycle): void {
     } else if (current && previous.mode === 'manual') {
       setPlayerPlaybackRate(current, NORMAL_PLAYBACK_RATE);
     }
-    speedMenu.close();
+    updateMenuSelection();
   }));
   lifecycle.add(subscribeLang(() => {
     updateButtonVisual();

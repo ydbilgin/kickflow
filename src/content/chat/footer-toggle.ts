@@ -1,5 +1,7 @@
+import { isInsideChatScroller, visibleInterval } from '../shared/coalesce';
 import type { Lifecycle } from '../shared/lifecycle';
 import { subscribeLang, t } from '../shared/i18n';
+import { px, setStyleIfChanged } from '../shared/style-write';
 
 const BUTTON_ID = 'kickflow-footer-toggle';
 const SEND_BUTTON_ID = 'send-message-button';
@@ -7,6 +9,10 @@ const BUTTON_CLASS = 'kickflow-footer-toggle';
 const ACTIVE_CLASS = 'kickflow-footer-toggle--active';
 const BADGE_CLASS = 'kickflow-footer-toggle__badge';
 const ENSURE_INTERVAL_MS = 1000;
+/** On <html> while our button is a direct child of <body>; the stylesheet's footer slot keys on
+ * it. It replaces `body:has(> .kickflow-footer-toggle)`, which made every chat row inserted
+ * anywhere restyle the whole page (~150 ms per row on a busy channel, 2026-11-09). */
+export const FOOTER_ENTRY_ATTRIBUTE = 'data-kickflow-footer-entry';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** What removed-panel.ts's `RemovedMessagesPanel` exposes to this button — kept as its own
@@ -51,14 +57,21 @@ export class FooterToggleButton {
   ) {
     this.ensureInjected();
     const reposition = (): void => this.ensureInjected();
+    // Capture-phase scroll also reports every scroll inside the chat lists (each new row on a busy
+    // channel). Those scrollers move nothing this fixed button is aligned to; measuring here forced
+    // a style and layout pass per row batch (2026-11-09 profile: ~4% of the page's main thread).
+    const repositionOnScroll = (event: Event): void => {
+      if (isInsideChatScroller(event.target)) return;
+      this.ensureInjected();
+    };
     window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('scroll', repositionOnScroll, true);
     lifecycle.add(() => {
       window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('scroll', repositionOnScroll, true);
     });
     lifecycle.add(subscribeLang(() => this.refresh()));
-    lifecycle.setInterval(() => this.ensureInjected(), ENSURE_INTERVAL_MS);
+    visibleInterval(lifecycle, () => this.ensureInjected(), ENSURE_INTERVAL_MS);
     lifecycle.add(() => this.dispose());
   }
 
@@ -76,12 +89,16 @@ export class FooterToggleButton {
 
     const button = existing ?? this.build();
     if (button.parentElement !== document.body) document.body.append(button);
+    if (!document.documentElement.hasAttribute(FOOTER_ENTRY_ATTRIBUTE)) document.documentElement.setAttribute(FOOTER_ENTRY_ATTRIBUTE, '');
     const box = send.parentElement.getBoundingClientRect();
-    button.style.position = 'fixed';
-    button.style.zIndex = '403';
-    button.style.left = `${box.left}px`;
-    button.style.top = `${box.top + (box.height - 30) / 2}px`;
-    button.style.display = box.width > 0 && box.height > 0 && !send.closest('[hidden]') ? '' : 'none';
+    // This runs every second and on resize/scroll. Assigning an unchanged inline style or
+    // attribute still queues a mutation record on <body>, which wakes every page-wide observer;
+    // the 2026-11-11 soak counted ~2.3 such records per second from this button.
+    setStyleIfChanged(button, 'position', 'fixed');
+    setStyleIfChanged(button, 'zIndex', '403');
+    setStyleIfChanged(button, 'left', px(box.left));
+    setStyleIfChanged(button, 'top', px(box.top + (box.height - 30) / 2));
+    setStyleIfChanged(button, 'display', box.width > 0 && box.height > 0 && !send.closest('[hidden]') ? '' : 'none');
     this.button = button;
     this.badge = button.querySelector<HTMLSpanElement>(`.${BADGE_CLASS}`);
     this.refresh();
@@ -117,25 +134,25 @@ export class FooterToggleButton {
   private refresh(): void {
     const button = this.button;
     if (!button) return;
-    button.title = t('entry.footer_title');
-    button.setAttribute('aria-label', t('entry.footer_aria'));
-    button.classList.toggle(ACTIVE_CLASS, this.panel.isOpen());
+    const title = t('entry.footer_title');
+    if (button.title !== title) button.title = title;
+    const aria = t('entry.footer_aria');
+    if (button.getAttribute('aria-label') !== aria) button.setAttribute('aria-label', aria);
+    const open = this.panel.isOpen();
+    if (button.classList.contains(ACTIVE_CLASS) !== open) button.classList.toggle(ACTIVE_CLASS, open);
 
     const badge = this.badge ?? button.querySelector<HTMLSpanElement>(`.${BADGE_CLASS}`);
     if (!badge) return;
     const count = this.panel.removedCount();
-    if (count > 0) {
-      badge.textContent = String(count);
-      badge.style.display = '';
-    } else {
-      badge.textContent = '';
-      badge.style.display = 'none';
-    }
+    const text = count > 0 ? String(count) : '';
+    if (badge.textContent !== text) badge.textContent = text;
+    setStyleIfChanged(badge, 'display', count > 0 ? '' : 'none');
   }
 
   private dispose(): void {
     this.button?.remove();
     this.button = null;
     this.badge = null;
+    if (!document.querySelector(`body > .${BUTTON_CLASS}`)) document.documentElement.removeAttribute(FOOTER_ENTRY_ATTRIBUTE);
   }
 }

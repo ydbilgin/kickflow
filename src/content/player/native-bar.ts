@@ -1,27 +1,32 @@
 import { logger } from '../shared/logger';
+import { onlyChatMutations } from '../shared/coalesce';
 import { findControlBar, findControlBarInsertionAnchor, findPlayerWrapper } from '../shared/selectors';
 import type { Lifecycle } from '../shared/lifecycle';
 import { type BudgetPlan, measureBarBudget, planBarBudget, samePlan } from './bar-budget';
 import { type OverflowControl, createOverflowControl } from './overflow-menu';
+import { syncPlateRunEnds } from './bar-chrome.js';
 
 const OBSERVER_DEBOUNCE_MS = 150;
 const RETRY_INTERVAL_MS = 250;
 const RETRY_LIMIT = 20;
 /** Bar order (FINAL design 2026-10-18, player-bar.html): the plate holds 10 s back, 10 s forward,
  * speed, screenshot, and the behind-live chip LAST, so the chip appearing or leaving never moves
- * another control. */
+ * another control. The quality chip (design B, 2026-10-29) sits beside its sibling, speed. */
 const CONTROL_ORDER = [
   'kickflow-rewind-controls',
   'kickflow-speed-controls',
+  'kickflow-quality-controls',
   'kickflow-screenshot-controls',
   'kickflow-catchup-controls',
 ] as const;
+// Quality (design B, 2026-10-29) folds before speed: Kick's own gear still reaches quality.
 /** The order controls are given up in when the bar is too narrow — first entry collapses first.
  * Screenshot, forward/rewind and go-live all keep their hotkeys when collapsed
  * (hotkey-registry.ts); speed has none, which is why it outranks the rewind pair. CANLI is the
  * one control the owner watches live streams with, so it is the last to leave the bar. */
 const COLLAPSE_PRIORITY = [
   'kickflow-screenshot-controls',
+  'kickflow-quality-controls',
   'kickflow-speed-controls',
   'kickflow-rewind-controls',
   'kickflow-catchup-controls',
@@ -60,7 +65,11 @@ class NativeBarMountManager {
    * same observers, same rebuild-survival — only the insertion point differs. */
   private readonly rootControls = new Map<string, RegisteredControl>();
   private readonly wrapperObserver = new MutationObserver(() => this.handleMutation());
-  private readonly wrapperRebindObserver = new MutationObserver(() => this.handleMutation());
+  // Body-wide so a remounted player is found; chat rows mutating inside the chat scrollers can
+  // neither remount the player nor remove a bar control, so those batches are skipped (2026-11-09).
+  private readonly wrapperRebindObserver = new MutationObserver((records) => {
+    if (!onlyChatMutations(records)) this.handleMutation();
+  });
   // Kick's theatre-mode layout (fixed positioning + a calc(100vw - var(--chat-width)) bar
   // width, confirmed live 2026-07-15) is driven entirely by Tailwind's `group-data-[theatre=true]`
   // variant against a `[data-theatre]` ancestor: the bar's own class/style attributes never
@@ -76,6 +85,9 @@ class NativeBarMountManager {
   private observedBar: HTMLElement | null = null;
   private overflow: OverflowControl | null = null;
   private plan: BudgetPlan = EMPTY_PLAN;
+  /** The button row our groups were last placed in; its plate end is re-marked on every
+   * mutation batch, before paint, as the :has() rule it replaces did (2026-11-09). */
+  private plateParent: HTMLElement | null = null;
   /** Last measured cost per control id, including the ⋯ button. A collapsed control is not in
    * the bar and cannot be measured, so its last real measurement is what decides whether it may
    * come back. */
@@ -159,6 +171,7 @@ class NativeBarMountManager {
   private handleMutation(): void {
     if (this.disposed) return;
     this.rebindWrapper();
+    if (this.plateParent?.isConnected) syncPlateRunEnds(this.plateParent);
 
     if (this.retryAttempts >= RETRY_LIMIT) this.retryAttempts = 0;
 
@@ -372,6 +385,8 @@ class NativeBarMountManager {
     // Rows built for the previous plan are stale the moment the collapsed set changes.
     if (plan.collapsed.join() !== this.plan.collapsed.join()) this.overflow?.close();
     this.plan = plan;
+    this.plateParent = parent;
+    syncPlateRunEnds(parent);
     return true;
   }
 
@@ -437,6 +452,7 @@ class NativeBarMountManager {
     this.theatreAttributeObserver.disconnect();
     this.barResizeObserver?.disconnect();
     this.observedBar = null;
+    this.plateParent = null;
     this.overflow?.detach();
     this.overflow = null;
     this.plan = EMPTY_PLAN;

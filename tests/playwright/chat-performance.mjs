@@ -1,4 +1,4 @@
-// Production chat performance replay, 2026-10-23. Run through low_run.py.
+// Production chat performance replay, 2026-10-23. Run with node from the repository root.
 // node tests/playwright/chat-performance.mjs --output=<absolute folder> [--soak-seconds=600]
 // Headless RAF cadence is measured; physical 144-520 Hz scanout is not emulated.
 import { chromium } from 'playwright';

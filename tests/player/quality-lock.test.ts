@@ -8,6 +8,7 @@ let logger: typeof import('../../src/content/shared/logger').logger;
 import { Lifecycle } from '../../src/content/shared/lifecycle';
 
 beforeEach(async () => {
+  sessionStorage.clear();
   // Each test represents a fresh page; individual tests can recreate controllers on that page.
   vi.resetModules();
   ({ GEAR_PATH_PREFIX, KNOWN_GEAR_PATH_PREFIXES, findQualityGearCandidates, initQualityLock }
@@ -518,6 +519,147 @@ describe('quality-lock source readiness and verification', () => {
 
 describe('quality-lock rendition labels', () => {
   it.each([
+    { initial: ['Auto', '720p60', '480p'], next: ['Auto', '1080p60', '720p60'], expected: '1080p60' },
+    { initial: ['Auto', '1080p60', '720p60'], next: ['Auto', '720p60', '480p'], expected: '720p60' },
+    { initial: ['Auto', '720p30', '480p'], next: ['Auto', '720p60', '720p30'], expected: '720p60' },
+  ])('rechecks a changed rendition list without a source reload: $expected', async ({ initial, next, expected }) => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, initial);
+    state.afterPick = (label) => sessionStorage.setItem('stream_quality', label.match(/\d+/)![0]);
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      const previous = state.checked;
+      state.labels = next;
+      // IVS can replace its available renditions without replacing the video or firing loadstart.
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(state.checked).toBe(expected);
+      expect(state.picks).toEqual([previous, expected]);
+      expect(state.picks.every(label => initial.includes(label) || next.includes(label))).toBe(true);
+    } finally { lifecycle.dispose(); }
+    const opens = state.opens;
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(state.opens).toBe(opens);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('never promotes a 720p60 source to an absent 1080p rendition during rechecks', async () => {
+    stubEnvironment();
+    sessionStorage.setItem('stream_quality', '1080');
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '480p', '720p30', '720p60']);
+    state.afterPick = () => sessionStorage.setItem('stream_quality', '720');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(state.picks).toEqual(['720p60']);
+      expect(state.checked).toBe('720p60');
+      expect(state.opens).toBeGreaterThan(1);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('defers background rendition checks while hidden and recovers when visible', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    state.afterPick = () => sessionStorage.setItem('stream_quality', '720');
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+      state.labels = ['Auto', '480p'];
+      visibility.mockReturnValue('hidden');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(state.opens).toBe(1);
+      visibility.mockReturnValue('visible');
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(state.checked).toBe('480p');
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('resumes rendition checks after the viewer closes an open native menu', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    state.afterPick = () => sessionStorage.setItem('stream_quality', '720');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+      state.labels = ['Auto', '480p'];
+      gear.setAttribute('aria-expanded', 'true');
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(state.opens).toBe(1);
+      gear.setAttribute('aria-expanded', 'false');
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(state.checked).toBe('480p');
+    } finally { lifecycle.dispose(); }
+  });
+
+  // 2026-11-11 (performance): every recheck opens Kick's menu under a page-wide observer for ~1 s.
+  // A fixed 30 s timer did that 19 times in 10 minutes of an unchanged stream (112 in an hour); now 5 (10).
+  it('backs off rechecks of an unchanged menu', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    state.afterPick = () => sessionStorage.setItem('stream_quality', '720');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(state.picks).toEqual(['720p60']);
+      expect(state.opens).toBeLessThanOrEqual(6);
+      expect(state.opens).toBeGreaterThanOrEqual(3);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('rechecks within seconds when the video size stops matching the held rendition', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60', '480p']);
+    state.afterPick = (label) => sessionStorage.setItem('stream_quality', label.match(/\d+/)?.[0] ?? '');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(state.checked).toBe('720p60');
+      const opens = state.opens;
+      // Kick fell back to Auto on its own and now plays 480p.
+      state.checked = 'Auto';
+      sessionStorage.removeItem('stream_quality');
+      const video = document.getElementById('video-player') as HTMLVideoElement;
+      Object.defineProperty(video, 'videoHeight', { configurable: true, get: () => 480 });
+      video.dispatchEvent(new Event('resize'));
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(state.opens).toBeGreaterThan(opens);
+      expect(state.checked).toBe('720p60');
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('bounds a failed rendition refresh and stops until another player event', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    state.afterPick = () => sessionStorage.setItem('stream_quality', '720');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+      state.labels = ['Auto'];
+      await vi.advanceTimersByTimeAsync(60_000);
+      const opens = state.opens;
+      expect(opens).toBe(6);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(state.opens).toBe(opens);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it.each([
     { labels: ['Auto', '1080p60', 'Source'], expected: 'Source' },
     { labels: ['Otomatik', '720p60', 'Kaynak'], expected: 'Kaynak' },
     { labels: ['Auto', '1080p30', '1080p60', '2160p50'], expected: '2160p50' },
@@ -622,7 +764,7 @@ describe('quality-lock anonymous live DOM, 2026-10-22', () => {
     } finally { lifecycle.dispose(); }
   });
 
-  it('reads an already-open associated native menu without toggling it shut', async () => {
+  it('leaves an already-open native menu and its selection to the viewer', async () => {
     stubEnvironment();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const state = setupLiveMenu(true, true);
@@ -631,7 +773,9 @@ describe('quality-lock anonymous live DOM, 2026-10-22', () => {
     initQualityLock(lifecycle);
     try {
       await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
-      expect(state.selected()).toBe('720p60');
+      expect(state.selected()).toBe('Auto');
+      expect(state.picks).toEqual([]);
+      expect(state.gear.getAttribute('aria-expanded')).toBe('true');
       expect(warn).not.toHaveBeenCalled();
     } finally { lifecycle.dispose(); }
   });
@@ -651,5 +795,161 @@ describe('quality-lock anonymous live DOM, 2026-10-22', () => {
     expect(warn).not.toHaveBeenCalled();
     expect(diagnostic.mock.calls.filter((args) => String(args[0]).includes('highest quality could not be confirmed'))).toHaveLength(1);
     expect(error).not.toHaveBeenCalled();
+  });
+});
+
+describe('quality-lock quiet reconciliation', () => {
+  it('conceals its own menu before a frame can paint, then restores its styles', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    changingQualityMenu(gear);
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(1860);
+      const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
+      expect(menu).not.toBeNull();
+      expect(getComputedStyle(menu).visibility).toBe('hidden');
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(document.querySelector('[data-kickflow-quality-probe]')).toBeNull();
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('does not reveal an already-mounted transport bar with pointer movement', async () => {
+    stubEnvironment();
+    const { gear, bar } = setupPlayer();
+    changingQualityMenu(gear);
+    const moved = vi.fn();
+    bar.parentElement!.addEventListener('pointermove', moved);
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(moved).not.toHaveBeenCalled();
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('uses a new native persistence acknowledgement without reopening at every readiness event', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60', '480p']);
+    state.afterPick = () => sessionStorage.setItem('stream_quality', '720');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      for (const event of ['loadedmetadata', 'canplay', 'playing']) {
+        document.getElementById('video-player')!.dispatchEvent(new Event(event));
+        await vi.advanceTimersByTimeAsync(2_000);
+      }
+      expect(state.picks).toEqual(['720p60']);
+      expect(state.opens).toBe(1);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('does not trust stale persistence from a previous source', async () => {
+    stubEnvironment();
+    sessionStorage.setItem('stream_quality', '720');
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(state.picks).toEqual(['720p60']);
+      expect(state.opens).toBe(2);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('reconciles if READY resets a newly acknowledged selection to Auto', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    state.afterPick = () => {
+      sessionStorage.setItem('stream_quality', '720');
+      if (state.picks.length === 1) window.setTimeout(() => { state.checked = 'Auto'; sessionStorage.setItem('stream_quality', 'auto'); }, 500);
+    };
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(state.picks).toEqual(['720p60', '720p60']);
+      expect(state.checked).toBe('720p60');
+      expect(state.opens).toBe(2);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('starts promptly when an already-ready player is mounted', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    Object.defineProperty(document.getElementById('video-player'), 'readyState', { value: 4 });
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(800);
+      expect(state.picks).toEqual(['720p60']);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('promotes an outstanding startup timer when the source becomes ready', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(200);
+      document.getElementById('video-player')!.dispatchEvent(new Event('canplay'));
+      await vi.advanceTimersByTimeAsync(800);
+      expect(state.picks).toEqual(['720p60']);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('keeps fallback confirmation when native session storage is unavailable', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('Storage denied', 'SecurityError'); });
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(state.picks).toEqual(['720p60']);
+      expect(state.opens).toBe(2);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('does not carry an acknowledgement into a new source on the same video', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    state.afterPick = () => sessionStorage.setItem('stream_quality', '720');
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      state.checked = 'Auto';
+      document.getElementById('video-player')!.dispatchEvent(new Event('loadstart'));
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(state.picks).toEqual(['720p60', '720p60']);
+    } finally { lifecycle.dispose(); }
+  });
+
+  it('leaves the player alone while the viewer edits text and resumes after blur', async () => {
+    stubEnvironment();
+    const { gear } = setupPlayer();
+    const state = changingQualityMenu(gear, ['Auto', '720p60']);
+    const input = document.createElement('input');
+    document.body.append(input); input.focus();
+    const lifecycle = new Lifecycle();
+    initQualityLock(lifecycle);
+    try {
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(state.opens).toBe(0);
+      input.blur();
+      await vi.advanceTimersByTimeAsync(ATTEMPT_BUDGET_MS);
+      expect(state.picks).toEqual(['720p60']);
+    } finally { lifecycle.dispose(); }
   });
 });

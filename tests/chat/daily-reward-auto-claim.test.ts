@@ -232,6 +232,68 @@ describe('Daily reward auto-claim controller', () => {
     vi.unstubAllGlobals();
   });
 
+  describe('expected give-up diagnostics', () => {
+    it.each(['mount', 'clickable', 'ack'] as const)('keeps the first %s timeout off extension errors', (phase) => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const error = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+      const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+      const fixture = installOctoberReward({
+        recognized: phase !== 'mount', disabled: phase === 'clickable', acknowledge: 'pending',
+      });
+      new DailyRewardAutoClaimController(lifecycle);
+      vi.advanceTimersByTime(phase === 'ack' ? 30_000 : 6_000);
+      expect(debug).toHaveBeenCalledWith('daily-reward-auto-claim: giving up for this CTA appearance:',
+        expect.stringContaining(phase === 'mount' ? 'dialog did not mount' : 'claim'), '');
+      if (phase === 'mount') {
+        expect(debug).toHaveBeenCalledWith('daily-reward-auto-claim: giving up for this CTA appearance:',
+          'dialog did not mount before the bounded wait ended', '');
+      }
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalledWith('daily-reward-auto-claim: claimed');
+      expect(fixture.dialog.isConnected).toBe(false);
+      expect(fixture.claim).toHaveBeenCalledTimes(phase === 'ack' ? 1 : 0);
+    });
+
+    it('keeps real click exceptions visible after an expected timeout and a previous exception', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      vi.spyOn(logger, 'debug').mockImplementation(() => {});
+      installSilentDailyRewardCta();
+      new DailyRewardAutoClaimController(lifecycle);
+      vi.advanceTimersByTime(6_000);
+      expect(warn).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(10 * 60 * 1000 + 1);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        document.body.replaceChildren();
+        await flushMutationObserver();
+        const { launcher } = installSilentDailyRewardCta();
+        const failure = new Error('Synthetic launcher exception');
+        vi.spyOn(launcher, 'click').mockImplementation(() => { throw failure; });
+        await flushMutationObserver();
+        expect(warn).toHaveBeenCalledWith('daily-reward-auto-claim: giving up for this CTA appearance:',
+          'launcher click threw', failure);
+        expect(warn).toHaveBeenCalledTimes(attempt + 1);
+      }
+    });
+
+    it('allows /following and still requires the native acknowledgement', async () => {
+      window.history.replaceState({}, '', '/following');
+      const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+      const fixture = installOctoberReward({ acknowledge: 'pending' });
+      new DailyRewardAutoClaimController(lifecycle);
+      expect(fixture.claim).toHaveBeenCalledTimes(1);
+      expect(fixture.dialog.isConnected).toBe(true);
+      expect(info).not.toHaveBeenCalledWith('daily-reward-auto-claim: claimed');
+      fixture.button.replaceWith(document.createElement('a'));
+      await flushMutationObserver();
+      expect(info).toHaveBeenCalledWith('daily-reward-auto-claim: claimed');
+      expect(fixture.dialog.isConnected).toBe(false);
+    });
+  });
+
   describe('Round 2 bundle safety', () => {
     it.each(['Talep et', 'Claim', 'Obtenir', 'Büyük ödülü al', 'Ödülünü al'])('accepts a typeless video-stage primary-base action labelled %s', (label) => {
       const fixture = installOctoberReward();
@@ -364,6 +426,7 @@ describe('Daily reward auto-claim controller', () => {
       const set = vi.fn().mockResolvedValue(undefined);
       vi.stubGlobal('chrome', { runtime: { id: 'fixture-extension' }, storage: { local: { set } } });
       const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
       const fixture = installOctoberReward({ disabled: true });
       fixture.stage.classList.replace('aspect-1348/1080', aspect);
       fixture.dialog.classList.add('user-PRIVATE-CLASS', 'bg-[url(PRIVATE-URL)]');
@@ -396,8 +459,9 @@ describe('Daily reward auto-claim controller', () => {
       expect(new TextEncoder().encode(JSON.stringify(saved)).length).toBeLessThanOrEqual(2_048);
       expect(fixture.claim).not.toHaveBeenCalled();
       expect(fixture.dialog.isConnected).toBe(false);
-      expect(warn).toHaveBeenCalledTimes(1);
-      // A later appearance refreshes the snapshot without another warning.
+      expect(warn).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledTimes(1);
+      // A later appearance refreshes the snapshot without a warning.
       const video = fixture.launcher.querySelector('video')!;
       video.remove();
       await flushMutationObserver();
@@ -406,7 +470,8 @@ describe('Daily reward auto-claim controller', () => {
       await flushMutationObserver();
       vi.advanceTimersByTime(CLAIM_WAIT_TIMEOUT_MS);
       expect(set).toHaveBeenCalledTimes(2);
-      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledTimes(2);
       controller.syncFlag();
     });
 
@@ -448,8 +513,8 @@ describe('Daily reward auto-claim controller', () => {
       new DailyRewardAutoClaimController(lifecycle);
       expect(() => vi.advanceTimersByTime(DIALOG_WAIT_TIMEOUT_MS)).not.toThrow();
       await flushMutationObserver();
-      expect(warn).toHaveBeenCalledTimes(1);
       expect(set).toHaveBeenCalledTimes(kind === 'unavailable' ? 0 : 1);
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it('does not write a give-up diagnostic when the native claim is acknowledged', () => {
@@ -542,9 +607,10 @@ describe('Daily reward auto-claim controller', () => {
       expect(fixture.dialog.isConnected).toBe(false);
     });
 
-    it('reports only shape once and closes an unrecognised new dialog on timeout', () => {
+    it('reports only shape at debug and closes an unrecognised new dialog on timeout', () => {
       vi.useFakeTimers();
       const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
       const fixture = installOctoberReward({ recognized: false });
       fixture.dialog.className = 'shape-one shape-two private-third-token';
       fixture.button.textContent = 'PRIVATE TEXT MUST NOT BE LOGGED';
@@ -552,16 +618,18 @@ describe('Daily reward auto-claim controller', () => {
       vi.advanceTimersByTime(6_000);
       expect(fixture.claim).not.toHaveBeenCalled();
       expect(fixture.dialog.isConnected).toBe(false);
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn).toHaveBeenCalledWith(
+      expect(warn).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledTimes(1);
+      expect(debug).toHaveBeenCalledWith(
         'daily-reward-auto-claim: giving up for this CTA appearance:',
         'dialog did not mount before the bounded wait ended',
         '',
       );
-      expect(JSON.stringify(warn.mock.calls)).not.toContain('PRIVATE');
-      expect(JSON.stringify(warn.mock.calls)).not.toContain('private-third-token');
+      expect(JSON.stringify(debug.mock.calls)).not.toContain('PRIVATE');
+      expect(JSON.stringify(debug.mock.calls)).not.toContain('private-third-token');
       vi.advanceTimersByTime(60_000);
-      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledTimes(1);
     });
 
     it('waits for a disabled claim phase, then clicks exactly once', async () => {
@@ -589,7 +657,7 @@ describe('Daily reward auto-claim controller', () => {
       expect(fixture.dialog.isConnected).toBe(false);
     });
 
-    // Owner 2026-10-20 ("günlük ödülü hala almıyor"). Kick's current bundle disables the button while its
+    // Bug report 2026-10-20 (daily reward still not claimed). Kick's current bundle disables the button while its
     // claim request is in flight. Closing then unmounted the window before Kick's success handler ran, so
     // the navbar chest stayed "unclaimed". The window must stay open until Kick answers.
     it('keeps the window open while the claim request is in flight, and closes after Kick shows View', async () => {
@@ -812,6 +880,7 @@ describe('Daily reward auto-claim controller', () => {
   it('stops without clicking when only a foreign full-width dialog opens (zero reward candidates)', () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
     const fixture = installRewardFixture();
     // Replace the reconstructed trigger so it opens ONLY the stranger.
     const launcher = fixture.launcher.cloneNode(true) as HTMLButtonElement;
@@ -826,7 +895,8 @@ describe('Daily reward auto-claim controller', () => {
     vi.advanceTimersByTime(6_000 * 2);
 
     expect(strangerClick).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
+    expect(warn).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledWith(
       'daily-reward-auto-claim: giving up for this CTA appearance:',
       'dialog did not mount before the bounded wait ended',
         '',
@@ -1099,7 +1169,7 @@ describe('Daily reward auto-claim controller', () => {
   });
 
   it('waits out a claim button that mounts disabled, then clicks it once Kick enables it', () => {
-    // The owner's real reward, 2026-08-06: Kick mounts the window with its claim button disabled
+    // A real reward, 2026-08-06: Kick mounts the window with its claim button disabled
     // and enables it a moment later. Treating that first reading as a verdict gave up every time.
     const fixture = installRewardFixture(true);
     new DailyRewardAutoClaimController(lifecycle);
@@ -1279,7 +1349,7 @@ describe('Daily reward auto-claim controller', () => {
     expect(click).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(6_000);
     expect(click).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
 
     video.remove();
     await flushMutationObserver();
@@ -1294,10 +1364,10 @@ describe('Daily reward auto-claim controller', () => {
     launcher.append(video);
     await flushMutationObserver();
     expect(click).toHaveBeenCalledTimes(2);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it('warns once per page load when three different launchers give up on a missing dialog', async () => {
+  it('uses only debug when three different launchers give up on a missing dialog', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
@@ -1322,13 +1392,13 @@ describe('Daily reward auto-claim controller', () => {
       vi.advanceTimersByTime(10 * 60 * 1000);
     }
 
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(
+    expect(warn).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledWith(
       'daily-reward-auto-claim: giving up for this CTA appearance:',
       'dialog did not mount before the bounded wait ended',
       '',
     );
-    expect(debug).toHaveBeenCalledTimes(2);
+    expect(debug).toHaveBeenCalledTimes(3);
   });
 
   it('claims once after SPA navigation from /drops/claimed to /some-channel', () => {

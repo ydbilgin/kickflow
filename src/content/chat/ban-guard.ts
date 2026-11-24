@@ -100,19 +100,18 @@ export function handleMessageDeleted(payload: DeleteEventPayload, deps: BanGuard
     if (!message) return;
     if (deps.augmenter) {
       deps.augmenter.markById(messageId);
+      // Kick often drops a deleted message's row within a second or so (seen live 2026-10-23); then
+      // the struck copy must appear as a ghost at its place in the chat instead of vanishing.
+      deps.augmenter.seedRemovedGhosts([messageId]);
     } else {
       const element = deps.registry?.getElementForMessageId(messageId);
       if (element) applyPreservedMarking(element, message);
     }
     logger.debug('ban-guard: struck-through deleted message', messageId, payload.aiModerated ? '(AI)' : '(mod)');
-    notifyModAction(deps, {
-      kind: 'delete',
-      moderator: payload.deletedBy,
-      victim: message.sender.displayName?.trim() || message.sender.username,
-      messageId: message.id,
-      durationMin: null,
-      at: Date.now(),
-    });
+    // No separate system line: the struck row already carries one chip ("SİLİNDİ · AI mod (hate)" or
+    // "SİLİNDİ · moderatör"). A notice under it said the same thing a second time and, for an AI
+    // delete with no human actor, contradicted it ("Bir moderatör ... sildi"). Bans and timeouts keep
+    // their notice because one event there covers many rows. 2026-10-24.
     return;
   }
 

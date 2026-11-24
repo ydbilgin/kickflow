@@ -30,7 +30,7 @@ function signal(detail: NativeChatSignal): void { window.dispatchEvent(new Custo
 function setup(room = 1, channel = 2) {
   vi.stubGlobal('WebSocket', FakeSocket);
   const callbacks = {
-    onMessage: vi.fn(), onUserBanned: vi.fn(), onSubscription: vi.fn(), onConnected: vi.fn(),
+    onMessage: vi.fn(), onUserBanned: vi.fn(), onSubscription: vi.fn(), onChatroomUpdated: vi.fn(), onConnected: vi.fn(),
     onPrimarySubscriptionReady: vi.fn(), onPrimarySubscriptionUnavailable: vi.fn(), onDisconnected: vi.fn(),
   };
   const client = new PusherClient(room, channel, callbacks, { legacyPusher: true });
@@ -119,6 +119,21 @@ describe('native and legacy live chat aggregation', () => {
     signal({ kind: 'unavailable', socketId: 1 });
     expect(callbacks.onPrimarySubscriptionUnavailable).not.toHaveBeenCalled();
     expect(callbacks.onDisconnected).toHaveBeenCalledOnce();
+  });
+
+  it.each(['native', 'legacy'])('rejects a contradictory room in %s mode updates before it can reset the current snapshot', (transport) => {
+    const { callbacks, fallback } = setup();
+    const payload = { id: 999, slow_mode: { enabled: true, message_interval: 5 },
+      followers_mode: { enabled: true, min_duration: 1 }, subscribers_mode: { enabled: false }, emotes_mode: { enabled: false } };
+    const deliver = (data: typeof payload) => transport === 'native'
+      ? publish(data as unknown as ReturnType<typeof message>, 'chatrooms.1.v2', 1, 'App\\Events\\ChatroomUpdatedEvent')
+      : legacy(fallback, 'App\\Events\\ChatroomUpdatedEvent', data);
+    deliver(payload);
+    expect(callbacks.onChatroomUpdated).not.toHaveBeenCalled();
+    expect(callbacks.onPrimarySubscriptionReady).not.toHaveBeenCalled();
+    deliver({ ...payload, id: 1 });
+    expect(callbacks.onChatroomUpdated).toHaveBeenCalledOnce();
+    expect(callbacks.onChatroomUpdated).toHaveBeenCalledWith(expect.objectContaining({ chatroomId: 1 }));
   });
 
   it('deduplicates native and legacy messages and system publications with one readiness transition', () => {

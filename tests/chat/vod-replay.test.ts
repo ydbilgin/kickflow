@@ -155,6 +155,43 @@ describe('fetchVodMetadataResult', () => {
 });
 
 describe('VodChatReplayController', () => {
+  it('invalidates the old window while a replacement video is temporarily absent', async () => {
+    const lifecycle = new Lifecycle();
+    const first = controllableVideo().video;
+    const replacement = controllableVideo().video;
+    first.currentTime = 2;
+    replacement.currentTime = 122;
+    let observe!: (video: HTMLVideoElement | null) => void;
+    let releaseOld!: (result: { status: 'success'; messages: ChatMessage[] }) => void;
+    const fetchHistory = vi.fn()
+      .mockReturnValueOnce(new Promise((resolve) => { releaseOld = resolve; }))
+      .mockResolvedValue({ status: 'success', messages: [messageAt('replacement', 121)] });
+    const onReset = vi.fn();
+    const onMessages = vi.fn();
+    const onReady = vi.fn();
+    const controller = new VodChatReplayController(lifecycle, 1, 'vod', {
+      onReset, onMessages, onReady, onUnavailable: vi.fn(),
+    }, {
+      fetchMetadata: vi.fn().mockResolvedValue({ status: 'success', startTimeMs: Date.parse(VOD_START) }),
+      fetchHistory,
+      observeVideo: (_lifecycle, callback) => { observe = callback; callback(first); },
+    });
+
+    await controller.start();
+    observe(null);
+    releaseOld({ status: 'success', messages: [messageAt('stale', 1)] });
+    await flushAsync();
+    expect(onReady).not.toHaveBeenCalled();
+
+    observe(replacement);
+    await flushAsync();
+    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(onMessages.mock.calls.flatMap(([messages]) => messages.map((m: ChatMessage) => m.id)))
+      .toEqual(['replacement']);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    lifecycle.dispose();
+  });
+
   it('tracks five-second playback buckets, pauses, and immediately resets on a paused seek', async () => {
     const fetchHistory = vi.fn().mockResolvedValue({ status: 'success', messages: [] });
     const setup = setupController(fetchHistory);

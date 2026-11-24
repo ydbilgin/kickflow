@@ -8,9 +8,12 @@ import { normalizeChatIdentity, type ChatMessage } from './message-store';
 // first at 10,800 records.
 // ARCHIVE_PER_USER_CAP bounds a single spamming account so one user can never occupy the whole
 // archive.
-export const ARCHIVE_MAX_MESSAGES = 30_000;
-export const ARCHIVE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
-export const ARCHIVE_PER_USER_CAP = 500;
+// 2026-11-09 (a long history is not worth its memory cost): lowered from 30_000 records /
+// 3 hours / 500 per user. On a ~650 msg/min channel 5_000 records still covers ~8 minutes, on a
+// quiet channel the 30-minute age cap binds; the user card and search read the same archive.
+export const ARCHIVE_MAX_MESSAGES = 5_000;
+export const ARCHIVE_MAX_AGE_MS = 30 * 60 * 1000;
+export const ARCHIVE_PER_USER_CAP = 100;
 
 // This threshold is what makes compaction amortised O(1) per eviction.
 const ARCHIVE_COMPACT_MIN_HEAD = 1024;

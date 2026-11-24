@@ -44,8 +44,7 @@ async function resolveLiveChannel() {
   return slug;
 }
 
-const headless = process.argv.includes('--headless');
-const channel = process.argv.slice(2).find((arg) => !arg.startsWith('--')) ?? await resolveLiveChannel();
+const channel = process.argv[2] ?? await resolveLiveChannel();
 
 if (!SLUG_PATTERN.test(channel)) {
   throw new Error('channelSlug must contain only letters, digits, underscore, or hyphen');
@@ -101,7 +100,7 @@ function emptyEvidence(observations) {
   };
 }
 
-let anchorLoad = await loadProductionAnchors(repoRoot);
+const anchorLoad = await loadProductionAnchors(repoRoot);
 const webSockets = new Set();
 const chatContents = new Set();
 const requests = new Map();
@@ -117,7 +116,7 @@ try {
   // mismatched UA and Sec-CH-UA values are themselves an automation signal on Kick.
   context = await chromium.launchPersistentContext(profileDir, {
     executablePath: chromiumInstall.executablePath,
-    headless,
+    headless: false,
     ignoreDefaultArgs: ['--disable-extensions'],
     viewport: { width: 1600, height: 900 },
     locale: 'tr-TR',
@@ -166,10 +165,7 @@ try {
     }
   });
   page.on('websocket', (socket) => {
-    const endpoint = new URL(socket.url());
-    // Query strings and URL userinfo can contain session data; neither is probe evidence.
-    if (endpoint.username || endpoint.password) return;
-    webSockets.add(endpoint.origin + endpoint.pathname);
+    webSockets.add(socket.url());
     socket.on('framereceived', (event) => extractChatContents(event.payload, chatContents));
   });
 
@@ -238,8 +234,6 @@ try {
   await context?.close().catch(() => {});
 }
 
-// Classify the observed endpoints with the production predicate, without a copied host regex.
-anchorLoad = await loadProductionAnchors(repoRoot, [...webSockets]);
 const observations = {
   webSockets: [...webSockets],
   requests: [...requests.values()],

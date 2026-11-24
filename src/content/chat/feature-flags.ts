@@ -39,6 +39,8 @@ export interface FeatureFlags {
   /** Let Ctrl+F (⌘F) open KickFlow's chat search instead of the browser's page find. Off returns
    * the chord to the browser; the Search tab stays reachable from the panel either way. */
   chatSearchHotkey: boolean;
+  /** Hide Kick's compact frequently used emote strip above the composer, leaving its picker intact. */
+  hideQuickEmoteBar: boolean;
   /** Show moderator-action notices in the chat flow when a moderator bans, times out or deletes.
    *  Bursts inside a short window collapse into one expandable notice. */
   showModActions: boolean;
@@ -53,8 +55,17 @@ export interface FeatureFlags {
   seekBar: boolean;
   /** Show the CANLI/behind-live control and run automatic catch-up. */
   liveCatchup: boolean;
-  /** Select the highest currently available stream quality after media loads. */
+  /** Show the quality button on the player bar and apply `qualityMode` through Kick's own
+   * quality menu. Off leaves quality entirely to Kick. (Until 2026-10-29 this switch was
+   * "Highest quality"; that choice is now `qualityMode` 'best'.) */
   qualityLock: boolean;
+  /** Quality design B (2026-10-29): 'best' (En iyi görüntü), 'auto' (Bağlantıya göre),
+   * 'saver' (Veri tasarrufu, at most 480p) or an exact rendition label such as '720p60'. */
+  qualityMode: string;
+  /** Always highest (2026-11-24): every channel opens at 'best'; a pick in Kick's menu or the
+   * chip holds for that stream only and is never stored. Off: `qualityMode` is the stored
+   * choice and a pick replaces it (design B as it was). */
+  qualityAlwaysBest: boolean;
   /** Show frame capture and enable its configured hotkey. */
   screenshot: boolean;
   /** Show manual/automatic playback-speed controls. */
@@ -93,6 +104,24 @@ export interface FeatureFlags {
   vipFrameColor: string;
   /** Manual Kick username override for mention/reply detection (wins over DOM identity). */
   manualUsername: string;
+  /** 2026-11-24 features, each with its own switch (off unless noted).
+   * Ultrawide fill: fills the black side bands of a 16:9 stream on a wider stage (player/aspect-fill.ts);
+   * the U key cycles `aspectMode`. */
+  ultrawideFill: boolean;
+  /** 'contain' (Kick as it is), 'cover' (zoom, crops top/bottom) or 'stretch' (at most 15% stretch). */
+  aspectMode: 'contain' | 'cover' | 'stretch';
+  /** Blurred colours of the picture in the side bands (ambient light). */
+  ambientBands: boolean;
+  /** Web Audio compressor: loud streamers quieter, quiet ones louder (player/audio-level.ts). */
+  loudnessLeveler: boolean;
+  /** Remember the volume and mute per channel and set them again on that channel. */
+  channelVolume: boolean;
+  /** Hide cards of blocked channels, categories and tags (content-blocking.ts). On: an empty list
+   * hides nothing. */
+  contentBlocking: boolean;
+  /** Go-live notifications. Read by an extension worker that can show desktop notices; the page
+   * itself does nothing with it. */
+  liveNotify: boolean;
 }
 
 export const featureFlags: FeatureFlags = {
@@ -110,6 +139,7 @@ export const featureFlags: FeatureFlags = {
   showChattersBadges: true,
   showUserMessages: true,
   chatSearchHotkey: true,
+  hideQuickEmoteBar: true,
   showModActions: true,
   autoTheater: false,
   captionGuard: true,
@@ -117,6 +147,8 @@ export const featureFlags: FeatureFlags = {
   seekBar: true,
   liveCatchup: true,
   qualityLock: true,
+  qualityMode: 'best',
+  qualityAlwaysBest: true,
   screenshot: true,
   speedControls: true,
   fullscreenTerminal: true,
@@ -133,6 +165,13 @@ export const featureFlags: FeatureFlags = {
   vipFrameEnabled: true,
   vipFrameColor: '#EC4899',
   manualUsername: '',
+  ultrawideFill: false,
+  aspectMode: 'cover',
+  ambientBands: false,
+  loudnessLeveler: false,
+  channelVolume: false,
+  contentBlocking: true,
+  liveNotify: false,
 };
 
 export function setFeatureFlag<K extends keyof FeatureFlags>(key: K, value: FeatureFlags[K]): void {

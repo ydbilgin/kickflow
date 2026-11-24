@@ -27,7 +27,7 @@ export const ANCHOR_SPECS = [
   { id: 'panels.drops', key: 'dropsPanel', where: 'src/content/chat/drops-auto-claim.ts:DROPS_PANEL_SELECTOR' },
   { id: 'panels.rewards', key: 'rewardsPanel', where: 'src/content/chat/drops-auto-claim.ts:CHANNEL_POINTS_PANEL_SELECTOR' },
   { id: 'navbar.daily-reward-cta', key: 'dailyRewardCta', where: 'src/content/daily-reward-auto-claim.ts:DAILY_REWARD_CTA_SELECTOR' },
-  { id: 'network.native-realtime-socket', key: 'nativeRealtimeUrl', where: 'src/mainworld/native-chat-bridge.ts:isKickRealtimeUrl' },
+  { id: 'network.pusher-socket', key: 'pusherUrl', where: 'src/content/chat/pusher-client.ts:PUSHER_URL' },
   { id: 'network.chat-history', key: 'chatHistoryBaseUrl', where: 'src/content/chat/history.ts:historyUrl(channelId)' },
   { id: 'network.chat-history-start-time', key: 'chatHistoryStartTimeUrl', where: 'src/content/chat/history.ts:historyUrl(channelId,startTime)' },
 ];
@@ -408,8 +408,7 @@ export function evaluateKickAnchorResults(anchorLoad, evidence) {
       videoSources: rewardAlternative,
     });
 
-  match('network.native-realtime-socket', evidence.network.webSockets.some((url) =>
-    anchorLoad.nativeRealtimeUrls?.includes(url)), {
+  match('network.pusher-socket', evidence.network.webSockets.includes(values.pusherUrl), {
     webSockets: evidence.network.webSockets,
   });
   for (const [id, key] of [

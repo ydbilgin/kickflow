@@ -15,7 +15,9 @@ function setup() {
   Object.defineProperties(container, {
     scrollHeight: { get: () => metrics.scrollHeight },
     clientHeight: { get: () => metrics.clientHeight },
-    scrollTop: { get: () => metrics.scrollTop, set: value => { metrics.scrollTop = value; } },
+    scrollTop: { get: () => metrics.scrollTop, set: value => {
+      metrics.scrollTop = Math.max(0, Math.min(value, metrics.scrollHeight - metrics.clientHeight));
+    } },
   });
   const scrollTo = vi.fn((options: ScrollToOptions) => {
     metrics.scrollTop = Math.max(0, (options.top ?? 0) - metrics.clientHeight);
@@ -32,6 +34,9 @@ function setup() {
     cancelFrame() {},
   });
   controller.observeRows([...container.children] as HTMLElement[]);
+  // This fixture represents an established live list. Startup now lands instantly;
+  // the tests below still exercise cancellation of subsequent smooth follow.
+  controller.scrollToBottom();
   return { container, metrics, scrollTo, controller, resize: () => resized() };
 }
 

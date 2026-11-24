@@ -5,6 +5,7 @@ import { Lifecycle } from '../../src/content/shared/lifecycle';
 import { getStatus, resetStatus } from '../../src/content/status';
 import { t } from '../../src/content/shared/i18n';
 import { NATIVE_CHAT_EVENT } from '../../src/shared/native-chat';
+import { REPLY_REQUEST_EVENT } from '../../src/shared/reply-contract';
 
 class Socket extends EventTarget {
   static OPEN = 1;
@@ -80,6 +81,27 @@ afterEach(() => {
 afterAll(() => { Object.assign(featureFlags, originalFlags); vi.unstubAllGlobals(); });
 
 describe('own chat native reconnect grace', () => {
+  it('binds history-only reply targets to the resolved native room when history omits chatroom_id', async () => {
+    lifecycle.dispose();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.includes('/api/v2/channels/')
+      ? { id: 2, chatroom: { id: 1 } }
+      : { data: { messages: [{ id: 'history-only', channel_id: 2, content: 'Historical message', type: 'message',
+        created_at: new Date().toISOString(), sender: { id: 7, username: 'fixture', slug: 'fixture' } }] } },
+    })));
+    lifecycle = new Lifecycle();
+    bootstrap.initChatIntegrity({ kind: 'live', slug: 'fixture', sessionKey: 'live:fixture' }, lifecycle,
+      new RemovedMessagesPanel(lifecycle, null, bootstrap.getLiveStatusSnapshot));
+    for (let count = 0; count < 20; count++) await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(500);
+    const request = vi.fn(); document.addEventListener(REPLY_REQUEST_EVENT, request);
+    try {
+      const button = document.querySelector<HTMLButtonElement>('[data-message-id="history-only"] .kickflow-message__reply-action');
+      expect(button).not.toBeNull(); button!.click();
+      expect(request).toHaveBeenCalledOnce();
+      expect(JSON.parse(request.mock.calls[0][0].detail)).toMatchObject({ sessionKey: 'live:fixture', message: { id: 'history-only', chatroom_id: 1 } });
+    } finally { document.removeEventListener(REPLY_REQUEST_EVENT, request); }
+  });
+
   it('keeps the list mounted and reconnecting until a publication inside 12 seconds recovers it', () => {
     const list = document.getElementById('kickflow-message-list');
     nativeLoss();

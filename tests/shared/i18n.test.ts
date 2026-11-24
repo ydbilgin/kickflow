@@ -75,12 +75,39 @@ describe('i18n', () => {
     expect(t('tab.rewards')).toBe(messages['tab.rewards'].tr);
     expect(t('panel.rewards_intro')).toBe(messages['panel.rewards_intro'].tr);
     expect(t('setting.auto_claim_drops')).toBe('Drops ödüllerini otomatik al');
-    expect(t('setting.auto_claim_drops_desc')).toBe('İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi Claim düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick API’sini hiç çağırmaz ve arka plan servisi değildir. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.');
+    expect(t('setting.auto_claim_drops_desc')).toBe('İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi alma düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick’e kendi başına istek göndermez ve arka planda çalışmaz. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.');
     expect(t('setting.auto_claim_daily_reward')).toBe(messages['setting.auto_claim_daily_reward'].tr);
     expect(t('setting.auto_claim_daily_reward_desc')).toBe(messages['setting.auto_claim_daily_reward_desc'].tr);
     expect(t('event.gift.single', { name: 'sarah_lee' })).toBe(', sarah_lee kullanıcısına abonelik hediye etti');
     expect(listener).toHaveBeenCalledWith('tr');
     expect(storageSet).toHaveBeenCalledWith({ kf_lang: 'tr' });
     unsubscribe();
+  });
+
+  it('relocalizes a status line written by the page in the other language (flow-close, 2026-11-16)', async () => {
+    vi.stubGlobal('chrome', {
+      runtime: { id: 'kickflow-i18n-test' },
+      storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async (): Promise<void> => undefined) } },
+    });
+    const { localizeStatusLine, messages, setLang, t } = await import('../../src/content/shared/i18n');
+    const statusKeys = (Object.keys(messages) as (keyof typeof messages)[]).filter((key) => key.startsWith('status.'));
+    expect(statusKeys.length).toBeGreaterThan(20);
+    const params = { reason: 'primary-timeout' };
+    for (const key of statusKeys) {
+      setLang('en');
+      const english = t(key, params);
+      expect(localizeStatusLine(english)).toBe(english);
+      setLang('tr');
+      const turkish = t(key, params);
+      expect(localizeStatusLine(english)).toBe(turkish);
+      expect(localizeStatusLine(turkish)).toBe(turkish);
+      setLang('en');
+      expect(localizeStatusLine(turkish)).toBe(english);
+    }
+    setLang('tr');
+    expect(localizeStatusLine('waiting for chat panel…')).toBe('sohbet paneli bekleniyor…');
+    expect(localizeStatusLine('chatroom connection not ready (socket-closed), native chat'))
+      .toBe('canlı sohbet hazır değil (socket-closed); Kick’in sohbeti görünüyor');
+    expect(localizeStatusLine('something the page never says')).toBe('something the page never says');
   });
 });

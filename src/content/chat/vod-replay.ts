@@ -168,6 +168,9 @@ export class VodChatReplayController {
     const replacingVideo = this.video !== null;
     this.unbindVideo();
     this.video = video;
+    // A DOM replacement can be observed as old -> null -> new. Invalidate the old
+    // request and replay window when it leaves, before its response can arrive.
+    if (replacingVideo) this.beginSeekReset();
     if (!video) return;
 
     video.addEventListener('timeupdate', this.handleTimeUpdate);
@@ -175,7 +178,6 @@ export class VodChatReplayController {
     video.addEventListener('seeking', this.handleSeeking);
     video.addEventListener('seeked', this.handleSeeked);
 
-    if (replacingVideo) this.beginSeekReset();
     this.queueCurrentPosition(true);
   };
 

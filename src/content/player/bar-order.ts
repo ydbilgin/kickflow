@@ -1,10 +1,11 @@
 import { featureFlags } from '../chat/feature-flags';
 import type { Lifecycle } from '../shared/lifecycle';
+import { STRIP_ATTRIBUTE } from './bar-chrome.js';
 
 const BAR_ORDER_STYLE_ID = 'kickflow-bar-order';
 const BAR_ORDER_RULE = 'div.z-controls.bottom-0 button[data-testid="video-player-fullscreen"] { order: 1 }';
 /** One attribute on <html> switches the floating glass strip CSS (bootstrap.ts sheet) on or off. */
-export const STRIP_ATTRIBUTE = 'data-kickflow-strip';
+export { STRIP_ATTRIBUTE };
 
 /** If Kick stops matching this selector, Kick's own order returns and nothing breaks. */
 export function installBarOrder(): void {

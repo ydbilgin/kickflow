@@ -34,7 +34,7 @@ export const PRODUCTION_ANCHOR_KEYS = [
   'dropsPanel',
   'rewardsPanel',
   'dailyRewardCta',
-  'nativeRealtimeUrl',
+  'pusherUrl',
   'chatHistoryBaseUrl',
   'chatHistoryStartTimeUrl',
 ];
@@ -67,12 +67,8 @@ const entrySource = `
     DROPS_PANEL_SELECTOR, CHANNEL_POINTS_PANEL_SELECTOR,
   } from './src/content/chat/drops-auto-claim.ts';
   import { DAILY_REWARD_CTA_SELECTOR } from './src/content/daily-reward-auto-claim.ts';
-  import { isKickRealtimeUrl } from './src/mainworld/native-chat-bridge.ts';
+  import { PUSHER_URL } from './src/content/chat/pusher-client.ts';
   import { historyUrl } from './src/content/chat/history.ts';
-
-  export function matchingNativeRealtimeUrls(urls) {
-    return urls.filter(isKickRealtimeUrl);
-  }
 
   export default {
     chatRoot: CHAT_ROOT_SELECTOR,
@@ -106,7 +102,7 @@ const entrySource = `
     dropsPanel: DROPS_PANEL_SELECTOR,
     rewardsPanel: CHANNEL_POINTS_PANEL_SELECTOR,
     dailyRewardCta: DAILY_REWARD_CTA_SELECTOR,
-    nativeRealtimeUrl: isKickRealtimeUrl.name,
+    pusherUrl: PUSHER_URL,
     chatHistoryBaseUrl: historyUrl(123456),
     chatHistoryStartTimeUrl: historyUrl(123456, '2026-01-02T03:04:05.000Z'),
   };
@@ -129,7 +125,7 @@ const headlessSourceGlobals = `
   };
 `;
 
-export async function loadProductionAnchors(repoRoot = path.resolve('.'), observedSocketUrls = []) {
+export async function loadProductionAnchors(repoRoot = path.resolve('.')) {
   const failures = {};
   let tempModule = null;
   try {
@@ -157,7 +153,7 @@ export async function loadProductionAnchors(repoRoot = path.resolve('.'), observ
     for (const key of PRODUCTION_ANCHOR_KEYS) {
       if (values[key] === undefined) failures[key] = 'production export did not yield a value';
     }
-    return { values, failures, nativeRealtimeUrls: imported.matchingNativeRealtimeUrls(observedSocketUrls) };
+    return { values, failures };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     for (const key of PRODUCTION_ANCHOR_KEYS) failures[key] = message;

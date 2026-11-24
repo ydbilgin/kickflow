@@ -22,6 +22,18 @@ export const messages = {
   'player.clip_unsupported': {en:'Local recording is unavailable in this browser.',tr:'Bu tarayıcıda yerel kayıt kullanılamıyor.'},
   'player.capture_no_frame': {en:'Start playback before capturing a frame or clip.',tr:'Görüntü veya klip almak için önce videoyu oynat.'},
   'player.capture_failed': {en:'Capture failed. This video may restrict recording.',tr:'Kayıt alınamadı. Bu video kayda izin vermiyor olabilir.'},
+  'chat.reply_to': { en: 'Reply to {name}', tr: '{name} kullanıcısına yanıtla' },
+  'category.turkish_off': { en: 'Show only Turkish streams (Kick language filter). Remembered on every category.', tr: 'Yalnız Türkçe yayınları göster (Kick dil filtresi). Her kategoride hatırlanır.' },
+  'category.turkish_on': { en: 'Turkish filter on. Click to show all languages.', tr: 'Türkçe filtresi açık. Tüm dilleri göstermek için tıkla.' },
+  'chat.thread_open': { en: 'Thread', tr: 'Yan Sohbet' },
+  'chat.reply_unavailable': { en: "Kick's reply box was not found. Reload the page (F5); if this line comes back, Kick's page changed: send a screenshot of it.", tr: "Kick'in yanıt kutusu bulunamadı. Sayfayı yenile (F5); bu satır yine çıkarsa Kick sayfası değişmiş demektir, ekran görüntüsünü gönder." },
+  'chat.reply_wrong_room': { en: "This message belongs to another channel's chat. Reload the page (F5).", tr: 'Bu mesaj açık kanalın sohbetine ait değil. Sayfayı yenile (F5).' },
+  'chat.reply_no_bridge': { en: "KickFlow's page helper is not loaded. Reload the page (F5).", tr: "KickFlow'un sayfa yardımcısı yüklenmemiş. Sayfayı yenile (F5)." },
+  'chat.reply_followers_only': { en: 'This chat is followers only; a reply cannot be written.', tr: 'Bu sohbet takipçilere özel; yanıt yazılamıyor.' },
+  'chat.reply_subscribers_only': { en: 'This chat is subscribers only; a reply cannot be written.', tr: 'Bu sohbet abonelere özel; yanıt yazılamıyor.' },
+  'chat.reply_login_required': { en: 'Sign in to write a reply in this chat.', tr: 'Bu sohbette yanıt yazmak için giriş yap.' },
+  'chat.reply_rules_required': { en: 'Accept the native chat rules to write a reply.', tr: 'Yanıt yazmak için yerel sohbet kurallarını kabul et.' },
+  'chat.reply_no_editor': { en: 'This chat has no writable message field; a reply cannot be written.', tr: 'Bu sohbette yazı yazılamıyor; kullanılabilir mesaj alanı yok.' },
   'setting.floating_strip': { en: 'Cinema strip', tr: 'Sinema şeridi' },
   'setting.floating_strip_desc': { en: "Kick's player bar floats as one glass strip over a soft dark fade. Off: Kick's flat bar with KickFlow's plate.", tr: 'Kick’in oynatıcı çubuğu yumuşak bir koyu geçişin üstünde tek parça cam şerit olur. Kapalı: Kick’in düz çubuğu ve KickFlow plakası.' },
   'player.to_live': { en: 'Live', tr: 'Canlıya' },
@@ -33,7 +45,6 @@ export const messages = {
   'player.speed_manual_hint': { en: 'Picking a speed turns Auto off', tr: 'Elle hız seçmek Otomatik’i kapatır' },
   'player.speed_catching': { en: 'Speed {rate}, catching up with live', tr: 'Hız {rate}, canlıya yetişiyor' },
   'player.frame_saved': { en: 'Frame saved', tr: 'Kare kaydedildi' },
-  'popup.status_stats': { en: 'Status / Statistics', tr: 'Durum / İstatistik' },
   'common.close': { en: 'Close', tr: 'Kapat' },
   'common.change': { en: 'Change', tr: 'Değiştir' },
   'common.reset_defaults': { en: 'Reset to defaults', tr: 'Varsayılana dön' },
@@ -107,6 +118,8 @@ export const messages = {
   'event.mode.emotes_off': { en: 'Emotes-only mode off', tr: 'Sadece emote modu kapandı' },
 
   'message.deleted': { en: 'DELETED', tr: 'SİLİNDİ' },
+  'message.deleted_by.ai': { en: 'AI mod', tr: 'AI mod' },
+  'message.deleted_by.mod': { en: 'moderator', tr: 'moderatör' },
   'message.banned': { en: 'BANNED', tr: 'BANLANDI' },
   'message.moderation_unknown': { en: 'MODERATION TYPE UNKNOWN', tr: 'MODERASYON TÜRÜ BİLİNMİYOR' },
   'message.timeout': { en: 'TIMEOUT', tr: 'TIMEOUT' },
@@ -176,15 +189,15 @@ export const messages = {
   'panel.live_status': { en: 'Live status', tr: 'Canlı durum' },
   'stat.connection': { en: 'Connection', tr: 'Bağlantı' },
   'stat.channel': { en: 'Channel', tr: 'Kanal' },
-  'stat.chatroom_id': { en: 'Chatroom ID', tr: 'Sohbet odası no.' },
-  'stat.pusher': { en: 'Pusher', tr: 'Pusher bağlantısı' },
+  'stat.chatroom_id': { en: 'Chatroom ID', tr: 'Sohbet odası no' },
+  'stat.pusher': { en: 'Pusher', tr: 'Canlı bağlantı' },
   'stat.messages': { en: 'Messages', tr: 'Mesaj' },
-  'stat.preserved': { en: 'Preserved', tr: 'Korunmuş' },
+  'stat.preserved': { en: 'Preserved', tr: 'Korunan' },
   'stat.bans': { en: 'Bans', tr: 'Ban' },
   'stat.deletions': { en: 'Deletions', tr: 'Silme' },
-  'stat.ghost_inline': { en: 'Ghost inline', tr: 'Ghost (satır içi)' },
-  'stat.ghost_pending': { en: 'Ghost pending', tr: 'Ghost (bekleyen)' },
-  'stat.ghost_evicted': { en: 'Ghost evicted', tr: 'Ghost (atılan)' },
+  'stat.ghost_inline': { en: 'Ghost inline', tr: 'Silinen, yerinde' },
+  'stat.ghost_pending': { en: 'Ghost pending', tr: 'Silinen, yer bekliyor' },
+  'stat.ghost_evicted': { en: 'Ghost evicted', tr: 'Silinen, düşürüldü' },
   'stat.last_ban': { en: 'Last ban', tr: 'Son ban' },
   'panel.chat_view': { en: 'Chat view', tr: 'Sohbet görünümü' },
   'panel.chat_mode': { en: 'Chat mode', tr: 'Sohbet modu' },
@@ -219,6 +232,8 @@ export const messages = {
   },
   'setting.user_messages': { en: 'Messages this session', tr: 'Bu oturumdaki mesajlar' },
   'setting.user_messages_desc': { en: 'Shows this user’s messages retained during the current session.', tr: 'Bu kullanıcının mevcut oturumda tutulan mesajlarını gösterir.' },
+  'setting.hide_quick_emotes': { en: 'Hide quick emote bar', tr: 'Hızlı emoji çubuğunu gizle' },
+  'setting.hide_quick_emotes_desc': { en: 'Hides Kick’s emote shortcuts above chat input. The emote picker still works.', tr: 'Sohbet girişinin üstündeki Kick emoji kısayollarını gizler. Emoji seçici çalışmaya devam eder.' },
   'setting.mod_actions': { en: 'Moderator action notices', tr: 'Moderatör işlem bildirimleri' },
   'setting.mod_actions_desc': { en: 'Shows docked notices when messages are banned, timed out, or deleted.', tr: 'Mesajlar banlandığında, zaman aşımına uğradığında veya silindiğinde sabit bildirimler gösterir.' },
   'setting.mention_highlight': { en: 'Highlight replies to me / mentions of me', tr: 'Bana yanıt verildiğinde / benden bahsedildiğinde vurgula' },
@@ -271,8 +286,10 @@ export const messages = {
   'setting.seek_bar_desc': { en: "Draws the green position bar whenever Kick leaves it out, which it often does on a live stream.", tr: 'Kick canlı yayında sık sık çizmediği yeşil konum çubuğunu, çizmediği zaman bizim çizmemizi sağlar.' },
   'setting.live_catchup': { en: 'Live catch-up', tr: 'Canlıya yetişme' },
   'setting.live_catchup_desc': { en: 'Carefully accelerates playback when the stream falls behind.', tr: 'Geride kalınca yayını kontrollü biçimde hızlandırır.' },
-  'setting.quality_lock': { en: 'Highest quality', tr: 'En yüksek kalite' },
-  'setting.quality_lock_desc': { en: 'Selects the highest available stream quality.', tr: 'Mevcut en yüksek yayın kalitesini seçer.' },
+  'setting.quality_lock': { en: 'Quality button', tr: 'Kalite düğmesi' },
+  'setting.quality_always_best': { en: 'Open every stream at the highest quality', tr: 'Her yayını en yüksek kalitede aç' },
+  'setting.quality_always_best_desc': { en: 'A quality you pick by hand holds for that stream only; the next stream opens at the highest again. Off: your last pick is remembered.', tr: 'Elle seçtiğin kalite yalnız o yayında kalır; sonraki yayın yine en yüksekte açılır. Kapalıyken son seçimin hatırlanır.' },
+  'setting.quality_lock_desc': { en: 'Shows the quality button on the player bar and keeps the quality you pick there.', tr: 'Oynatıcı barında kalite düğmesini gösterir ve orada seçtiğin kaliteyi korur.' },
   'setting.screenshot': { en: 'Screenshot', tr: 'Ekran görüntüsü' },
   'setting.screenshot_desc': { en: 'Adds a frame-capture button to the control bar.', tr: 'Kontrol çubuğuna kare yakalama düğmesi ekler.' },
   'setting.speed': { en: 'Speed controls', tr: 'Hız kontrolleri' },
@@ -282,7 +299,7 @@ export const messages = {
   'setting.auto_claim_drops': { en: 'Auto-claim Drops', tr: 'Drops ödüllerini otomatik al' },
   'setting.auto_claim_drops_desc': {
     en: "On the channel you watch, automatically claims Kick Drops rewards when a reward reaches 100% by clicking Kick's own Claim button. Only while this Kick tab is open: it never calls a Kick API or runs as a background service. Never touches channel points; spending them is your choice.",
-    tr: 'İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi Claim düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick API’sini hiç çağırmaz ve arka plan servisi değildir. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.',
+    tr: 'İzlediğin kanalda bir Kick Drops ödülü %100’e ulaştığında Kick’in kendi alma düğmesine tıklayarak otomatik alır. Yalnızca Kick sekmesi açıkken çalışır; Kick’e kendi başına istek göndermez ve arka planda çalışmaz. Kanal puanlarına hiç dokunmaz; onları harcayıp harcamamak senin kararın.',
   },
   'setting.auto_claim_daily_reward': { en: 'Auto-claim daily reward', tr: 'Günlük ödülü otomatik al' },
   'setting.auto_claim_daily_reward_desc': {
@@ -328,6 +345,18 @@ export const messages = {
   'player.auto': { en: 'AUTO', tr: 'OTO' },
   'player.select_speed': { en: 'Select playback speed', tr: 'Oynatma hızını seç' },
   'player.more_controls': { en: 'More controls', tr: 'Diğer kontroller' },
+  'player.quality': { en: 'Quality', tr: 'Kalite' },
+  'player.quality_best': { en: 'Best picture', tr: 'En iyi görüntü' },
+  'player.quality_best_hint': { en: 'Always the highest', tr: 'Hep en yüksek' },
+  'player.quality_best_hint_now': { en: 'Always the highest, now {label}', tr: 'Hep en yüksek, şu an {label}' },
+  'player.quality_auto': { en: 'Match my connection', tr: 'Bağlantıya göre' },
+  'player.quality_auto_hint': { en: 'Steps down by itself when the connection slows', tr: 'İnternet yavaşlarsa kendisi düşürür' },
+  'player.quality_saver': { en: 'Data saver', tr: 'Veri tasarrufu' },
+  'player.quality_saver_hint': { en: 'At most 480p, for mobile data', tr: 'En çok 480p, telefon interneti için' },
+  'player.quality_more': { en: 'Other resolutions', tr: 'Diğer çözünürlükler' },
+  'player.quality_sub_best': { en: 'BEST', tr: 'EN İYİ' },
+  'player.quality_sub_stream': { en: 'THIS STREAM', tr: 'BU YAYIN' },
+  'player.quality_sub_saver': { en: 'SAVER', tr: 'TASARRUF' },
 
   'entry.footer_title': { en: 'KickFlow removed messages', tr: 'KickFlow kaldırılan mesajlar' },
   'entry.footer_aria': { en: 'Open KickFlow removed messages', tr: 'KickFlow kaldırılan mesajları aç' },
@@ -338,33 +367,37 @@ export const messages = {
   'overlay.replay_loading': { en: 'Loading replay chat…', tr: 'Yayın sohbeti yükleniyor…' },
   'overlay.replay_ready': { en: 'Replay chat ready — waiting for messages…', tr: 'Yayın sohbeti hazır — mesajlar bekleniyor…' },
   'chat.new_messages': { en: '↓ New messages', tr: '↓ Yeni mesajlar' },
+  'chat.pause_count': {
+    en: { one: '{count} new message', other: '{count} new messages' },
+    tr: { one: '{count} yeni mesaj', other: '{count} yeni mesaj' },
+  },
   'chat.new_messages_count': {
     en: { one: '↓ {count} new message', other: '↓ {count} new messages' },
     tr: { one: '↓ {count} yeni mesaj', other: '↓ {count} yeni mesaj' },
   },
 
-  'status.starting': { en: 'starting', tr: 'başlatılıyor' },
-  'status.resolving_channel': { en: 'resolving channel…', tr: 'kanal çözülüyor…' },
-  'status.not_channel': { en: 'not a channel page', tr: 'kanal sayfası değil' },
-  'status.chatroom_unresolved': { en: 'could not resolve chatroom id', tr: 'sohbet odası kimliği çözülemedi' },
-  'status.pusher_connecting': { en: 'Pusher connecting…', tr: 'Pusher bağlanıyor…' },
-  'status.socket_waiting': { en: 'Pusher socket connected, waiting for chatroom subscription…', tr: 'Pusher soketi bağlı — sohbet odası aboneliği bekleniyor…' },
-  'status.active_native': { en: 'active, marking native chat', tr: 'aktif — Kick sohbeti işaretleniyor' },
-  'status.active_native_replay': { en: 'active — native replay chat', tr: 'aktif — Kick yayın sohbeti' },
-  'status.subscription_waiting_native': { en: 'waiting for chatroom subscription, native chat', tr: 'sohbet odası aboneliği bekleniyor — Kick sohbeti' },
-  'status.active_own': { en: 'active, rendering KickFlow list', tr: 'aktif — kendi liste render ediliyor' },
+  'status.starting': { en: 'starting', tr: 'başlıyor' },
+  'status.resolving_channel': { en: 'resolving channel…', tr: 'kanal bulunuyor…' },
+  'status.not_channel': { en: 'not a channel page', tr: 'Bu sayfa bir kanal değil. Bir Kick yayını aç.' },
+  'status.chatroom_unresolved': { en: 'could not resolve chatroom id', tr: 'sohbet odası bulunamadı' },
+  'status.pusher_connecting': { en: 'Pusher connecting…', tr: 'canlı sohbete bağlanıyor…' },
+  'status.socket_waiting': { en: 'Pusher socket connected, waiting for chatroom subscription…', tr: 'bağlandı, sohbet odası bekleniyor…' },
+  'status.active_native': { en: 'active, marking native chat', tr: 'çalışıyor, Kick’in sohbeti kullanılıyor' },
+  'status.active_native_replay': { en: 'active — native replay chat', tr: 'çalışıyor, Kick’in tekrar sohbeti kullanılıyor' },
+  'status.subscription_waiting_native': { en: 'waiting for chatroom subscription, native chat', tr: 'sohbet odası bekleniyor; şimdilik Kick’in sohbeti görünüyor' },
+  'status.active_own': { en: 'active, rendering KickFlow list', tr: 'çalışıyor, KickFlow sohbet listesi gösteriliyor' },
   'status.vod_replay_loading': { en: 'loading replay chat…', tr: 'yayın sohbeti yükleniyor…' },
-  'status.active_vod_replay': { en: 'active — replay chat synchronized', tr: 'aktif — yayın sohbeti senkron' },
-  'status.vod_replay_failed_native': { en: 'replay unavailable — native replay chat', tr: 'yayın sohbeti alınamadı — Kick yayın sohbeti' },
-  'status.content_not_ready': { en: 'content not ready, retrying in background with native chat', tr: 'içerik hazır değil — Kick sohbeti, arka planda yeniden deneniyor' },
-  'status.chatroom_unresolved_native': { en: 'could not resolve chatroom id, native chat', tr: 'sohbet odası kimliği çözülemedi — Kick sohbeti' },
-  'status.history_empty': { en: 'history empty, waiting for live chatroom subscription…', tr: 'geçmiş boş — canlı sohbet odası aboneliği bekleniyor…' },
-  'status.history_failed': { en: 'could not load history, waiting for live chatroom subscription…', tr: 'geçmiş alınamadı — canlı sohbet odası aboneliği bekleniyor…' },
-  'status.active_ready': { en: 'active, chatroom subscription ready', tr: 'aktif — sohbet odası aboneliği hazır' },
-  'status.chatroom_ready_waiting': { en: 'chatroom ready, waiting for visible chat area', tr: 'sohbet odası hazır — görünür sohbet alanı bekleniyor' },
-  'status.primary_unavailable': { en: 'chatroom connection not ready ({reason}), native chat', tr: 'sohbet odası bağlantısı hazır değil ({reason}) — Kick sohbeti' },
+  'status.active_vod_replay': { en: 'active — replay chat synchronized', tr: 'çalışıyor, tekrar sohbeti videoyla eş zamanlı' },
+  'status.vod_replay_failed_native': { en: 'replay unavailable — native replay chat', tr: 'tekrar sohbeti alınamadı; Kick’in sohbeti görünüyor' },
+  'status.content_not_ready': { en: 'content not ready, retrying in background with native chat', tr: 'sohbet henüz hazır değil; Kick’in sohbeti görünüyor, arka planda yeniden deneniyor' },
+  'status.chatroom_unresolved_native': { en: 'could not resolve chatroom id, native chat', tr: 'sohbet odası bulunamadı; Kick’in sohbeti görünüyor. Sayfayı yenile.' },
+  'status.history_empty': { en: 'history empty, waiting for live chatroom subscription…', tr: 'geçmiş boş, canlı sohbet bekleniyor…' },
+  'status.history_failed': { en: 'could not load history, waiting for live chatroom subscription…', tr: 'geçmiş alınamadı, canlı sohbet bekleniyor…' },
+  'status.active_ready': { en: 'active, chatroom subscription ready', tr: 'çalışıyor, sohbet odası hazır' },
+  'status.chatroom_ready_waiting': { en: 'chatroom ready, waiting for visible chat area', tr: 'sohbet odası hazır, sohbet alanı bekleniyor' },
+  'status.primary_unavailable': { en: 'chatroom connection not ready ({reason}), native chat', tr: 'canlı sohbet hazır değil ({reason}); Kick’in sohbeti görünüyor' },
   'status.reconnecting': { en: 'reconnecting…', tr: 'yeniden bağlanıyor…' },
-  'status.reconnect_failed': { en: 'could not reconnect to chatroom, native chat', tr: 'sohbet odasına yeniden bağlanamadı — Kick sohbeti' },
+  'status.reconnect_failed': { en: 'could not reconnect to chatroom, native chat', tr: 'sohbet odasına yeniden bağlanılamadı; Kick’in sohbeti görünüyor. Sayfayı yenile.' },
   'status.waiting_chat_panel': { en: 'waiting for chat panel…', tr: 'sohbet paneli bekleniyor…' },
 
   'popup.tagline': { en: 'A streamlined Kick experience.', tr: 'Kick deneyimi, sadeleştirilmiş.' },
@@ -373,25 +406,30 @@ export const messages = {
   'popup.mode_desc': { en: 'Kick or KickFlow list', tr: 'Kick veya KickFlow listesi' },
   'popup.hover_follow': { en: 'Scrolling under the pointer', tr: 'İmleç altındaki kaydırma' },
   'popup.hover_follow_desc': { en: 'KickFlow list: how new messages move in while you point at chat', tr: 'KickFlow listesi: imleç sohbetteyken yeni mesajlar nasıl gelir' },
+  'popup.status_stats': { en: 'Status / Statistics', tr: 'Durum / İstatistik' },
+  'popup.debug_log': { en: 'Debug log (F12)', tr: 'Hata ayıklama kaydı (F12)' },
+  'popup.changes_hint': { en: 'Changes apply immediately and persist after reload.', tr: 'Değişiklik anında uygulanır; kanal yeniden yüklenince de korunur.' },
+  // Texts that popup.html carried only in English (2026-11-16): en is the old HTML text, byte for byte.
   'popup.hover_smooth': { en: 'Smooth', tr: 'Yumuşak' },
   'popup.hover_instant': { en: 'Instant', tr: 'Anında' },
+  'popup.mode_option_native': { en: 'Native', tr: 'Kick’in sohbeti' },
+  'popup.active_mode_own': { en: 'own chat', tr: 'KickFlow sohbet listesi' },
+  'popup.active_mode_native': { en: 'native chat', tr: 'Kick’in sohbeti' },
+  'popup.not_connected': { en: 'not connected', tr: 'Kick sekmesine bağlanılamadı. Sayfayı yenile.' },
+  'popup.active': { en: 'KickFlow active · {mode}', tr: 'KickFlow aktif · {mode}' },
+  'popup.pusher_connected': { en: 'connected', tr: 'bağlı' },
+  'popup.pusher_disconnected': { en: 'disconnected', tr: 'bağlı değil' },
+  'popup.no_active_tab': { en: 'no active tab', tr: 'Açık bir sekme yok. Bir Kick yayını aç.' },
+  'popup.not_kick_tab': { en: 'not a Kick tab / content script unavailable', tr: 'Bu sekmede KickFlow çalışmıyor. Bir Kick yayını aç ya da sayfayı yenile.' },
+  'popup.open_kick': { en: 'Open kick.com in the active tab', tr: 'Bu sekme Kick değil. Bir Kick yayını aç.' },
   'popup.summary': { en: 'This session', tr: 'Bu oturum' },
   'popup.sum_messages': { en: 'Messages seen', tr: 'Görülen mesaj' },
   'popup.sum_preserved': { en: 'Kept after removal', tr: 'Silinse de korunan' },
   'popup.sum_bans': { en: 'Kept from bans', tr: 'Bandan korunan' },
   'popup.diagnostics': { en: 'Diagnostics', tr: 'Tanılama' },
   'popup.diagnostics_desc': { en: 'Technical details for bug reports.', tr: 'Hata bildirimi için teknik ayrıntılar.' },
-  'popup.debug_log': { en: 'Debug log (F12)', tr: 'Debug günlüğü (F12)' },
-  'popup.changes_hint': { en: 'Changes apply immediately and persist after reload.', tr: 'Değişiklik anında uygulanır; kanal yeniden yüklenince de korunur.' },
-  'popup.not_connected': { en: 'not connected', tr: 'bağlanamadı' },
-  'popup.active': { en: 'KickFlow active · {mode}', tr: 'KickFlow aktif · {mode}' },
   'popup.mode_native': { en: 'Kick chat', tr: 'Kick sohbeti' },
   'popup.mode_own': { en: 'KickFlow list', tr: 'KickFlow listesi' },
-  'popup.pusher_connected': { en: 'connected', tr: 'bağlı' },
-  'popup.pusher_disconnected': { en: 'disconnected', tr: 'bağlı değil' },
-  'popup.no_active_tab': { en: 'no active tab', tr: 'aktif sekme yok' },
-  'popup.not_kick_tab': { en: 'not a Kick tab / content script unavailable', tr: 'Kick sekmesi değil / içerik betiği yok' },
-  'popup.open_kick': { en: 'Open kick.com in the active tab', tr: 'Kick sekmesinde değilsin (kick.com aç)' },
   'popup.tab_unavailable': { en: 'Could not connect to the Kick tab.', tr: 'Kick sekmesine bağlanılamadı.' },
   'popup.save_failed': { en: 'Setting changed for this tab, but could not be saved.', tr: 'Ayar bu sekmede değişti ancak kaydedilemedi.' },
 
@@ -401,7 +439,7 @@ export const messages = {
 
   'user.not_subscribed': { en: 'not subscribed', tr: 'abone değil' },
   'user.unknown': { en: 'unknown', tr: 'bilinmiyor' },
-  'user.subscribed_months': { en: { one: 'subscribed for {n} month', other: 'subscribed for {n} months' }, tr: { one: '{n} ay abone', other: '{n} ay abone' } },
+  'user.subscribed_months': { en: { one: '{n} month', other: '{n} months' }, tr: { one: '{n} ay abone', other: '{n} ay abone' } },
   'user.not_following': { en: 'not following', tr: 'takip etmiyor' },
   'user.close': { en: 'Close user card', tr: 'Kullanıcı kartını kapat' },
   'user.open_middle': { en: 'kick.com/{slug}, middle-click to open in a new tab', tr: 'kick.com/{slug} — orta tıkla yeni sekmede aç' },
@@ -415,6 +453,15 @@ export const messages = {
   'user.messages_truncated': { en: 'Older messages were not retained.', tr: 'Daha eskisi tutulmadı.' },
   'user.messages_jump': { en: 'Click to jump to this message', tr: 'Mesaja gitmek için tıkla' },
   'user.open': { en: 'open', tr: 'aç' },
+  'user.follow_on_kick': { en: 'Follow on Kick', tr: "Kick'te takip et" },
+  'user.kick_controls': { en: 'Kick controls', tr: 'Kick işlemleri' },
+  // 2026-11-24: ultrawide fill (U key) toast.
+  'player.aspect_contain': { en: 'Picture: as sent (bands)', tr: 'Görüntü: olduğu gibi (bantlı)' },
+  'player.aspect_cover': { en: 'Picture: fill by cropping', tr: 'Görüntü: kırparak doldur' },
+  'player.aspect_stretch': { en: 'Picture: slight stretch', tr: 'Görüntü: hafif germe' },
+  // 0.4.3 (2026-11-24, code review B13): the loudness leveller says when it cannot work.
+  'player.leveller_silent': { en: 'Loudness leveller hears no sound. Reload the page to get it back.', tr: 'Ses dengeleyici ses alamıyor. Sesi geri almak için sayfayı yenile.' },
+  'player.leveller_unsupported': { en: 'Loudness leveller cannot work on this player; the sound is left as it is.', tr: 'Ses dengeleyici bu oynatıcıda çalışamıyor; ses olduğu gibi bırakıldı.' },
 } as const satisfies Record<string, { en: LocalizedTemplate; tr: LocalizedTemplate }>;
 
 export type MessageKey = keyof typeof messages;
@@ -508,6 +555,32 @@ function selectTemplate(template: LocalizedTemplate, params: Params): string {
 export function t(key: MessageKey, params: Params = {}): string {
   const template = selectTemplate(messages[key][lang], params);
   return interpolateTemplate(template, params);
+}
+
+let statusPatterns: { key: MessageKey; pattern: RegExp; names: string[] }[] | null = null;
+
+/** The page script writes its status line in its own language (English until kf_lang is stored), while a
+ * popup may run in another one (?lang=tr opens it in Turkish). Returns a known status line in the
+ * current language; any other text comes back unchanged. */
+export function localizeStatusLine(text: string): string {
+  statusPatterns ??= (Object.keys(messages) as MessageKey[])
+    .filter((key) => key.startsWith('status.'))
+    .flatMap((key) => (['en', 'tr'] as const).map((language) => {
+      const template = messages[key][language] as string;
+      const names: string[] = [];
+      const source = template.split(/(\{[a-zA-Z0-9_]+\})/).map((part) => {
+        const name = /^\{([a-zA-Z0-9_]+)\}$/.exec(part)?.[1];
+        if (name) { names.push(name); return '(.+?)'; }
+        return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }).join('');
+      return { key, pattern: new RegExp(`^${source}$`), names };
+    }));
+  for (const { key, pattern, names } of statusPatterns) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    return t(key, Object.fromEntries(names.map((name, index) => [name, match[index + 1]])));
+  }
+  return text;
 }
 
 export function formatNumber(value: number): string {

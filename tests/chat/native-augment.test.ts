@@ -217,6 +217,27 @@ describe('NativeChatAugmenter', () => {
     expect(row?.querySelector('.kickflow-status-label')?.textContent).toBe('BANLANDI· mod1');
   });
 
+  it('restores mounted native content when the session is disposed', () => {
+    const list = installChat(['m1']);
+    const row = list.firstElementChild as HTMLElement;
+    const nativeContent = row.querySelector<HTMLElement>('.break-words')!;
+    const originalMarkup = row.innerHTML;
+    const store = new ChatIntegrityStore();
+    store.addMessage(message('m1'));
+    store.markMessageDeleted('m1', { deletedBy: 'mod1' });
+    const lifecycle = new Lifecycle();
+    new NativeChatAugmenter(lifecycle, store);
+    expect(row.querySelector('.kickflow-original-content')).not.toBeNull();
+    expect(nativeContent.classList.contains('kickflow-native-content-dimmed')).toBe(true);
+
+    lifecycle.dispose();
+
+    expect(row.innerHTML).toBe(originalMarkup);
+    expect(row.classList.contains('kickflow-preserved')).toBe(false);
+    expect(row.classList.contains('kickflow-augmented')).toBe(false);
+    expect(row.querySelector('.break-words')).toBe(nativeContent);
+  });
+
   it('rebuilds rich preserved content beside a nested class-bearing Kick row without copying its utilities', () => {
     installChat(['m1']);
     const store = new ChatIntegrityStore();

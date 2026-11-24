@@ -14,75 +14,15 @@
  * uses would agree with itself while the screen was broken.
  */
 
-export interface BudgetControl {
-  id: string;
-  /** Rendered width plus the flex gap the control occupies in its group. 0 = not measurable. */
-  cost: number;
-}
-
-export interface BudgetPlan {
-  /** Ids that stay in the bar, in bar order. */
-  mounted: string[];
-  /** Ids that move into the overflow menu, in bar order. */
-  collapsed: string[];
-  /** Whether the `⋯` button itself belongs in the bar. */
-  overflow: boolean;
-}
-
-export interface BudgetInput {
-  /** Pixels the bar can give KickFlow without moving anything Kick owns. */
-  free: number;
-  /** Cost of the `⋯` button, measured the same way as any other control. */
-  overflowCost: number;
-  /** Every registered control, in bar order. */
-  controls: readonly BudgetControl[];
-  /** Ids in the order they should be given up — first entry collapses first. */
-  collapseOrder: readonly string[];
-}
+// The plan types and the pure arithmetic live in bar-shared.js (2026-10-29), so a
+// fallback player bar folds its controls with the same rule. This file keeps the DOM reading.
+export type { BudgetControl, BudgetInput, BudgetPlan } from './bar-shared.js';
+export { planBarBudget, samePlan } from './bar-shared.js';
 
 export interface BarMeasurement {
   free: number;
   /** Cost per control id, for every KickFlow control currently in the bar. */
   costs: Map<string, number>;
-}
-
-const NOTHING_MOUNTS: BudgetPlan = { mounted: [], collapsed: [], overflow: false };
-
-/**
- * Pure arithmetic: no DOM, no constants of its own.
- *
- * A control whose cost is 0 was not measurable (a bar Kick has not laid out yet, or a test
- * environment without layout). Collapsing one would free nothing, so it is never chosen — we
- * only ever hide a control we can PROVE does not fit.
- */
-export function planBarBudget(input: BudgetInput): BudgetPlan {
-  const ids = input.controls.map((control) => control.id);
-  const total = input.controls.reduce((sum, control) => sum + control.cost, 0);
-  if (total <= input.free) return { mounted: ids, collapsed: [], overflow: false };
-  // Not even the overflow button fits. KickFlow mounts nothing rather than displace Kick;
-  // its actions stay on their hotkeys (hotkey-registry.ts).
-  if (input.overflowCost > input.free) return { ...NOTHING_MOUNTS, collapsed: ids };
-
-  const costs = new Map(input.controls.map((control) => [control.id, control.cost]));
-  const budget = input.free - input.overflowCost;
-  const collapsed = new Set<string>();
-  let needed = total;
-
-  // Named priority first, then anything the priority list does not mention, in bar order — a
-  // control added later must never be able to keep a named one out of the bar.
-  for (const id of [...input.collapseOrder, ...ids]) {
-    if (needed <= budget) break;
-    const cost = costs.get(id) ?? 0;
-    if (cost <= 0 || collapsed.has(id)) continue;
-    collapsed.add(id);
-    needed -= cost;
-  }
-
-  return {
-    mounted: ids.filter((id) => !collapsed.has(id)),
-    collapsed: ids.filter((id) => collapsed.has(id)),
-    overflow: true,
-  };
 }
 
 /**
@@ -125,12 +65,6 @@ export function controlCost(element: HTMLElement): number {
   const parent = element.parentElement;
   const gap = parent ? lengthOf(getComputedStyle(parent).columnGap) : 0;
   return element.getBoundingClientRect().width + gap;
-}
-
-export function samePlan(left: BudgetPlan, right: BudgetPlan): boolean {
-  return left.overflow === right.overflow
-    && left.mounted.join() === right.mounted.join()
-    && left.collapsed.join() === right.collapsed.join();
 }
 
 /** `normal`, `auto` and an empty string all mean "no length here". */

@@ -27,8 +27,15 @@ export class Lifecycle {
   }
 
   setTimeout(handler: () => void, timeoutMs: number): void {
-    const id = window.setTimeout(handler, timeoutMs);
-    this.add(() => window.clearTimeout(id));
+    const id = window.setTimeout(() => {
+      // Completed one-shot timers no longer own a resource. Long chat sessions
+      // schedule one per delayed row; retaining every cleanup grows without bound.
+      const index = this.disposers.indexOf(cancel);
+      if (index !== -1) this.disposers.splice(index, 1);
+      handler();
+    }, timeoutMs);
+    const cancel = () => window.clearTimeout(id);
+    this.add(cancel);
   }
 
   setInterval(handler: () => void, intervalMs: number): void {

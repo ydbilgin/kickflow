@@ -5,62 +5,23 @@ import type { Lifecycle } from '../shared/lifecycle';
 import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 import { subscribeLang, t } from '../shared/i18n';
 import {captureFilename,captureStatus,createLocalClipButton,cancelLocalClip,refreshLocalClipButtons} from './local-clip';
+import {createCameraIcon} from './bar-chrome.js';
+import {showFrameToast as showSharedFrameToast} from './bar-shared.js';
 
-const TOAST_CLASS = 'kickflow-frame-toast';
-const TOAST_MS = 2400;
 let toastTimer: number | null = null;
 
 /** FINAL 6.3 moment 4: one toast above the strip, with the frame and its file name, then gone.
- * At most one node; nothing keeps running after it leaves. */
+ * At most one node; nothing keeps running after it leaves. The toast itself is bar-shared.js,
+ * shared with a fallback player bar (2026-10-29). */
 export function showFrameToast(url: string, filename: string): void {
   const host = document.fullscreenElement ?? findPlayerWrapper();
   if (!host) return;
-  host.querySelector(`.${TOAST_CLASS}`)?.remove();
   if (toastTimer !== null) window.clearTimeout(toastTimer);
-  const toast = document.createElement('div');
-  toast.className = TOAST_CLASS;
-  toast.setAttribute('role', 'status');
-  const thumb = document.createElement('img');
-  thumb.className = `${TOAST_CLASS}__thumb`;
-  thumb.alt = '';
-  thumb.src = url;
-  const text = document.createElement('span');
-  text.className = `${TOAST_CLASS}__text`;
-  const title = document.createElement('b');
-  title.textContent = t('player.frame_saved');
-  const name = document.createElement('small');
-  name.textContent = filename;
-  text.append(title, name);
-  toast.append(thumb, text);
-  host.append(toast);
-  toastTimer = window.setTimeout(() => {
-    toastTimer = null;
-    toast.remove();
-  }, TOAST_MS);
+  toastTimer = showSharedFrameToast(host, url, filename, t('player.frame_saved'));
 }
 
 
 const CONTROLS_ID = 'kickflow-screenshot-controls';
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** One solid path with an evenodd lens cut-out, matching Kick's own `[&_svg]:fill-current`
- * player icons. A stroked outline here was the tell that the control was not native. */
-function createCameraIcon(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-
-  const body = document.createElementNS(SVG_NS, 'path');
-  body.setAttribute(
-    'd',
-    'M9.1 4h5.8a1 1 0 0 1 .83.45L16.74 6H19a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 19 20H5a2.5 2.5 0 0 1-2.5-2.5v-9A2.5 2.5 0 0 1 5 6h2.26l1.01-1.55A1 1 0 0 1 9.1 4z'
-      + 'M12 9.5a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2z',
-  );
-
-  svg.append(body);
-  return svg;
-}
 
 /** channel slug from the URL, sanitised for a filename (kick.com/<slug>). */
 

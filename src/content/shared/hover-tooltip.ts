@@ -104,7 +104,6 @@ let activeAnchor: Element | null = null;
 let activeKeyHandler: ((event: KeyboardEvent) => void) | null = null;
 let activeRepositionHandler: (() => void) | null = null;
 let activeMutationObserver: MutationObserver | null = null;
-let delegatedListenersInstalled = false;
 
 function ensureSharedTooltip(): HTMLDivElement | null {
   if (!document.body) return null;
@@ -238,8 +237,11 @@ function resolveTooltipAnchor(target: EventTarget | null): Element | null {
 }
 
 function installDelegatedListeners(): void {
-  if (delegatedListenersInstalled || typeof document === 'undefined') return;
-  delegatedListenersInstalled = true;
+  if (typeof document === 'undefined') return;
+  // Module locals restart when the content bundle is injected again in the same document.
+  const tooltipDocument = document as Document & { __kickflowHoverTooltipInstalled?: boolean };
+  if (tooltipDocument.__kickflowHoverTooltipInstalled) return;
+  tooltipDocument.__kickflowHoverTooltipInstalled = true;
 
   document.addEventListener('mouseover', (event) => {
     const anchor = resolveTooltipAnchor(event.target);

@@ -1,7 +1,7 @@
 import { logger } from '../shared/logger';
 import { findLiveButton, getVideoElement } from '../shared/selectors';
 import { mountIntoControlBar } from './native-bar';
-import { setForwardAtLiveEdge } from './rewind-controls';
+import { rememberGoLiveRewindWindow, setForwardAtLiveEdge } from './rewind-controls';
 import { bindVideoElementListener, observeVideoElement } from './video-element';
 import {
   NORMAL_PLAYBACK_RATE,
@@ -14,27 +14,30 @@ import {
 import type { Lifecycle } from '../shared/lifecycle';
 import { formatHotkeyKey, getHotkeyBinding, subscribeHotkeyBindings } from './hotkey-registry';
 import { subscribeLang, t } from '../shared/i18n';
+import { createToLiveIcon, syncPlateRunEnds } from './bar-chrome.js';
+// The catch-up decision, its thresholds and the buffer guard live in bar-shared.js (2026-10-29)
+// so a fallback player bar catches up by the same rule. Behaviour unchanged.
+import {
+  BEHIND_THRESHOLD_SECONDS,
+  CATCHUP_PLAYBACK_RATE,
+  CHIP_HIDE_SECONDS,
+  bufferAheadSeconds,
+  createSeekRecoveryTracker,
+  decideCatchup,
+  stallHoldMs,
+} from './bar-shared.js';
+export {
+  CATCHUP_MAX_STALL_HOLD_MS,
+  CATCHUP_MIN_KEEP_BUFFER_SECONDS,
+  CATCHUP_MIN_START_BUFFER_SECONDS,
+  CATCHUP_STALL_HOLD_MS,
+  bufferAheadSeconds,
+  decideCatchup,
+  stallHoldMs,
+} from './bar-shared.js';
+export type { CatchupAction } from './bar-shared.js';
 
 const CONTROLS_ID = 'kickflow-catchup-controls';
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-/** FINAL icons.svg #i-tolive: play triangle into a bar, filled like Kick's own icons. */
-function createToLiveIcon(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  const path = document.createElementNS(SVG_NS, 'path');
-  path.setAttribute('d', 'M4.5 6.2v11.6a.7.7 0 0 0 1.1.6l8-5.8a.7.7 0 0 0 0-1.2l-8-5.8a.7.7 0 0 0-1.1.6ZM17 5.5h1.2a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H17a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z');
-  svg.append(path);
-  return svg;
-}
-
-const CATCHUP_PLAYBACK_RATE = 1.5;
-const BEHIND_THRESHOLD_SECONDS = 3;
-/** The chip, once shown, stays until the gap is clearly closed, so a player hovering around the
- * threshold does not make the chip (and the bar budget behind it) flicker. */
-const CHIP_HIDE_SECONDS = 2.5;
-const CAUGHT_UP_THRESHOLD_SECONDS = 1.5;
 
 // Behind-live sanity bound, not a product cap. Kick's HLS state can report bogus media
 // boundaries during rebuffering; never drive catch-up behavior from those readings.
@@ -49,39 +52,6 @@ export function goLiveNow(): boolean {
   if (!activeGoLive) return false;
   activeGoLive();
   return true;
-}
-
-export type CatchupAction =
-  | { kind: 'none' }
-  | { kind: 'setRate'; rate: number }
-  | { kind: 'manualDropToNormal' };
-
-export function decideCatchup(input: {
-  mode: 'auto' | 'manual';
-  manualRate: number;
-  catchingUp: boolean;
-  behindBy: number;
-  behindPlausible: boolean;
-}): CatchupAction {
-  if (!input.behindPlausible) return { kind: 'none' };
-
-  if (input.mode === 'manual') {
-    if (
-      input.manualRate > NORMAL_PLAYBACK_RATE &&
-      input.behindBy <= CAUGHT_UP_THRESHOLD_SECONDS
-    ) {
-      return { kind: 'manualDropToNormal' };
-    }
-    return { kind: 'none' };
-  }
-
-  if (!input.catchingUp && input.behindBy > BEHIND_THRESHOLD_SECONDS) {
-    return { kind: 'setRate', rate: CATCHUP_PLAYBACK_RATE };
-  }
-  if (input.catchingUp && input.behindBy <= CAUGHT_UP_THRESHOLD_SECONDS) {
-    return { kind: 'setRate', rate: NORMAL_PLAYBACK_RATE };
-  }
-  return { kind: 'none' };
 }
 
 /** Fast-path live check for players that report an infinite/sentinel duration. Kick's CURRENT
@@ -167,7 +137,10 @@ export function catchupLiveEdge(video: HTMLVideoElement): number | null {
 
 /** Event-driven and rebound across video-element swaps. Catch-up uses the furthest sane
  * live-edge reading, while live detection remains separately latched and fail-closed. */
+const BEHIND_ATTRIBUTE = 'data-kickflow-behind';
+
 export function initLiveCatchup(lifecycle: Lifecycle): void {
+  lifecycle.add(() => document.documentElement.removeAttribute(BEHIND_ATTRIBUTE));
   const video = getVideoElement();
   if (!video) {
     logger.debug('live-catchup: #video-player not found, skipping');
@@ -175,6 +148,9 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   }
 
   let catchingUp = false;
+  let stallHoldUntil = 0;
+  let stallCount = 0;
+  const trackSeekRecovery = createSeekRecoveryTracker();
   let liveButtonEl: HTMLButtonElement | null = null;
   let lastLiveLabel = '';
   let lastBehindSeconds: number | null = null;
@@ -193,7 +169,7 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
 
   // Live detection must NOT depend on the control bar: Kick auto-hides it (and its go-to-live
   // button) when the mouse leaves the player, and `findLiveButton()` would then go null and
-  // wrongly flip us to "not live", stopping catch-up (owner-observed 2026-07-10). Latch live
+  // wrongly flip us to "not live", stopping catch-up (observed 2026-07-10). Latch live
   // once confirmed — via Infinity duration, OR the live control seen while the bar IS visible,
   // OR (bar-independent) `seekable.end` growing over time (it advances on live, fixed on VOD).
   // Reset the latch only on a real media change (loadstart / <video> swap).
@@ -240,7 +216,11 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     if (key === lastLiveLabel) return;
     lastLiveLabel = key;
     liveButtonEl.classList.toggle('kickflow-player-btn--behind', behind);
+    // Drives the amber seek-track rule without a :has() selector (see bootstrap.ts, 2026-11-09).
+    document.documentElement.toggleAttribute(BEHIND_ATTRIBUTE, behind);
     chipGroupEl?.classList.toggle('kickflow-player-group--chip', behind);
+    // The chip joining or leaving moves the plate's right end (bar-chrome.js).
+    syncPlateRunEnds(chipGroupEl?.parentElement);
     if (behindTextEl) behindTextEl.textContent = label;
     if (goTextEl) goTextEl.textContent = t('player.to_live');
     liveButtonEl.tabIndex = behind ? 0 : -1;
@@ -275,7 +255,10 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
     const target = current ? goLiveTarget(current) : null;
     if (current && target !== null) {
       try {
-        if (target > current.currentTime) current.currentTime = target;
+        if (target > current.currentTime) {
+          rememberGoLiveRewindWindow(current);
+          current.currentTime = target;
+        }
         if (getPlayerState().mode === 'auto') resetAutoPlaybackRate(current);
         if (current.paused) void current.play().catch(() => undefined);
         return;
@@ -294,6 +277,7 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   const onTimeUpdate = (event: Event): void => {
     const current = event.currentTarget;
     if (!(current instanceof HTMLVideoElement)) return;
+    trackSeekRecovery('timeupdate', current);
     const playerState = getPlayerState();
 
     const live = detectLive(current);
@@ -350,11 +334,15 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       catchingUp,
       behindBy,
       behindPlausible: plausible,
+      bufferAhead: bufferAheadSeconds(current),
+      stallHold: Date.now() < stallHoldUntil,
     });
 
+    // While catching up, 'none' means "still behind, buffer still healthy": keep 1.5x. Every
+    // reason to stop (caught up, buffer running low, a recent rebuffer) arrives as setRate 1x.
     const shouldMaintainCatchupRate =
       (action.kind === 'setRate' && action.rate === CATCHUP_PLAYBACK_RATE)
-      || (catchingUp && behindBy > CAUGHT_UP_THRESHOLD_SECONDS);
+      || (catchingUp && action.kind === 'none');
     if (shouldMaintainCatchupRate) {
       const startedCatchingUp = !catchingUp;
       catchingUp = true;
@@ -372,9 +360,31 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
   };
 
   bindVideoElementListener(lifecycle, 'timeupdate', onTimeUpdate);
+  for (const type of ['seeking', 'seeked', 'playing']) {
+    bindVideoElementListener(lifecycle, type, (event) => {
+      if (event.currentTarget instanceof HTMLVideoElement) trackSeekRecovery(type, event.currentTarget);
+    });
+  }
+  // A rebuffer (not a seek the viewer or go-live asked for) drops auto catch-up to 1x at once and
+  // holds it off, so the player refills its buffer instead of being sped straight into the next
+  // stall. Manual speeds are the viewer's choice and stay untouched.
+  bindVideoElementListener(lifecycle, 'waiting', (event) => {
+    const current = event.currentTarget;
+    if (!(current instanceof HTMLVideoElement) || trackSeekRecovery('waiting', current)) return;
+    if (getPlayerState().mode !== 'auto') return;
+    stallCount += 1;
+    stallHoldUntil = Date.now() + stallHoldMs(stallCount);
+    if (catchingUp || current.playbackRate !== NORMAL_PLAYBACK_RATE) {
+      resetAutoPlaybackRate(current);
+      logger.debug('live-catchup: rebuffer, auto catch-up paused');
+    }
+  });
   bindVideoElementListener(lifecycle, 'loadstart', (event) => {
     const current = event.currentTarget;
-    if (current instanceof HTMLVideoElement) resetMediaTracking(current);
+    if (current instanceof HTMLVideoElement) {
+      trackSeekRecovery('loadstart', current);
+      resetMediaTracking(current);
+    }
   });
   let currentVideo: HTMLVideoElement | null = video;
   observeVideoElement(lifecycle, (current) => {
@@ -383,6 +393,10 @@ export function initLiveCatchup(lifecycle: Lifecycle): void {
       setPlayerPlaybackRate(currentVideo, NORMAL_PLAYBACK_RATE);
     }
     currentVideo = current;
+    // A new video element is a new player (channel switch): its rebuffer history starts fresh.
+    // A loadstart on the same element is often Kick recovering from the stall, so it keeps it.
+    stallCount = 0;
+    stallHoldUntil = 0;
     resetMediaTracking(current);
   });
   lifecycle.add(() => {

@@ -1,9 +1,10 @@
+import { visibleInterval } from '../shared/coalesce';
 import type { Lifecycle } from '../shared/lifecycle';
 import type { StatusSnapshotProvider } from '../status';
 import type { FooterTogglePanel } from './footer-toggle';
 import { getLang, hotkeyLabel, setLang, subscribeLang, t, type MessageKey } from '../shared/i18n';
 import { featureFlags } from './feature-flags';
-import type { ChatIntegrityStore, ChatMessage } from './message-store';
+import { REMOVED_LEDGER_CAPACITY, type ChatIntegrityStore, type ChatMessage } from './message-store';
 import { appendParsedContent, applyPreservedMarking, wireUsernameProfileLink } from './message-view';
 import {
   MENTION_COLOR_SWATCHES,
@@ -42,9 +43,10 @@ const FILTER_CHIP_CLASS = 'kickflow-panel__filter-chip';
 const REMOVED_ROW_CLASS = 'kickflow-removed-row';
 const REMOVED_EMPTY_CLASS = 'kickflow-removed-empty';
 
-// Bounded so a high-moderation channel (mass bans) can't grow the panel without limit — keep the
-// newest N removed messages only.
-const MAX_PANEL_ROWS = 60;
+// Bounded so a high-moderation channel (mass bans) can't grow the panel without limit. Since
+// 2026-11-11 the list reads the session's removed ledger, whose own cap this matches, so every
+// record the count chip counts is also a row.
+const MAX_PANEL_ROWS = REMOVED_LEDGER_CAPACITY;
 
 // One quiet frame of typing before re-running the search and rebuilding up to 100 emote-parsed rows.
 const SEARCH_DEBOUNCE_MS = 120;
@@ -152,6 +154,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private titleHeading: HTMLElement | null = null;
   private open = false;
   private lastSig = ''; // skip rebuilding the body when its contents are unchanged
+  private renderedLedgerVersion = -2; // removed-ledger version the body last rendered
   private activeSection: DashboardSection = 'general';
   private opener: HTMLElement | null = null;
   private openerId: string | null = null;
@@ -170,6 +173,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private modeChangesCheckbox: HTMLInputElement | null = null;
   private chattersBadgesCheckbox: HTMLInputElement | null = null;
   private userMessagesCheckbox: HTMLInputElement | null = null;
+  private quickEmotesCheckbox: HTMLInputElement | null = null;
   private searchHotkeyCheckbox: HTMLInputElement | null = null;
   private modActionsCheckbox: HTMLInputElement | null = null;
   private mentionHighlightCheckbox: HTMLInputElement | null = null;
@@ -187,6 +191,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
   private seekBarCheckbox: HTMLInputElement | null = null;
   private liveCatchupCheckbox: HTMLInputElement | null = null;
   private qualityLockCheckbox: HTMLInputElement | null = null;
+  private qualityAlwaysBestCheckbox: HTMLInputElement | null = null;
   private screenshotCheckbox: HTMLInputElement | null = null;
   private speedControlsCheckbox: HTMLInputElement | null = null;
   private fullscreenTerminalCheckbox: HTMLInputElement | null = null;
@@ -212,7 +217,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.store = store;
     this.render();
     lifecycle.add(subscribeLang(() => this.rebuildForLanguage()));
-    lifecycle.setInterval(() => this.render(), 1000);
+    // Only an open dashboard has anything on screen to keep current (stats, list, controls).
+    visibleInterval(lifecycle, () => { if (this.open) this.render(); }, 1000);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onHotkeyCapture(event as KeyboardEvent), true);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onSearchHotkey(event as KeyboardEvent), true);
     lifecycle.addEventListener(document, 'keydown', (event) => this.onDashboardKeydown(event as KeyboardEvent), true);
@@ -225,7 +231,10 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.store = store;
     this.userFilter = null;
     this.lastSig = '';
+    // Search belongs to the channel session even though the dashboard survives SPA navigation.
+    if (this.searchInput) this.searchInput.value = '';
     this.render();
+    this.renderSearchResults();
   }
 
   /** Toggles the shared dashboard. A different requested section is selected without closing. */
@@ -262,36 +271,46 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     return this.open;
   }
 
+  /** O(1): the session's removed ledger size (bans, timeouts, deletes; bounded, oldest out). */
   removedCount(): number {
-    return this.store?.getPreserved().filter((message) => message.preserved === true).length ?? 0;
+    return this.store?.removed.size ?? 0;
   }
 
-  /** Keeps content current every tick regardless of open state — so the moment the footer
-   * button opens the panel, it's instant AND already up to date, never a stale snapshot from
-   * whenever it was last visible. The section itself is just `display:none` while closed. */
+  /** Closed, the panel does no work at all: everything it shows sits inside the display:none
+   * section, and the footer button's badge reads removedCount() itself. setOpen(true) renders
+   * everything before the panel shows, so opening is still instant and current (2026-11-11). */
   render(): void {
-    const store = this.store;
-    const allRemoved = store?.getPreserved()
-      .filter((message) => message.preserved === true)
-      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0)) ?? [];
-    const removed = (store && this.userFilter
-      ? store.getPreservedForSlug(this.userFilter.slug)
-      : allRemoved ?? [])
-      .filter((message) => message.preserved === true)
-      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
-
+    // Write only what changed: an unchanged setAttribute or textContent still queues a mutation
+    // record, and this panel sits on <body>, where several page-wide observers (avatar preview,
+    // player bar, controls) re-measure on every batch (2026-11-10).
     const section = this.ensureSection();
-    section.style.display = this.open ? 'flex' : 'none';
-    section.setAttribute('aria-hidden', this.open ? 'false' : 'true');
+    const display = this.open ? 'flex' : 'none';
+    if (section.style.display !== display) section.style.display = display;
+    setAttributeIfChanged(section, 'aria-hidden', this.open ? 'false' : 'true');
+    if (!this.open) return;
+
+    const store = this.store;
+    const newestFirst = (records: readonly ChatMessage[]): ChatMessage[] =>
+      [...records].sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
+    const ledgerVersion = store?.removed.version ?? -1;
+    const listUnchanged = ledgerVersion === this.renderedLedgerVersion && this.lastSig !== '';
+    const allRemoved = listUnchanged ? [] : newestFirst(store?.removed.toArray() ?? []);
+    const removed = listUnchanged ? [] : store && this.userFilter
+      ? newestFirst(store.removed.forSlug(this.userFilter.slug))
+      : allRemoved;
+    const removedTotal = store?.removed.size ?? 0;
 
     if (this.countChip) {
-      this.countChip.textContent = allRemoved.length > 0 ? String(allRemoved.length) : '';
-      this.countChip.style.display = allRemoved.length > 0 ? '' : 'none';
+      const chipText = removedTotal > 0 ? String(removedTotal) : '';
+      if (this.countChip.textContent !== chipText) this.countChip.textContent = chipText;
+      const chipDisplay = removedTotal > 0 ? '' : 'none';
+      if (this.countChip.style.display !== chipDisplay) this.countChip.style.display = chipDisplay;
     }
     const removedNav = this.navButtons.get('removed');
-    removedNav?.setAttribute(
+    if (removedNav) setAttributeIfChanged(
+      removedNav,
       'aria-label',
-      allRemoved.length > 0 ? t('panel.removed_count', { n: allRemoved.length }) : t('tab.removed'),
+      removedTotal > 0 ? t('panel.removed_count', { n: removedTotal }) : t('tab.removed'),
     );
     this.refreshUserFilterChip();
 
@@ -300,8 +319,12 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.refreshSettingsControls();
     this.refreshStats();
 
+    // The list changes only when the ledger does (its version) or the filter/session changes
+    // (those reset lastSig). An unchanged ledger skips the signature work below every second.
+    if (listUnchanged) return;
     const body = section.querySelector<HTMLElement>(`.${PANEL_BODY_CLASS}`);
     if (!body) return;
+    this.renderedLedgerVersion = ledgerVersion;
     const shown = removed.slice(0, MAX_PANEL_ROWS);
     // The panel can change without its count or final id changing: a metadata enrichment (e.g.
     // deletedBy arriving in a later event) alters an existing row, as can an expiry+preserve that
@@ -529,7 +552,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     modeSelect.setAttribute('aria-label', t('panel.chat_mode'));
     const nativeOption = document.createElement('option');
     nativeOption.value = 'native';
-    nativeOption.textContent = 'Native';
+    nativeOption.textContent = t('popup.mode_option_native');
     const ownOption = document.createElement('option');
     ownOption.value = 'own';
     ownOption.textContent = 'KickFlow';
@@ -657,6 +680,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.userMessagesCheckbox = userMessagesCheckbox;
 
+    const { label: quickEmotesLabel, checkbox: quickEmotesCheckbox } = this.buildSettingsToggle(
+      t('setting.hide_quick_emotes'), t('setting.hide_quick_emotes_desc'), 'hideQuickEmoteBar', featureFlags.hideQuickEmoteBar,
+    );
+    this.quickEmotesCheckbox = quickEmotesCheckbox;
+
     const { label: searchHotkeyLabel, checkbox: searchHotkeyCheckbox } = this.buildSettingsToggle(
       t('setting.search_hotkey'), t('setting.search_hotkey_desc'), 'chatSearchHotkey', featureFlags.chatSearchHotkey,
     );
@@ -715,6 +743,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       modeChangesLabel,
       chattersBadgesLabel,
       userMessagesLabel,
+      quickEmotesLabel,
       searchHotkeyLabel,
       modActionsLabel,
       mentionHighlightLabel,
@@ -763,6 +792,11 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     );
     this.qualityLockCheckbox = qualityLockCheckbox;
 
+    const { label: qualityAlwaysBestLabel, checkbox: qualityAlwaysBestCheckbox } = this.buildSettingsToggle(
+      t('setting.quality_always_best'), t('setting.quality_always_best_desc'), 'qualityAlwaysBest', featureFlags.qualityAlwaysBest,
+    );
+    this.qualityAlwaysBestCheckbox = qualityAlwaysBestCheckbox;
+
     const { label: screenshotLabel, checkbox: screenshotCheckbox } = this.buildSettingsToggle(
       t('setting.screenshot'), t('setting.screenshot_desc'), 'screenshot', featureFlags.screenshot,
     );
@@ -790,6 +824,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
       seekBarLabel,
       liveCatchupLabel,
       qualityLockLabel,
+      qualityAlwaysBestLabel,
       screenshotLabel,
       speedControlsLabel,
       fullscreenTerminalLabel,
@@ -1341,7 +1376,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
 
   private setStatValue(element: HTMLElement, value: string | number | null): void {
     const missing = value === null || value === '';
-    element.textContent = missing ? '—' : String(value);
+    const text = missing ? '—' : String(value);
+    if (element.textContent !== text) element.textContent = text;
     element.classList.toggle('kickflow-panel__stat-value--missing', missing);
   }
 
@@ -1429,6 +1465,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     if (this.userMessagesCheckbox && this.userMessagesCheckbox.checked !== featureFlags.showUserMessages) {
       this.userMessagesCheckbox.checked = featureFlags.showUserMessages;
     }
+    if (this.quickEmotesCheckbox && this.quickEmotesCheckbox.checked !== featureFlags.hideQuickEmoteBar) {
+      this.quickEmotesCheckbox.checked = featureFlags.hideQuickEmoteBar;
+    }
     if (this.modActionsCheckbox && this.modActionsCheckbox.checked !== featureFlags.showModActions) {
       this.modActionsCheckbox.checked = featureFlags.showModActions;
     }
@@ -1467,6 +1506,9 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     }
     if (this.qualityLockCheckbox && this.qualityLockCheckbox.checked !== featureFlags.qualityLock) {
       this.qualityLockCheckbox.checked = featureFlags.qualityLock;
+    }
+    if (this.qualityAlwaysBestCheckbox && this.qualityAlwaysBestCheckbox.checked !== featureFlags.qualityAlwaysBest) {
+      this.qualityAlwaysBestCheckbox.checked = featureFlags.qualityAlwaysBest;
     }
     if (this.screenshotCheckbox && this.screenshotCheckbox.checked !== featureFlags.screenshot) {
       this.screenshotCheckbox.checked = featureFlags.screenshot;
@@ -1590,6 +1632,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.modeChangesCheckbox = null;
     this.chattersBadgesCheckbox = null;
     this.userMessagesCheckbox = null;
+    this.quickEmotesCheckbox = null;
     this.mentionHighlightCheckbox = null;
     this.modFrameCheckbox = null;
     this.vipFrameCheckbox = null;
@@ -1605,6 +1648,7 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.seekBarCheckbox = null;
     this.liveCatchupCheckbox = null;
     this.qualityLockCheckbox = null;
+    this.qualityAlwaysBestCheckbox = null;
     this.screenshotCheckbox = null;
     this.speedControlsCheckbox = null;
     this.fullscreenTerminalCheckbox = null;
@@ -1643,4 +1687,8 @@ export class RemovedMessagesPanel implements FooterTogglePanel {
     this.unlockDocumentScroll();
     this.removeSection();
   }
+}
+
+function setAttributeIfChanged(element: Element, name: string, value: string): void {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
 }

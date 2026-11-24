@@ -117,4 +117,27 @@ describe('speed button and menu, FINAL design', () => {
     expect(speedButton().querySelector('.kickflow-speed-btn__auto')).not.toBeNull();
     lifecycle.dispose();
   });
+
+  it('keeps the same menu and focused Auto switch open for both toggle directions, with current radio states', () => {
+    setupPlayerBar();
+    const lifecycle = new Lifecycle();
+    initSpeedControls(lifecycle);
+    speedButton().click();
+    const menu = document.querySelector('.kickflow-speed-menu')!;
+    const auto = menu.querySelector<HTMLButtonElement>('.kickflow-speed-menu__auto')!;
+    auto.focus();
+    auto.click();
+    expect(document.querySelector('.kickflow-speed-menu')).toBe(menu);
+    expect(document.activeElement).toBe(auto);
+    expect(auto.getAttribute('aria-checked')).toBe('false');
+    expect(menu.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent).toBe('1×');
+    auto.click();
+    expect(document.querySelector('.kickflow-speed-menu')).toBe(menu);
+    expect(document.activeElement).toBe(auto);
+    expect(auto.getAttribute('aria-checked')).toBe('true');
+    expect(menu.querySelector('[role="menuitemradio"][aria-checked="true"]')).toBeNull();
+    menu.querySelector<HTMLButtonElement>('.kickflow-speed-menu__item')!.click();
+    expect(document.querySelector('.kickflow-speed-menu')).toBeNull();
+    lifecycle.dispose();
+  });
 });

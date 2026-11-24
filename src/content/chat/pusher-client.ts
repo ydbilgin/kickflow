@@ -1124,6 +1124,9 @@ export class PusherClient {
           logger.warn('pusher-client: ChatroomUpdatedEvent payload did not match the captured shape', payload);
           return;
         }
+        // A contradictory payload must not replace the current mode snapshot. Otherwise the
+        // next update for our room looks like a new initial state and its changes disappear.
+        if (normalized.chatroomId !== this.chatroomId) return;
         this.confirmPrimaryFromValidatedFrame(frame.channel, nativeSocketId);
         this.callbacks.onChatroomUpdated?.(normalized);
         return;

@@ -207,14 +207,21 @@ describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
     expect(button.querySelector('.kickflow-live-chip__go')?.textContent).toBe('Canlıya');
     expect(button.getAttribute('aria-hidden')).toBeNull();
     expect(button.classList.contains('kickflow-player-btn--behind')).toBe(true);
+    // 2026-11-09: the amber seek-track rule keys on this <html> marker instead of a :has() selector.
+    expect(document.documentElement.hasAttribute('data-kickflow-behind')).toBe(true);
     expect(video.playbackRate).toBe(1.5); // auto catch-up engages alongside the label
 
     video.currentTime = 19.5;
     video.dispatchEvent(new Event('timeupdate'));
     expect(chipLabel(button)).toBe('');
     expect(button.classList.contains('kickflow-player-btn--behind')).toBe(false);
+    expect(document.documentElement.hasAttribute('data-kickflow-behind')).toBe(false);
     expect(video.playbackRate).toBe(1);
+    video.currentTime = 0;
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(document.documentElement.hasAttribute('data-kickflow-behind')).toBe(true);
     lifecycle.dispose();
+    expect(document.documentElement.hasAttribute('data-kickflow-behind')).toBe(false);
   });
 
   it('computes behind from seekable.end, NOT the buffered trail (the real Kick bug)', () => {
@@ -231,7 +238,7 @@ describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
   });
 
   it('uses buffered.end in the Infinity/sentinel regime so a rewound live player shows behind and catches up', () => {
-    // Owner badge after F5: duration=Infinity, seekable.end=2^30 sentinel, but the playable
+    // Reported badge after F5: duration=Infinity, seekable.end=2^30 sentinel, but the playable
     // buffered window is [0, 46.6] and the current time is 13.4.
     const { video, lifecycle } = mountLivePlayer(13.4, 46.6);
     Object.defineProperty(video, 'seekable', {
@@ -262,7 +269,7 @@ describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
   });
 
   it('uses the finite duration live edge when a DVR rewind collapses seekable near the playhead', () => {
-    // Owner reproduction: after a deep rewind Kick can reload the DVR window so seekable.end
+    // Reported reproduction: after a deep rewind Kick can reload the DVR window so seekable.end
     // lands beside currentTime, while duration remains the growing stream position/live edge.
     const { video, lifecycle } = mountLivePlayer(1703, 1704, {
       duration: 2585,
@@ -280,7 +287,7 @@ describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
   });
 
   it('closes the gap it advertises in the sentinel regime instead of clicking an inert LIVE badge', () => {
-    // Owner-reported 2026-08-05: the button read "-4sn" but clicking it did nothing. The label
+    // Reported 2026-08-05: the button read "-4sn" but clicking it did nothing. The label
     // came from buffered (the only sane reading in this regime) while go-live consulted seekable
     // alone, found the 2^30 sentinel, and fell through to Kick's control — which is a plain LIVE
     // badge here, because Kick has no DVR source and therefore no go-to-live button.
@@ -346,7 +353,7 @@ describe('merged CANLI button (go-live + behind-live indicator in one)', () => {
       video.dispatchEvent(new Event('timeupdate'));
       expect(video.playbackRate).toBe(1.5);
 
-      // Owner-observed state: Kick resets the media element during a DVR seek/rebuffer, while
+      // Observed state: Kick resets the media element during a DVR seek/rebuffer, while
       // our hysteresis state remains catchingUp=true and the live edge is still 196s away.
       video.playbackRate = 1;
       video.dispatchEvent(new Event('timeupdate'));
