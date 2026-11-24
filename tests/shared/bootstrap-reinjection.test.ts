@@ -40,5 +40,11 @@ it('reinjecting the complete content bundle during startup installs one bridge, 
     expect(tooltips[0].classList.contains('kickflow-hover-tooltip--visible')).toBe(true);
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
     expect(tooltips[0].classList.contains('kickflow-hover-tooltip--visible')).toBe(false);
-  } finally { dom.window.close(); }
+  } finally {
+    // Let frames already queued run while the window is alive and queue no new ones: jsdom's
+    // visual frame timer otherwise fires after close() and throws an uncaught TypeError.
+    window.requestAnimationFrame = () => 0;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    dom.window.close();
+  }
 });
